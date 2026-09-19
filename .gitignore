@@ -1,0 +1,35 @@
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# ===== 系统文件 =====
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ===== 环境变量与密钥（严禁提交）=====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== 临时文件 =====
+.claude/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# ===== 依赖与构建产物（技术栈确定后按需调整）=====
+target/
+*.class
+node_modules/
+dist/
+build/
