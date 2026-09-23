@@ -27,6 +27,11 @@ temp/
 *.tmp
 *.bak
 
+# ===== 个人工作文件（计划/进度，不入库）=====
+task_plan.md
+findings.md
+progress.md
+
 # ===== 依赖与构建产物（技术栈确定后按需调整）=====
 target/
 *.class
