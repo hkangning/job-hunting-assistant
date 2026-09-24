@@ -9,7 +9,7 @@
 | 层 | 技术 |
 |---|---|
 | 后端 | Python 3.11+ / FastAPI / SQLAlchemy 2.x / SQLite（WAL） |
-| LLM | 多供应商可配置（DeepSeek 默认；智谱/Kimi/硅基流动/自定义 OpenAI 兼容接口），SSE 流式 |
+| LLM | 多供应商+模型两级可配置（DeepSeek 默认；智谱/Kimi/硅基流动/自定义 OpenAI 兼容接口），模型列表动态拉取保持最新，SSE 流式 |
 | Agent | 手写实现：意图路由 + 工具注册表 + 画像记忆（不用 LangChain） |
 | 语音（P2） | 讯飞语音听写 + 浏览器 speechSynthesis |
 | 前端 | Vue 3 + Vite + Element Plus + Pinia + Vue Router |
@@ -67,4 +67,4 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-首次使用：进入系统设置页，选择 AI 供应商（如 DeepSeek）→ 填写 API Key → 连通性测试 → 保存，即可使用全部 AI 功能。
+首次使用：进入系统设置页，选择 AI 供应商与模型（如 DeepSeek 的 deepseek-flash）→ 填写 API Key → 连通性测试 → 保存，即可使用全部 AI 功能。
