@@ -1,6 +1,6 @@
 """投递模块测试：服务层 TC-01~04 + API 集成 TC-26 / TC-46（接口文档 3.3）。"""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from io import BytesIO
 
 import pytest
@@ -335,3 +335,319 @@ def test_trend_zero_filled_and_bounds(client: TestClient):
     assert client.get(f"{API}/trend", params={"days": 90}).json()["code"] == 0
     assert client.get(f"{API}/trend", params={"days": 91}).json()["code"] == 10001
     assert client.get(f"{API}/trend", params={"days": 0}).json()["code"] == 10001
+
+
+# ---------- TC-01~04 补强：实现分支覆盖 ----------
+#
+# 现有用例已覆盖各 TC 的验收点直系路径；本段落补齐 application_service.py 中
+# 未被走到的容错与边界分支（设计依据：docs/superpowers/specs/2026-09-24-步骤3投递服务层测试-design.md）。
+# 分组：A=TC-01 / B=TC-02 / C=TC-04 / D=TC-03 / E=TC-03·TC-04。
+
+
+# ---------- A 组：新增投递 ----------
+
+
+def test_create_application_all_fields(db_session: Session):
+    """TC-01：全字段显式传入后读回逐字段一致，显式投递日期不被当天覆盖。"""
+    dto = application_service.create_application(
+        db_session,
+        ApplicationCreate(
+            company="亚信科技",
+            position="后端开发",
+            city="上海",
+            expected_salary="15k*14",
+            applied_at=date(2026, 9, 1),
+            channel="内推",
+            status=ApplicationStatus.INTERVIEW,
+            next_event_at=datetime(2026, 9, 26, 14, 0, 0),
+            remark="二面待约",
+        ),
+    )
+
+    assert (dto.company, dto.position, dto.city) == ("亚信科技", "后端开发", "上海")
+    assert dto.expected_salary == "15k*14"
+    assert dto.applied_at == date(2026, 9, 1)
+    assert dto.channel == "内推"
+    assert dto.status == ApplicationStatus.INTERVIEW
+    assert dto.next_event_at == datetime(2026, 9, 26, 14, 0, 0)
+    assert dto.remark == "二面待约"
+
+    row = db_session.get(Application, dto.id)
+    assert row.applied_at == datetime(2026, 9, 1, 0, 0, 0)  # 库内为 datetime，取当天 00:00:00
+    assert row.next_event_at == datetime(2026, 9, 26, 14, 0, 0)
+
+
+# ---------- B 组：状态流转 ----------
+
+
+def test_change_status_event_at_ignored_for_closed(db_session: Session):
+    """TC-02：event_at 仅在转为 WRITTEN/INTERVIEW 时生效——转 CLOSED 时 next_event_at 保持原值。"""
+    original = datetime(2026, 9, 26, 14, 0, 0)
+    dto = application_service.create_application(
+        db_session,
+        ApplicationCreate(company="满帮", position="Java 开发", next_event_at=original),
+    )
+
+    dto = application_service.change_status(
+        db_session,
+        dto.id,
+        ApplicationStatusUpdate(status=ApplicationStatus.CLOSED, event_at=datetime(2026, 10, 1, 9, 0, 0)),
+    )
+
+    assert dto.status == ApplicationStatus.CLOSED
+    assert dto.next_event_at == original
+
+
+def test_change_status_event_at_applied_for_interview(db_session: Session):
+    """TC-02：转 INTERVIEW 时 event_at 同样生效（现有用例只覆盖了 WRITTEN）。"""
+    dto = application_service.create_application(
+        db_session,
+        ApplicationCreate(company="新华三", position="Java 开发", status=ApplicationStatus.WRITTEN),
+    )
+    event_at = datetime(2026, 9, 28, 10, 30, 0)
+
+    dto = application_service.change_status(
+        db_session,
+        dto.id,
+        ApplicationStatusUpdate(status=ApplicationStatus.INTERVIEW, event_at=event_at),
+    )
+
+    assert dto.status == ApplicationStatus.INTERVIEW
+    assert dto.next_event_at == event_at
+
+
+def test_change_status_remark_without_existing(db_session: Session):
+    """TC-02：原备注为空时流转备注直接落库，不产生前导换行。"""
+    dto = application_service.create_application(
+        db_session, ApplicationCreate(company="云器科技", position="后端开发")
+    )
+
+    dto = application_service.change_status(
+        db_session,
+        dto.id,
+        ApplicationStatusUpdate(status=ApplicationStatus.WRITTEN, remark="收到笔试通知"),
+    )
+
+    assert dto.remark is not None
+    assert not dto.remark.startswith("\n")
+    assert dto.remark.startswith("[")
+    assert dto.remark.endswith("流转至 待笔试] 收到笔试通知")
+
+
+def test_change_status_without_remark_keeps_remark(db_session: Session):
+    """TC-02：流转不传 remark 时备注原样保留，不追加任何流转记录。"""
+    dto = application_service.create_application(
+        db_session, ApplicationCreate(company="合合信息", position="后端开发", remark="原备注")
+    )
+
+    dto = application_service.change_status(
+        db_session, dto.id, ApplicationStatusUpdate(status=ApplicationStatus.WRITTEN)
+    )
+
+    assert dto.remark == "原备注"
+
+
+def test_change_status_not_found(db_session: Session):
+    """TC-02：对不存在的投递流转 → 10002，且不产生任何写入。"""
+    with pytest.raises(BizException) as exc_info:
+        application_service.change_status(
+            db_session, 999_999, ApplicationStatusUpdate(status=ApplicationStatus.WRITTEN)
+        )
+
+    assert exc_info.value.code == ErrorCode.NOT_FOUND
+    assert db_session.query(Application).count() == 0
+
+
+# ---------- C 组：导入文件级校验（20001 的其余分支） ----------
+
+
+def test_import_empty_content(db_session: Session):
+    """TC-04：文件内容为空（0 字节）→ 20001。"""
+    with pytest.raises(BizException) as exc_info:
+        application_service.import_from_file(db_session, "import.csv", b"")
+
+    assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
+    assert "文件内容为空" in exc_info.value.message
+
+
+def test_import_oversized_file(db_session: Session):
+    """TC-04：超过 2MB 上限 → 20001（表头合法，仅体积越界）。"""
+    content = b"company,position\n" + b"a,b\n" * (2 * 1024 * 1024 // 4 + 1)
+
+    with pytest.raises(BizException) as exc_info:
+        application_service.import_from_file(db_session, "import.csv", content)
+
+    assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
+    assert "2MB" in exc_info.value.message
+    assert db_session.query(Application).count() == 0
+
+
+def test_import_uppercase_suffix(db_session: Session):
+    """TC-04：扩展名大小写不敏感——.XLSX 与 .xlsx 同样可导入。"""
+    content = _xlsx([["company", "position"], ["招银网络", "后端开发"]])
+
+    result = application_service.import_from_file(db_session, "投递清单.XLSX", content)
+
+    assert result.success_count == 1
+    assert result.errors == []
+    assert db_session.scalar(select(Application).where(Application.company == "招银网络")) is not None
+
+
+def test_import_broken_xlsx(db_session: Session):
+    """TC-04：.xlsx 扩展名但内容不是合法 xlsx → 20001（而非未捕获异常导致 500）。"""
+    with pytest.raises(BizException) as exc_info:
+        application_service.import_from_file(db_session, "broken.xlsx", b"this is not a zip file")
+
+    assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
+    assert "无法解析" in exc_info.value.message
+
+
+def test_import_empty_xlsx(db_session: Session):
+    """TC-04：合法 xlsx 但无任何行（连表头都没有）→ 20001。"""
+    workbook = Workbook()
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    with pytest.raises(BizException) as exc_info:
+        application_service.import_from_file(db_session, "empty.xlsx", buffer.getvalue())
+
+    assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
+    assert "文件为空" in exc_info.value.message
+
+
+def test_import_undecodable_csv(db_session: Session):
+    """TC-04：既非 UTF-8 也非 GBK 的字节序列 → 20001（不抛 UnicodeDecodeError）。"""
+    with pytest.raises(BizException) as exc_info:
+        application_service.import_from_file(db_session, "import.csv", b"\xff\xfeA")
+
+    assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
+    assert "编码" in exc_info.value.message
+
+
+# ---------- D 组：导入解析容错 ----------
+
+
+def test_import_xlsx_date_cell(db_session: Session):
+    """TC-03：xlsx 的 applied_at 为真日期单元格（非文本）时，归一化为 YYYY-MM-DD 后入库。
+
+    实测 openpyxl 读回日期单元格得到 datetime 对象，经 _cell_text 归一化后走文本解析路径。
+    """
+    content = _xlsx([["company", "position", "applied_at"], ["哈啰出行", "后端开发", date(2026, 9, 1)]])
+
+    result = application_service.import_from_file(db_session, "投递清单.xlsx", content)
+
+    assert result.success_count == 1
+    assert result.errors == []
+    row = db_session.scalar(select(Application).where(Application.company == "哈啰出行"))
+    assert row.applied_at == datetime(2026, 9, 1, 0, 0, 0)
+
+
+def test_import_csv_with_bom(db_session: Session):
+    """TC-03：带 UTF-8 BOM 的 csv（Excel 另存常见）表头不被 BOM 污染，解析成功。"""
+    content = "company,position\n满帮,Java 开发\n".encode("utf-8-sig")
+
+    result = application_service.import_from_file(db_session, "import.csv", content)
+
+    assert result.success_count == 1
+    assert result.errors == []
+
+
+def test_import_extra_and_missing_columns(db_session: Session):
+    """TC-03：表头含模板外多余列时忽略该列；行内缺列按空串处理（缺必填列则该行报错）。"""
+    content = (
+        "company,position,city,status,note\n"
+        "云器科技,后端开发,南京,APPLIED,多余列内容应被忽略\n"
+        "合合信息\n"
+    ).encode("utf-8")
+
+    result = application_service.import_from_file(db_session, "import.csv", content)
+
+    assert result.success_count == 1
+    assert [(item.row, item.reason) for item in result.errors] == [(3, "岗位名称不能为空")]
+    row = db_session.scalar(select(Application).where(Application.company == "云器科技"))
+    assert (row.city, row.status) == ("南京", "APPLIED")
+
+
+def test_import_applied_at_with_time(db_session: Session):
+    """TC-03：applied_at 带时间部分时取日期，不判为格式非法。"""
+    content = "company,position,applied_at\n满帮,Java 开发,2026-09-01 10:30:00\n".encode("utf-8")
+
+    result = application_service.import_from_file(db_session, "import.csv", content)
+
+    assert result.success_count == 1
+    assert result.errors == []
+    row = db_session.scalar(select(Application).where(Application.company == "满帮"))
+    assert row.applied_at == datetime(2026, 9, 1, 0, 0, 0)
+
+
+# ---------- E 组：表头与行级校验 ----------
+
+
+def test_import_missing_multiple_required_headers(db_session: Session):
+    """TC-04：表头同时缺 company 与 position 时，提示一次报全两列名。"""
+    with pytest.raises(BizException) as exc_info:
+        application_service.import_from_file(db_session, "import.csv", "city,channel\n南京,官网\n".encode("utf-8"))
+
+    assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
+    assert "company" in exc_info.value.message
+    assert "position" in exc_info.value.message
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "reason"),
+    [
+        ("company", "A" * 101, "公司名称超过 100 字"),
+        ("position", "B" * 101, "岗位名称超过 100 字"),
+        ("city", "C" * 51, "城市超过 50 字"),
+        ("channel", "D" * 51, "投递渠道超过 50 字"),
+    ],
+)
+def test_import_row_field_too_long(db_session: Session, column: str, value: str, reason: str):
+    """TC-03：行级字段超长只废该行，其余合法行照常入库。"""
+    invalid = {
+        "company": "满帮",
+        "position": "Java 开发",
+        "city": "南京",
+        "applied_at": "",
+        "channel": "官网",
+        "status": "",
+        "remark": "",
+    }
+    invalid[column] = value  # 键已存在，赋值不改变 dict 顺序，values() 与表头列序仍一一对应
+
+    content = "\n".join(
+        [
+            ",".join(invalid),
+            ",".join(invalid.values()),
+            "云器科技,后端开发,南京,,内推,,",  # 合法行：应正常入库
+        ]
+    ).encode("utf-8")
+
+    result = application_service.import_from_file(db_session, "import.csv", content)
+
+    assert result.success_count == 1
+    assert [(item.row, item.reason) for item in result.errors] == [(2, reason)]
+    assert db_session.scalar(select(Application).where(Application.company == "云器科技")) is not None
+
+
+def test_import_uppercase_status(db_session: Session):
+    """TC-03：导入的 status 大小写不敏感，统一按大写入库。"""
+    content = "company,position,status\n招银网络,后端开发,written\n".encode("utf-8")
+
+    result = application_service.import_from_file(db_session, "import.csv", content)
+
+    assert result.success_count == 1
+    assert result.errors == []
+    row = db_session.scalar(select(Application).where(Application.company == "招银网络"))
+    assert row.status == "WRITTEN"
+
+
+def test_import_blank_optional_fields_to_none(db_session: Session):
+    """TC-03：可选列留空入库为 NULL，而非空字符串。"""
+    content = "company,position,city,channel,remark\n哈啰出行,后端开发,,,\n".encode("utf-8")
+
+    result = application_service.import_from_file(db_session, "import.csv", content)
+
+    assert result.success_count == 1
+    row = db_session.scalar(select(Application).where(Application.company == "哈啰出行"))
+    assert (row.city, row.channel, row.remark) == (None, None, None)
