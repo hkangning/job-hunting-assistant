@@ -51,6 +51,8 @@ __pycache__/
 .coverage
 htmlcov/
 *.db
+*.db-shm
+*.db-wal
 
 # ===== 本地覆盖文件 =====
 *.local
