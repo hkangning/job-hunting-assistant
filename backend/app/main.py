@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.database import init_db
 from app.exceptions import register_exception_handlers
 from app.routers import health
 
@@ -18,8 +19,8 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动/关闭钩子：建库、种子导入与定时任务注册按开发步骤在后续接入此处。"""
-    # TODO(步骤 2)：建表 + 种子题库幂等导入
+    """启动钩子：建库 + 种子导入（步骤 2，幂等）；定时任务注册见步骤 17。"""
+    init_db()
     # TODO(步骤 17)：注册每日提醒定时任务
     yield
 
