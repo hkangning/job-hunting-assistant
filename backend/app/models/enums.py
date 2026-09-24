@@ -13,6 +13,14 @@ class ApplicationStatus(StrEnum):
     CLOSED = "CLOSED"  # 已结束
 
 
+class CloseReason(StrEnum):
+    """投递结束原因（application.close_reason，仅 status=CLOSED 时有值）。"""
+
+    FAILED = "FAILED"  # 未通过（笔试/面试被淘汰）
+    DECLINED = "DECLINED"  # 主动放弃（拒 offer、不去面试等）
+    EXPIRED = "EXPIRED"  # 无消息（长期无进展，自己归档）
+
+
 class Direction(StrEnum):
     """题目/面试方向（question.direction、interview_session.direction）。"""
 

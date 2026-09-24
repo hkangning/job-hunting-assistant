@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.enums import ApplicationStatus
+from app.models.enums import ApplicationStatus, CloseReason
 from app.schemas.application import (
     ApplicationCreate,
     ApplicationDTO,
@@ -59,6 +59,7 @@ async def import_applications(
 @router.get("", response_model=ApiResponse[PageData[ApplicationListItem]], summary="投递列表（筛选+分页）")
 def list_applications(
     status: ApplicationStatus | None = Query(None, description="状态过滤（枚举值）"),
+    close_reason: CloseReason | None = Query(None, description="结束原因过滤（枚举值，仅对已结束的记录有意义）"),
     city: str | None = Query(None, description="城市（精确匹配）"),
     company: str | None = Query(None, description="公司关键字（模糊匹配）"),
     page: int = Query(1, ge=1, description="页码，从 1 起"),
@@ -67,7 +68,13 @@ def list_applications(
 ) -> ApiResponse[PageData[ApplicationListItem]]:
     """投递列表：按投递日期倒序，列表项不含备注（接口文档 3.3）。"""
     data = application_service.list_applications(
-        db, status=status, city=city, company=company, page=page, page_size=page_size
+        db,
+        status=status,
+        close_reason=close_reason,
+        city=city,
+        company=company,
+        page=page,
+        page_size=page_size,
     )
     return ApiResponse[PageData[ApplicationListItem]](data=data)
 

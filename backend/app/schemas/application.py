@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints, field_serializer
 
-from app.models.enums import ApplicationStatus
+from app.models.enums import ApplicationStatus, CloseReason
 from app.utils.datetime_utils import format_datetime
 
 # TrendItem 的字段名 date 与类型名 datetime.date 同名，会触发 Pydantic 注解解析冲突，故用别名
@@ -30,6 +30,10 @@ class ApplicationCreate(BaseModel):
         default=None,
         description="进度状态，不传默认 APPLIED；取值 APPLIED（已投递）/WRITTEN（待笔试）/INTERVIEW（面试中）/OFFER（已获 offer）/CLOSED（已结束）",
     )
+    close_reason: CloseReason | None = Field(
+        default=None,
+        description="结束原因，取值 FAILED（未通过）/DECLINED（主动放弃）/EXPIRED（无消息）；仅记录处于 CLOSED 时可改，其余状态下传该字段返回 10001",
+    )
     next_event_at: datetime | None = Field(default=None, description="下次笔试/面试时间 YYYY-MM-DD HH:mm:ss")
     remark: str | None = Field(default=None, description="备注，不限长度")
 
@@ -38,7 +42,11 @@ class ApplicationStatusUpdate(BaseModel):
     """状态流转请求体（PATCH /applications/{id}/status）。"""
 
     status: ApplicationStatus = Field(
-        description="目标状态；合法流转见 SRS FR-004 状态机：已投递→待笔试→面试中→已获 offer，任意非终态可流转至已结束"
+        description="目标状态；合法流转见 SRS FR-004 状态机：已投递→待笔试→面试中→已获 offer，除已结束外任意状态均可流转至已结束（不可回退）"
+    )
+    close_reason: CloseReason | None = Field(
+        default=None,
+        description="结束原因，取值 FAILED（未通过）/DECLINED（主动放弃）/EXPIRED（无消息）；status=CLOSED 时必填（缺失返回 10001），转其他状态时忽略并清空",
     )
     event_at: datetime | None = Field(
         default=None, description="转为 WRITTEN/INTERVIEW 时可同时更新下次笔试/面试时间 YYYY-MM-DD HH:mm:ss"
@@ -59,6 +67,7 @@ class ApplicationDTO(BaseModel):
     status: ApplicationStatus = Field(
         description="进度状态：APPLIED（已投递）/WRITTEN（待笔试）/INTERVIEW（面试中）/OFFER（已获 offer）/CLOSED（已结束）"
     )
+    close_reason: CloseReason | None = Field(description="结束原因，仅 status=CLOSED 时有值，其余状态恒为 null")
     next_event_at: datetime | None = Field(description="下次笔试/面试时间，未填为 null")
     remark: str | None = Field(description="备注，未填为 null")
     created_at: datetime = Field(description="创建时间 YYYY-MM-DD HH:mm:ss")

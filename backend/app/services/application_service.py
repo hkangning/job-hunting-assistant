@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.exceptions import BizException, ErrorCode
 from app.models import Application, InterviewSession, JdAnalysisReport
-from app.models.enums import ApplicationStatus
+from app.models.enums import ApplicationStatus, CloseReason
 from app.schemas.application import (
     ApplicationCreate,
     ApplicationDTO,
@@ -32,12 +32,12 @@ from app.schemas.application import (
 from app.schemas.common import PageData
 from app.utils.datetime_utils import DATE_FORMAT, date_range, to_datetime
 
-# 合法状态流转（SRS FR-004）：已投递→待笔试→面试中→已获 offer；任意非终态可流转至已结束（终态=OFFER/CLOSED）
+# 合法状态流转（SRS FR-004）：已投递→待笔试→面试中→已获 offer；除已结束外任意状态均可流转至已结束（含 OFFER，覆盖拒 offer / 被撤回 / 谈崩），不可回退
 LEGAL_TRANSITIONS: dict[ApplicationStatus, frozenset[ApplicationStatus]] = {
     ApplicationStatus.APPLIED: frozenset({ApplicationStatus.WRITTEN, ApplicationStatus.CLOSED}),
     ApplicationStatus.WRITTEN: frozenset({ApplicationStatus.INTERVIEW, ApplicationStatus.CLOSED}),
     ApplicationStatus.INTERVIEW: frozenset({ApplicationStatus.OFFER, ApplicationStatus.CLOSED}),
-    ApplicationStatus.OFFER: frozenset(),
+    ApplicationStatus.OFFER: frozenset({ApplicationStatus.CLOSED}),
     ApplicationStatus.CLOSED: frozenset(),
 }
 
@@ -48,6 +48,13 @@ STATUS_LABELS: dict[ApplicationStatus, str] = {
     ApplicationStatus.INTERVIEW: "面试中",
     ApplicationStatus.OFFER: "已获 offer",
     ApplicationStatus.CLOSED: "已结束",
+}
+
+# 结束原因中文名（数据库设计 §5），仅用于错误提示文案
+CLOSE_REASON_LABELS: dict[CloseReason, str] = {
+    CloseReason.FAILED: "未通过",
+    CloseReason.DECLINED: "主动放弃",
+    CloseReason.EXPIRED: "无消息",
 }
 
 # 导入模板表头（接口文档 3.3）与必填列
@@ -64,15 +71,18 @@ def list_applications(
     db: Session,
     *,
     status: ApplicationStatus | None = None,
+    close_reason: CloseReason | None = None,
     city: str | None = None,
     company: str | None = None,
     page: int = 1,
     page_size: int = 10,
 ) -> PageData[ApplicationListItem]:
-    """投递列表：状态/城市/公司关键字筛选 + 分页，按投递日期倒序（最近投递在前）。"""
+    """投递列表：状态/结束原因/城市/公司关键字筛选 + 分页，按投递日期倒序（最近投递在前）。"""
     conditions = []
     if status is not None:
         conditions.append(Application.status == status)
+    if close_reason is not None:
+        conditions.append(Application.close_reason == close_reason)
     if city:
         conditions.append(Application.city == city)
     if company:
@@ -118,6 +128,7 @@ def trend(db: Session, days: int) -> TrendData:
 def create_application(db: Session, payload: ApplicationCreate) -> ApplicationDTO:
     """新增投递：status 缺省 APPLIED、applied_at 缺省当天（接口文档 3.3）。"""
     now = datetime.now()
+    status = payload.status or ApplicationStatus.APPLIED
     app = Application(
         company=payload.company,
         position=payload.position,
@@ -125,7 +136,9 @@ def create_application(db: Session, payload: ApplicationCreate) -> ApplicationDT
         expected_salary=payload.expected_salary,
         applied_at=to_datetime(payload.applied_at or date.today()),
         channel=payload.channel,
-        status=payload.status or ApplicationStatus.APPLIED,
+        status=status,
+        # 结束原因仅在记录处于 CLOSED 时有值（数据库设计 3.1）
+        close_reason=payload.close_reason if status == ApplicationStatus.CLOSED else None,
         next_event_at=payload.next_event_at,
         remark=payload.remark,
         created_at=now,
@@ -138,14 +151,22 @@ def create_application(db: Session, payload: ApplicationCreate) -> ApplicationDT
 
 
 def update_application(db: Session, application_id: int, payload: ApplicationCreate) -> ApplicationDTO:
-    """编辑投递：全量更新，未传字段按空处理；status 不在本接口变更（走 PATCH，接口文档 3.3）。"""
+    """编辑投递：全量更新，未传字段按空处理；status 不在本接口变更（走 PATCH，接口文档 3.3）。
+
+    结束原因仅在记录当前处于 CLOSED 时可改（用于更正选错的原因），其余状态下传该字段返回 10001。
+    """
     app = _get_or_raise(db, application_id)
+    is_closed = ApplicationStatus(app.status) == ApplicationStatus.CLOSED
+    if payload.close_reason is not None and not is_closed:
+        raise BizException(ErrorCode.PARAM_INVALID, "仅已结束的投递可修改结束原因")
     app.company = payload.company
     app.position = payload.position
     app.city = payload.city
     app.expected_salary = payload.expected_salary
     app.applied_at = to_datetime(payload.applied_at or date.today())
     app.channel = payload.channel
+    if is_closed:
+        app.close_reason = payload.close_reason
     app.next_event_at = payload.next_event_at
     app.remark = payload.remark
     app.updated_at = datetime.now()
@@ -168,7 +189,7 @@ def delete_application(db: Session, application_id: int) -> None:
 
 
 def change_status(db: Session, application_id: int, payload: ApplicationStatusUpdate) -> ApplicationDTO:
-    """状态流转：按 SRS FR-004 状态机校验，非法流转返回 10001。"""
+    """状态流转：按 SRS FR-004 状态机校验，非法流转返回 10001；转 CLOSED 必须带结束原因。"""
     app = _get_or_raise(db, application_id)
     current = ApplicationStatus(app.status)
     target = payload.status
@@ -177,9 +198,13 @@ def change_status(db: Session, application_id: int, payload: ApplicationStatusUp
             ErrorCode.PARAM_INVALID,
             f"非法状态流转：{STATUS_LABELS[current]} → {STATUS_LABELS[target]}",
         )
+    if target == ApplicationStatus.CLOSED and payload.close_reason is None:
+        raise BizException(ErrorCode.PARAM_INVALID, "流转至已结束必须指明结束原因（未通过/主动放弃/无消息）")
 
     now = datetime.now()
     app.status = target
+    # 结束原因仅在 CLOSED 态有值：转其他状态时清空（数据库设计 3.1）
+    app.close_reason = payload.close_reason if target == ApplicationStatus.CLOSED else None
     # event_at 仅在转为 WRITTEN/INTERVIEW 时更新下次考试/面试时间（接口文档 3.3）
     if payload.event_at is not None and target in (ApplicationStatus.WRITTEN, ApplicationStatus.INTERVIEW):
         app.next_event_at = payload.event_at
@@ -408,6 +433,7 @@ def _to_dto(app: Application) -> ApplicationDTO:
         applied_at=app.applied_at.date(),
         channel=app.channel,
         status=ApplicationStatus(app.status),
+        close_reason=CloseReason(app.close_reason) if app.close_reason else None,
         next_event_at=app.next_event_at,
         remark=app.remark,
         created_at=app.created_at,

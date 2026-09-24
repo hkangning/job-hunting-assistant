@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.exceptions import BizException, ErrorCode
 from app.models import Application, InterviewSession, JdAnalysisReport
-from app.models.enums import ApplicationStatus
+from app.models.enums import ApplicationStatus, CloseReason
 from app.schemas.application import ApplicationCreate, ApplicationStatusUpdate
 from app.services import application_service
 
@@ -64,19 +64,27 @@ def test_change_status_legal_chain(db_session: Session):
 
 @pytest.mark.parametrize(
     "start",
-    [ApplicationStatus.APPLIED, ApplicationStatus.WRITTEN, ApplicationStatus.INTERVIEW],
+    [
+        ApplicationStatus.APPLIED,
+        ApplicationStatus.WRITTEN,
+        ApplicationStatus.INTERVIEW,
+        ApplicationStatus.OFFER,  # 拒 offer / 被撤回 / 谈崩，同样可结束
+    ],
 )
 def test_change_status_closed_from_any_active_state(db_session: Session, start: ApplicationStatus):
-    """TC-02：任意非终态均可流转至 CLOSED。"""
+    """TC-02：除已结束外任意状态（含 OFFER）均可流转至 CLOSED，结束原因同时入库。"""
     dto = application_service.create_application(
         db_session, ApplicationCreate(company="亚信科技", position="后端开发", status=start)
     )
 
     dto = application_service.change_status(
-        db_session, dto.id, ApplicationStatusUpdate(status=ApplicationStatus.CLOSED)
+        db_session,
+        dto.id,
+        ApplicationStatusUpdate(status=ApplicationStatus.CLOSED, close_reason=CloseReason.FAILED),
     )
 
     assert dto.status == ApplicationStatus.CLOSED
+    assert dto.close_reason == CloseReason.FAILED
 
 
 @pytest.mark.parametrize(
@@ -85,8 +93,7 @@ def test_change_status_closed_from_any_active_state(db_session: Session, start: 
         (ApplicationStatus.APPLIED, ApplicationStatus.INTERVIEW),  # 跳级
         (ApplicationStatus.APPLIED, ApplicationStatus.OFFER),  # 跳级
         (ApplicationStatus.APPLIED, ApplicationStatus.APPLIED),  # 原地不动
-        (ApplicationStatus.OFFER, ApplicationStatus.CLOSED),  # 终态不可再流转
-        (ApplicationStatus.CLOSED, ApplicationStatus.WRITTEN),
+        (ApplicationStatus.CLOSED, ApplicationStatus.WRITTEN),  # 已结束不可回退
     ],
 )
 def test_change_status_illegal_rejected(db_session: Session, start: ApplicationStatus, target: ApplicationStatus):
@@ -293,6 +300,24 @@ def test_application_invalid_payload(client: TestClient):
     assert client.get(f"{API}/9999999").json()["code"] == 10002
 
 
+def test_close_reason_api_flow(client: TestClient):
+    """TC-26：结束原因接口口径——缺 reason 结束被拒 10001、带 reason 成功且可回读、列表按 reason 筛选。"""
+    app_id = client.post(API, json={"company": "亚信安全", "position": "Java 开发"}).json()["data"]["id"]
+
+    assert client.patch(f"{API}/{app_id}/status", json={"status": "CLOSED"}).json()["code"] == 10001
+
+    closed = client.patch(
+        f"{API}/{app_id}/status", json={"status": "CLOSED", "close_reason": "DECLINED"}
+    ).json()["data"]
+    assert closed["status"] == "CLOSED"
+    assert closed["close_reason"] == "DECLINED"
+
+    assert client.patch(f"{API}/{app_id}/status", json={"status": "INTERVIEW"}).json()["code"] == 10001  # 不可回退
+    assert client.get(API, params={"close_reason": "FAILD"}).json()["code"] == 10001  # 非法枚举值
+    assert client.get(API, params={"close_reason": "DECLINED"}).json()["data"]["total"] == 1
+    assert client.get(f"{API}/{app_id}").json()["data"]["close_reason"] == "DECLINED"
+
+
 def test_import_endpoints_api(client: TestClient):
     """TC-26：模板下载返回 xlsx 文件流；上传导入成功与全非法（20002 带行级清单）。"""
     template = client.get(f"{API}/template")
@@ -391,10 +416,15 @@ def test_change_status_event_at_ignored_for_closed(db_session: Session):
     dto = application_service.change_status(
         db_session,
         dto.id,
-        ApplicationStatusUpdate(status=ApplicationStatus.CLOSED, event_at=datetime(2026, 10, 1, 9, 0, 0)),
+        ApplicationStatusUpdate(
+            status=ApplicationStatus.CLOSED,
+            close_reason=CloseReason.EXPIRED,
+            event_at=datetime(2026, 10, 1, 9, 0, 0),
+        ),
     )
 
     assert dto.status == ApplicationStatus.CLOSED
+    assert dto.close_reason == CloseReason.EXPIRED
     assert dto.next_event_at == original
 
 
@@ -456,6 +486,152 @@ def test_change_status_not_found(db_session: Session):
 
     assert exc_info.value.code == ErrorCode.NOT_FOUND
     assert db_session.query(Application).count() == 0
+
+
+# ---------- B 组补充：结束原因 close_reason（除已结束外任意状态可结束） ----------
+
+
+def test_change_status_closed_requires_reason(db_session: Session):
+    """TC-02：流转至 CLOSED 未指明结束原因 → 10001，且库中状态不变。"""
+    dto = application_service.create_application(
+        db_session, ApplicationCreate(company="神州信息", position="Java 开发")
+    )
+
+    with pytest.raises(BizException) as exc_info:
+        application_service.change_status(
+            db_session, dto.id, ApplicationStatusUpdate(status=ApplicationStatus.CLOSED)
+        )
+
+    assert exc_info.value.code == ErrorCode.PARAM_INVALID
+    db_session.expire_all()
+    row = db_session.get(Application, dto.id)
+    assert row.status == ApplicationStatus.APPLIED
+    assert row.close_reason is None
+
+
+def test_change_status_closed_writes_reason(db_session: Session):
+    """TC-02：流转至 CLOSED 时结束原因入库，DTO 与库内一致。"""
+    dto = application_service.create_application(
+        db_session, ApplicationCreate(company="东软集团", position="Java 开发")
+    )
+
+    dto = application_service.change_status(
+        db_session,
+        dto.id,
+        ApplicationStatusUpdate(status=ApplicationStatus.CLOSED, close_reason=CloseReason.DECLINED),
+    )
+
+    assert dto.status == ApplicationStatus.CLOSED
+    assert dto.close_reason == CloseReason.DECLINED
+    assert db_session.get(Application, dto.id).close_reason == "DECLINED"
+
+
+def test_change_status_active_has_no_reason(db_session: Session):
+    """TC-02：非 CLOSED 态的 close_reason 恒为 null（合法链路上逐跳核对）。"""
+    dto = application_service.create_application(
+        db_session, ApplicationCreate(company="满帮集团", position="Java 开发")
+    )
+
+    for target in (ApplicationStatus.WRITTEN, ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER):
+        dto = application_service.change_status(db_session, dto.id, ApplicationStatusUpdate(status=target))
+        assert dto.close_reason is None
+
+
+def test_create_close_reason_kept_only_when_closed(db_session: Session):
+    """TC-01：新增时结束原因仅 CLOSED 态入库，非 CLOSED 态传该字段被忽略（不报错）。"""
+    closed = application_service.create_application(
+        db_session,
+        ApplicationCreate(
+            company="汉得信息",
+            position="Java 开发",
+            status=ApplicationStatus.CLOSED,
+            close_reason=CloseReason.EXPIRED,
+        ),
+    )
+    active = application_service.create_application(
+        db_session,
+        ApplicationCreate(
+            company="华苏科技",
+            position="Java 开发",
+            status=ApplicationStatus.APPLIED,
+            close_reason=CloseReason.FAILED,
+        ),
+    )
+
+    assert closed.close_reason == CloseReason.EXPIRED
+    assert active.close_reason is None
+    assert db_session.get(Application, active.id).close_reason is None
+
+
+def test_update_close_reason_rejected_when_not_closed(db_session: Session):
+    """TC-26：编辑接口对非 CLOSED 记录传结束原因 → 10001，且不产生部分更新。"""
+    dto = application_service.create_application(
+        db_session, ApplicationCreate(company="焦点科技", position="Java 开发", city="南京")
+    )
+
+    with pytest.raises(BizException) as exc_info:
+        application_service.update_application(
+            db_session,
+            dto.id,
+            ApplicationCreate(company="焦点科技", position="Java 开发", close_reason=CloseReason.FAILED),
+        )
+
+    assert exc_info.value.code == ErrorCode.PARAM_INVALID
+    db_session.expire_all()
+    row = db_session.get(Application, dto.id)
+    assert row.city == "南京" and row.close_reason is None
+
+
+def test_update_close_reason_allowed_when_closed(db_session: Session):
+    """TC-26：已结束记录可更正结束原因（原因选错时的修正路径）。"""
+    dto = application_service.create_application(
+        db_session,
+        ApplicationCreate(
+            company="润和软件",
+            position="Java 开发",
+            status=ApplicationStatus.CLOSED,
+            close_reason=CloseReason.FAILED,
+        ),
+    )
+
+    dto = application_service.update_application(
+        db_session,
+        dto.id,
+        ApplicationCreate(company="润和软件", position="Java 开发", close_reason=CloseReason.DECLINED),
+    )
+
+    assert dto.status == ApplicationStatus.CLOSED
+    assert dto.close_reason == CloseReason.DECLINED
+
+
+def test_list_filter_by_close_reason(db_session: Session):
+    """TC-26：列表按结束原因过滤，命中项 close_reason 一致，未结束记录不计入。"""
+    expected = {
+        "南京银行": CloseReason.FAILED,
+        "江苏电信": CloseReason.DECLINED,
+        "莱斯信息": CloseReason.EXPIRED,
+    }
+    for company, reason in expected.items():
+        application_service.create_application(
+            db_session,
+            ApplicationCreate(
+                company=company,
+                position="Java 开发",
+                status=ApplicationStatus.CLOSED,
+                close_reason=reason,
+            ),
+        )
+    application_service.create_application(
+        db_session, ApplicationCreate(company="富士通南大", position="Java 开发")
+    )
+
+    for company, reason in expected.items():
+        page = application_service.list_applications(db_session, close_reason=reason)
+        assert page.total == 1
+        assert page.items[0].company == company
+        assert page.items[0].close_reason == reason
+
+    assert application_service.list_applications(db_session).total == 4
 
 
 # ---------- C 组：导入文件级校验（20001 的其余分支） ----------

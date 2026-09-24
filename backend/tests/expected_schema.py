@@ -17,6 +17,7 @@ TABLES: dict[str, dict] = {
             ("applied_at", "DATETIME", False, False),
             ("channel", "VARCHAR(50)", True, False),
             ("status", "VARCHAR(20)", False, False),
+            ("close_reason", "VARCHAR(20)", True, False),
             ("next_event_at", "DATETIME", True, False),
             ("remark", "TEXT", True, False),
             ("created_at", "DATETIME", False, False),
@@ -242,6 +243,7 @@ TABLES: dict[str, dict] = {
 # 《数据库设计文档》§5 枚举口径（全系统唯一口径）
 ENUM_MEMBERS: dict[str, set[str]] = {
     "ApplicationStatus": {"APPLIED", "WRITTEN", "INTERVIEW", "OFFER", "CLOSED"},
+    "CloseReason": {"FAILED", "DECLINED", "EXPIRED"},
     "Direction": {"JAVA", "MYSQL", "NETWORK", "OS", "GENERAL"},
     "SessionStatus": {"ACTIVE", "FINISHED"},
     "ExperienceItemSource": {"LLM_EXTRACT", "MANUAL"},
