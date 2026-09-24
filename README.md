@@ -76,12 +76,13 @@ python -m uvicorn app.main:app --port 8000      # 启动 → http://127.0.0.1:80
 
 ```powershell
 cd frontend
-npm -v                                          # 需 ≥ 11.12.1；低了先执行 npm install -g npm@latest
+npm -v                                          # 需 ≥ 11.12.1（升级方式见下方注意）
 npm install
 npm run dev                                     # http://localhost:5173
 ```
 
 - **npm 需 ≥ 11.12.1**（Node 需 `^20.19.0 || >=22.12.0`，随 Vite 8）：低版本 npm（实测 11.6.1）会给锁文件里 optional 平台包写冗余的 `"dev": true` / `"peer": true` 标记，导致两人的 `package-lock.json` 反复互改（该差异不影响装出的依赖，属纯元数据噪声）；`frontend/.npmrc` 已设 `engine-strict=true`，版本不符时 `npm install` 会报 `EBADENGINE` 拒绝安装——这是有意的版本统一措施，请升级 npm 而非绕过
+- **升 npm 前先确认 Node 版本**：npm 12.x（当前 12.1.0）自身要求 Node `^22.22.2 || ^24.15.0 || >=26.0.0`，Node 低于此时 `npm install -g npm@latest` 会报 `EBADENGINE` 装不上（实测 Node 24.11.0 被拒）——先升 Node，或改装 `npm install -g npm@11.12.1`（两者产出的锁文件经实测逐行一致，均满足本工程要求）
 
 ### 跑测试（`backend/` 目录、虚拟环境已激活）
 
