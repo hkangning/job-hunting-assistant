@@ -1,18 +1,22 @@
-"""pytest 公共 fixture：独立测试库 + TestClient 与 AI mock 注入点（测试计划 1.1 / 1.3）。
+"""pytest 公共 fixture：独立测试库隔离 + TestClient（测试计划 v1.4 §1.1）。"""
 
-测试数据库一律用 tmp_path 下的独立 SQLite 文件，不碰开发库 backend/app.db。
-"""
-
-from collections.abc import Generator
+import os
+import shutil
+import tempfile
+from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, event
-from sqlalchemy.orm import Session, sessionmaker
 
-from app import database, models  # noqa: F401  导入模型以注册到 Base.metadata
-from app.database import Base
-from app.main import app
+# —— 测试库隔离：临时目录下的独立 SQLite 文件，不碰开发库（backend/app.db）——
+# 必须在任何 app.* 导入之前执行：app/config.py 的 Settings 在模块导入时即读取环境变量，
+# 一旦 app.config 先被导入，数据库地址就固定为开发库，改不动了。
+_TEST_TMP_DIR = Path(tempfile.mkdtemp(prefix="jobpilot-test-"))
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_TMP_DIR.as_posix()}/test.db"
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.database import engine  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture()
@@ -43,3 +47,9 @@ def client(test_engine: Engine) -> Generator[TestClient, None, None]:
     """API 集成测试客户端：lifespan 走真实启动路径（测试库上建表 + 导种子）。"""
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """会话收尾：先释放连接再删临时目录（Windows 下未 dispose 会因句柄占用而删不掉）。"""
+    engine.dispose()
+    shutil.rmtree(_TEST_TMP_DIR, ignore_errors=True)
