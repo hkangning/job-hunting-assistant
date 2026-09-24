@@ -27,7 +27,7 @@
 
 - [x] 选题确定（个人求职助手）
 - [x] 文档定稿（项目介绍/需求/设计/数据库/接口/测试/开发计划）
-- [ ] 开发（按开发计划 21 个步骤 / 5 个阶段推进，不预设时间节点；当前：步骤 1 工程骨架已完成）
+- [ ] 开发（按开发计划 21 个步骤 / 5 个阶段推进，不预设时间节点；当前：步骤 3 投递管理已完成）
 
 ## 目录结构
 
@@ -40,7 +40,8 @@ job-hunting-assistant/
 │   ├── 03-数据库/      数据库设计文档
 │   ├── 04-接口文档/    接口文档
 │   ├── 05-测试文档/    测试计划
-│   └── 06-开发计划/    开发计划
+│   ├── 06-开发计划/    开发计划
+│   └── 07-工作日志/    后端 / 前端工作日志 + 问题记录
 ├── backend/     # 后端（FastAPI）
 ├── frontend/    # 前端（Vue 3）
 └── README.md    # 本文件
@@ -75,12 +76,12 @@ python -m uvicorn app.main:app --port 8000      # 启动 → http://127.0.0.1:80
 
 ```powershell
 cd frontend
-npm -v                                          # 需 ≥ 11；低了先执行 npm install -g npm@latest
+npm -v                                          # 需 ≥ 11.12.1；低了先执行 npm install -g npm@latest
 npm install
 npm run dev                                     # http://localhost:5173
 ```
 
-- **npm 需 ≥ 11**（Node 需 `^20.19.0 || >=22.12.0`，随 Vite 8）：低版本 npm 会给锁文件里 optional 平台包写冗余的 `"dev": true`，导致两人的 `package-lock.json` 反复互改；`frontend/.npmrc` 已设 `engine-strict=true`，版本不符时 `npm install` 会报 `EBADENGINE` 拒绝安装——这是有意的版本统一措施，请升级 npm 而非绕过
+- **npm 需 ≥ 11.12.1**（Node 需 `^20.19.0 || >=22.12.0`，随 Vite 8）：低版本 npm（实测 11.6.1）会给锁文件里 optional 平台包写冗余的 `"dev": true` / `"peer": true` 标记，导致两人的 `package-lock.json` 反复互改（该差异不影响装出的依赖，属纯元数据噪声）；`frontend/.npmrc` 已设 `engine-strict=true`，版本不符时 `npm install` 会报 `EBADENGINE` 拒绝安装——这是有意的版本统一措施，请升级 npm 而非绕过
 
 ### 跑测试（`backend/` 目录、虚拟环境已激活）
 
