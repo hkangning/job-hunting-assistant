@@ -1,0 +1,75 @@
+/* 设计 token —— 全站色彩/间距/圆角的唯一出处（系统设计文档 4.5）
+   必须在 element-plus/dist/index.css 之后引入，否则覆盖不生效 */
+
+:root {
+  /* ---------- 品牌与模块色 ---------- */
+  --brand: #6B4E9E;
+  --m-application: #3B7BB5;
+  --m-jd: #2E8B8B;
+  --m-interview: #B07C2E;
+  --m-practice: #3D8E63;
+  --m-wrong: #B8506E;
+  --m-experience: #C2553E;
+  --m-system: #6E6880;
+
+  /* ---------- 投递状态色（对齐数据库设计文档第 5 章枚举） ---------- */
+  --s-applied: #3B7BB5;
+  --s-written: #6B4E9E;
+  --s-interview: #B07C2E;
+  --s-offer: #3D8E63;
+  --s-closed: #8A8794;
+
+  /* ---------- 中性色 ---------- */
+  --c-bg: #FAFAFB;
+  --c-card: #FFFFFF;
+  --c-sidebar: #FBFAFC;
+  --c-border: #EDEAF2;
+  --c-divider: #F4F2F8;
+  --c-text: #1F1B2E;
+  --c-text-2: #6E6880;
+  --c-text-3: #9B92B5;
+
+  /* ---------- 间距 ---------- */
+  --content-padding: 20px 22px;
+  --card-padding: 16px 18px;
+  --card-gap: 14px;
+
+  /* ---------- 圆角（按层级区分，不统一；理由见设计文档 4.5.3） ---------- */
+  --r-card: 8px;
+  --r-control: 6px;
+  --r-menu: 5px;
+  --r-mark: 4px;
+  --r-bar: 2px;
+
+  /* ---------- 布局 ---------- */
+  --sidebar-w: 230px;
+  --sidebar-w-collapsed: 64px;
+  --header-h: 56px;
+}
+
+/* ---------- Element Plus 主题覆盖：只改视觉变量，不改组件行为 ---------- */
+:root {
+  --el-color-primary: #6B4E9E;
+  --el-color-primary-light-3: #9783BB;
+  --el-color-primary-light-5: #B5A7CF;
+  --el-color-primary-light-7: #D3CAE2;
+  --el-color-primary-light-8: #E1DCEC;
+  --el-color-primary-light-9: #F0EDF5;
+  --el-color-primary-dark-2: #563E7E;
+
+  --el-border-radius-base: var(--r-control);
+  --el-border-radius-small: var(--r-menu);
+
+  --el-text-color-primary: var(--c-text);
+  --el-text-color-regular: var(--c-text-2);
+  --el-border-color-light: var(--c-border);
+  --el-fill-color-lighter: var(--c-bg);
+
+  --el-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+
+/* 数字纵向对齐（设计文档 4.5.2） */
+body {
+  font-variant-numeric: tabular-nums;
+}

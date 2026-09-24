@@ -32,6 +32,10 @@ task_plan.md
 findings.md
 progress.md
 
+# ===== AI 工作过程文档（设计/计划，不入库）=====
+# docs/ 是公共文件区，只放 00~06 体系文档，避免同步时污染对方分支
+docs/superpowers/
+
 # ===== 依赖与构建产物 =====
 node_modules/
 dist/
