@@ -75,9 +75,12 @@ python -m uvicorn app.main:app --port 8000      # 启动 → http://127.0.0.1:80
 
 ```powershell
 cd frontend
+npm -v                                          # 需 ≥ 11；低了先执行 npm install -g npm@latest
 npm install
 npm run dev                                     # http://localhost:5173
 ```
+
+- **npm 需 ≥ 11**（Node 需 `^20.19.0 || >=22.12.0`，随 Vite 8）：低版本 npm 会给锁文件里 optional 平台包写冗余的 `"dev": true`，导致两人的 `package-lock.json` 反复互改；`frontend/.npmrc` 已设 `engine-strict=true`，版本不符时 `npm install` 会报 `EBADENGINE` 拒绝安装——这是有意的版本统一措施，请升级 npm 而非绕过
 
 ### 跑测试（`backend/` 目录、虚拟环境已激活）
 
