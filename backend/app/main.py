@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
 from app.exceptions import register_exception_handlers
-from app.routers import health
+from app.routers import applications, health
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,3 +42,4 @@ app.add_middleware(
 register_exception_handlers(app)
 
 app.include_router(health.router, prefix=settings.api_prefix)
+app.include_router(applications.router, prefix=settings.api_prefix)

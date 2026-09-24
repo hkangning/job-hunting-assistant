@@ -42,11 +42,15 @@ class ErrorCode(IntEnum):
 
 
 class BizException(Exception):
-    """业务异常：服务层直接抛出，由全局处理器转成统一响应体；SSE 场景取 code/message 发 error 事件。"""
+    """业务异常：服务层直接抛出，由全局处理器转成统一响应体；SSE 场景取 code/message 发 error 事件。
 
-    def __init__(self, code: ErrorCode, message: str | None = None):
+    `data` 用于错误响应需携带明细的场景（如导入全行非法时回传行级错误清单，错误码 20002）。
+    """
+
+    def __init__(self, code: ErrorCode, message: str | None = None, data: dict | None = None):
         self.code = code
         self.message = message or code.default_message
+        self.data = data
         super().__init__(self.message)
 
     @property
@@ -54,9 +58,9 @@ class BizException(Exception):
         return self.code.http_status
 
 
-def error_body(code: ErrorCode, message: str | None = None) -> dict:
+def error_body(code: ErrorCode, message: str | None = None, data: dict | None = None) -> dict:
     """统一响应体的错误形态（结构与 schemas.common.ApiResponse 一致）。"""
-    return {"code": int(code), "message": message or code.default_message, "data": None}
+    return {"code": int(code), "message": message or code.default_message, "data": data}
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -64,7 +68,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(BizException)
     async def _biz_handler(request: Request, exc: BizException) -> JSONResponse:
-        return JSONResponse(status_code=exc.http_status, content=error_body(exc.code, exc.message))
+        return JSONResponse(status_code=exc.http_status, content=error_body(exc.code, exc.message, exc.data))
 
     @app.exception_handler(RequestValidationError)
     async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
