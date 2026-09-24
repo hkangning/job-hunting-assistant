@@ -46,6 +46,8 @@ service.interceptors.response.use(
     if (error.response && error.response.data) {
       bizError.code = error.response.data.code
       bizError.httpStatus = error.response.status
+      // 错误响应携带的业务明细（如导入全行非法时 20002 的行级错误清单）
+      bizError.data = error.response.data.data
     }
     return Promise.reject(bizError)
   }

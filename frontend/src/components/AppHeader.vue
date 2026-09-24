@@ -12,9 +12,9 @@ const route = useRoute()
 const router = useRouter()
 const title = computed(() => route.meta.title || '')
 
-// 「新增投递」是最高频操作，固定在顶栏；真正的弹窗由步骤 4 提供
+// 「新增投递」是最高频操作，固定在顶栏；跳转带 query，由投递页打开新增表单
 function goNewApplication() {
-  router.push('/applications')
+  router.push({ path: '/applications', query: { action: 'new' } })
 }
 </script>
 
@@ -26,6 +26,8 @@ function goNewApplication() {
     <h1 class="app-header__title">{{ title }}</h1>
 
     <div class="app-header__actions">
+      <!-- 页面级操作注入位：页面组件用 <Teleport to="#app-header-actions-slot"> 注入 -->
+      <div id="app-header-actions-slot" class="app-header__slot"></div>
       <slot name="actions" />
       <el-icon class="app-header__icon" title="提醒"><Bell /></el-icon>
       <el-button type="primary" size="small" @click="goNewApplication">＋ 新增投递</el-button>
@@ -60,6 +62,14 @@ function goNewApplication() {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+.app-header__slot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.app-header__slot:empty {
+  display: none;
 }
 .app-header__icon {
   font-size: 17px;
