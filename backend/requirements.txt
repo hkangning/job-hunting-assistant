@@ -1,4 +1,4 @@
-# 安装：python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+# 安装（backend/ 目录，Windows PowerShell）：python -m venv .venv → .\.venv\Scripts\Activate.ps1 → pip install -r requirements.txt
 # 版本锁定为 2026-09-24 首次安装实测版本（venv：Python 3.13.5）
 fastapi==0.141.1
 uvicorn[standard]==0.53.0

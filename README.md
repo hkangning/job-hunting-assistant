@@ -55,16 +55,34 @@ job-hunting-assistant/
 
 ## 快速开始
 
-```bash
-# 后端
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --port 8000
+> 命令以 **Windows PowerShell** 为准（VS Code 终端直接用）。Linux / macOS：路径 `\` 换成 `/`，激活改用 `source .venv/bin/activate`。
 
-# 前端
+### 后端
+
+```powershell
+cd backend
+python -m venv .venv                            # 首次：创建虚拟环境（已建过可跳过）
+.\.venv\Scripts\Activate.ps1                    # 激活（成功后命令行前显示 (.venv)）
+pip install -r requirements.txt                 # 首次：安装依赖
+python -m uvicorn app.main:app --port 8000      # 启动 → http://127.0.0.1:8000/api/v1/health
+```
+
+- 激活时提示"禁止运行脚本" → 先执行一次 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+- `python` 提示找不到 → 系统未把 Python 加入 PATH，改用其安装目录全路径，如 `C:\Python313\python.exe -m venv .venv`
+- 不想每次激活（每个新终端都要重新激活）→ 把 `pip` / `python` 换成 `.\.venv\Scripts\python.exe -m pip` / `.\.venv\Scripts\python.exe`
+
+### 前端
+
+```powershell
 cd frontend
 npm install
-npm run dev        # http://localhost:5173
+npm run dev                                     # http://localhost:5173
+```
+
+### 跑测试（`backend/` 目录、虚拟环境已激活）
+
+```powershell
+pytest                                          # 全量（LLM 全 mock，离线可跑）
 ```
 
 首次使用：进入系统设置页，选择 AI 供应商与模型（如 DeepSeek 的 deepseek-flash）→ 填写 API Key → 连通性测试 → 保存，即可使用全部 AI 功能。
