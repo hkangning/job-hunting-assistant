@@ -1,0 +1,770 @@
+[
+  {
+    "direction": "JAVA",
+    "content": "HashMap 的底层数据结构是什么？JDK 8 做了哪些优化？",
+    "answer": "JDK 7：数组 + 链表。JDK 8：数组 + 链表 + 红黑树——当单个桶的链表长度达到 8 且数组容量 ≥ 64 时转红黑树，元素减少到 6 时退化为链表。默认初始容量 16、负载因子 0.75，扩容为原容量 2 倍，JDK 8 用 (hash & oldCap) 判断元素留在原位还是移到高位，避免重算 hash。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "JDK 8 中 HashMap 单个桶的链表长度达到多少会转为红黑树？",
+    "answer": "8（同时要求数组容量 ≥ 64，否则先扩容）",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "ConcurrentHashMap 如何保证线程安全？JDK 7 与 JDK 8 的实现有何不同？",
+    "answer": "JDK 7：分段锁（Segment，继承 ReentrantLock），默认 16 段，不同段可并发写。JDK 8：取消分段锁，改 CAS + synchronized——put 时若桶为空用 CAS 写入，否则 synchronized 锁住桶的头节点；扩容支持多线程协同（ForwardingNode 标识迁移中）。size 用 baseCount + CounterCell 分散计数。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "JVM 运行时内存区域如何划分？哪些是线程共享的？",
+    "answer": "线程共享：堆（对象实例）、方法区（JDK 8 起为元空间，存类信息/常量/静态变量）。线程私有：虚拟机栈（栈帧：局部变量表/操作数栈/动态链接/返回地址）、本地方法栈、程序计数器。另有直接内存（NIO DirectByteBuffer，非运行时数据区）。堆是 GC 主战场，JDK 8 起字符串常量池移到堆中。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "常见的垃圾回收算法有哪些？分代收集如何搭配使用？",
+    "answer": "三种基础算法：标记-清除（碎片多）、标记-复制（无碎片、耗内存）、标记-整理（无碎片、移动对象成本高）。分代收集：新生代对象朝生夕死，用复制算法（Eden + 两个 Survivor，默认 8:1:1）；老年代对象存活率高，用标记-清除或标记-整理。对象晋升老年代的条件：年龄达阈值（默认 15）、大对象直接进老年代、Survivor 同年龄对象总和超一半。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "什么是双亲委派机制？有哪些场景会打破它？",
+    "answer": "类加载器收到加载请求先委派给父加载器（App → Ext/Platform → Bootstrap），父加载器无法完成才自己加载。好处：保证核心类库唯一、防止用户自定义类覆盖 JDK 类（如自己写 java.lang.String 不会被加载）。打破场景：①SPI（JDBC DriverManager）用线程上下文类加载器反向委派；②Tomcat 为实现 Web 应用隔离自定义 WebAppClassLoader 优先加载自身；③OSGi 模块化热部署。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "线程池的核心参数有哪些？提交任务后的执行流程是怎样的？",
+    "answer": "核心参数：corePoolSize、maximumPoolSize、keepAliveTime、unit、workQueue、threadFactory、handler（拒绝策略）。流程：①线程数 < core 时新建核心线程执行；②核心线程满则入队；③队列满且线程数 < max 时新建非核心线程；④队列满且线程数达 max 时触发拒绝策略（AbortPolicy 抛异常/CallerRunsPolicy 调用者执行/DiscardPolicy 丢弃/DiscardOldestPolicy 丢最老）。空闲非核心线程超 keepAliveTime 回收。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "线程池默认的核心线程数与最大线程数是多少？",
+    "answer": "Executors.newFixedThreadPool 的 core=max=传入值；newCachedThreadPool 的 core=0、max=Integer.MAX_VALUE；ThreadPoolExecutor 手工创建时由使用者指定，无默认值",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "synchronized 和 ReentrantLock 有什么区别？",
+    "answer": "①实现层面：synchronized 是 JVM 关键字（monitorenter/monitorexit 字节码），ReentrantLock 是 JDK 层 API（AQS 实现）。②ReentrantLock 支持公平锁、可中断获取锁、超时获取（tryLock）、多条件队列（Condition），synchronized 都不支持。③synchronized 自动释放锁（异常也释放），ReentrantLock 必须在 finally 中 unlock，否则死锁。④JDK 6 后 synchronized 有锁升级优化，性能差距不大，简单场景优先 synchronized。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "volatile 关键字的作用和实现原理是什么？它能保证原子性吗？",
+    "answer": "两个作用：①保证可见性——写操作立即刷新到主内存并让其他线程的缓存行失效（MESI 协议），读操作直接读主内存；②禁止指令重排序（内存屏障：写前 StoreStore、写后 StoreLoad，读后 LoadLoad/LoadStore）。不能保证原子性：i++ 是读-改-写三步，多线程下仍会丢失更新，需配合 synchronized 或 AtomicInteger（CAS）。典型用法：双重检查锁定的实例字段、状态标志位。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "ThreadLocal 的实现原理是什么？为什么会发生内存泄漏？",
+    "answer": "每个 Thread 内部持有 ThreadLocalMap，key 是 ThreadLocal 对象的弱引用，value 是强引用。泄漏原因：ThreadLocal 被回收后 key 为 null，但 value 仍被 Entry 强引用；线程池场景下线程长期存活，这些 value 无法回收。解决办法：用完显式调用 remove()。ThreadLocalMap 在 get/set 时会顺带清理 key 为 null 的 Entry。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "ThreadLocalMap 中 key（ThreadLocal 对象）使用的是什么类型的引用？",
+    "answer": "弱引用（WeakReference）",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "Java 的四种引用类型分别是什么？各自的使用场景？",
+    "answer": "①强引用：new 出的对象，只要可达就不回收，OOM 也不回收；②软引用 SoftReference：内存不足时才回收，适合做缓存；③弱引用 WeakReference：GC 时无论内存是否充足都回收，用于 ThreadLocalMap 的 key、WeakHashMap；④虚引用 PhantomReference：唯一用途是对象被回收时收到通知，配合 ReferenceQueue 管理直接内存（Cleaner）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "== 和 equals() 的区别是什么？为什么重写 equals 必须重写 hashCode？",
+    "answer": "== 比较：基本类型比数值，引用类型比地址。equals 是 Object 方法，默认等价于 ==，一般重写为比较内容。契约：equals 相等的两个对象 hashCode 必须相等；hashCode 相等 equals 不一定相等。若只重写 equals，两个「相等」的对象散列值不同，放进 HashSet/HashMap 会被当成两个 key，导致去重失效、get 不到。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "接口和抽象类有什么区别？如何选择？",
+    "answer": "①抽象类可以有构造器、成员变量、普通方法；接口（JDK 8 前）只能有抽象方法和常量，JDK 8 后可有 default/static 方法，JDK 9 后可有 private 方法。②类只能单继承抽象类，可实现多个接口。③抽象类表达 is-a 的模板复用，接口表达 can-do 的行为契约。④选择：需要共享状态和部分实现用抽象类，定义能力规范、要跨不同类层级复用用接口。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "ArrayList 和 LinkedList 的区别？ArrayList 的扩容机制是什么？",
+    "answer": "ArrayList 基于动态数组：随机访问 O(1)，中间插入删除需移动元素 O(n)，扩容为原容量 1.5 倍（oldCap + (oldCap >> 1)），默认初始容量 10（首次 add 时分配）。LinkedList 基于双向链表：头尾操作 O(1)，随机访问 O(n)，每个节点额外存前后指针更占内存。读多写少用 ArrayList，频繁头尾增删用 LinkedList（或 ArrayDeque）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "ArrayList 扩容时新容量是原容量的多少倍？",
+    "answer": "1.5 倍",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "String、StringBuilder、StringBuffer 的区别？String 为什么不可变？",
+    "answer": "String 不可变（final 类 + final char[]/byte[]，JDK 9 起为 byte[] + coder 压缩），每次拼接都产生新对象；StringBuilder 可变、非线程安全、性能最好；StringBuffer 可变、方法加 synchronized、线程安全但慢。不可变的好处：线程安全、可缓存 hash、字符串常量池复用、作为 HashMap key 安全。循环内拼接字符串必须用 StringBuilder。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "Java 异常体系中 Error 和 Exception 有什么区别？受检异常和非受检异常怎么选？",
+    "answer": "Throwable 分两支：Error（JVM 层严重问题，如 OOM、StackOverflowError，程序无法处理）、Exception（程序可处理）。Exception 又分受检异常（继承 Exception 但非 RuntimeException，必须 try-catch 或 throws 声明，如 IOException）和非受检异常（RuntimeException 及其子类，如 NPE、IllegalArgumentException，编译期不强制）。业务校验失败推荐用非受检异常。finally 中不要写 return（会覆盖 try 中的返回值并吞掉异常）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "Spring AOP 的实现原理是什么？JDK 动态代理和 CGLIB 有何区别？",
+    "answer": "AOP 通过代理对象在方法前后织入增强逻辑（@Before/@After/@Around）。JDK 动态代理：基于接口，运行时生成实现同一接口的代理类（Proxy + InvocationHandler），目标类必须有接口。CGLIB：基于继承，生成目标类的子类并重写方法，无法代理 final 类和 final 方法。Spring Boot 2.x 起默认统一使用 CGLIB（proxyTargetClass=true），避免接口缺失问题。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "Spring 如何解决循环依赖？三级缓存分别存什么？",
+    "answer": "三级缓存：singletonObjects（一级，成品 Bean）、earlySingletonObjects（二级，提前暴露的半成品）、singletonFactories（三级，ObjectFactory 工厂，用于生成早期引用/代理对象）。流程：A 实例化后把工厂放入三级缓存 → 注入属性时发现依赖 B → B 创建时又依赖 A → B 从三级缓存拿到 A 的早期引用完成创建 → A 完成初始化。只能解决单例 Bean 的 setter/字段注入循环依赖；构造器注入的循环依赖无法解决。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "@Transactional 在哪些情况下会失效？",
+    "answer": "①同类内部方法自调用（未走代理对象）；②方法不是 public（CGLIB 代理限制）；③异常被 catch 吞掉未抛出；④抛出受检异常但未配置 rollbackFor（默认只回滚 RuntimeException 和 Error）；⑤类未被 Spring 管理（自己 new 的对象）；⑥数据库引擎不支持事务（MyISAM）；⑦传播行为配成 NOT_SUPPORTED 等；⑧多线程调用（事务绑定在 ThreadLocal 上，子线程不共享）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "@Transactional 默认对哪种异常回滚？",
+    "answer": "RuntimeException 和 Error（受检异常默认不回滚）",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "Spring Boot 自动配置的原理是什么？",
+    "answer": "@SpringBootApplication = @SpringBootConfiguration + @EnableAutoConfiguration + @ComponentScan。@EnableAutoConfiguration 通过 @Import(AutoConfigurationImportSelector) 读取 META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports（Spring Boot 2.7 前是 spring.factories）拿到候选配置类全限定名；再经 @ConditionalOnClass/@ConditionalOnMissingBean/@ConditionalOnProperty 等条件注解过滤，只装配生效的配置。用户自定义 Bean 优先于自动配置（@ConditionalOnMissingBean 保证）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "Spring 事务的传播行为有哪些？REQUIRED 和 REQUIRES_NEW 的区别？",
+    "answer": "七种：REQUIRED（默认，有事务则加入，无则新建）、REQUIRES_NEW（总是新建，挂起当前事务）、SUPPORTS、NOT_SUPPORTED、MANDATORY、NEVER、NESTED（嵌套，用保存点）。REQUIRED 与 REQUIRES_NEW 的区别：REQUIRED 内外层共用一个事务，内层回滚会连累外层；REQUIRES_NEW 内层独立事务，内层回滚不影响外层（如记日志、发消息场景）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "MyBatis 中 #{} 和 ${} 有什么区别？",
+    "answer": "#{} 是预编译占位符，生成 PreparedStatement 的 ?，参数经 JDBC 转义，能防止 SQL 注入，且对参数类型做自动处理；${} 是字符串直接拼接，存在 SQL 注入风险。使用场景：#{} 用于所有参数传递；${} 只用于 SQL 结构部分（如动态表名、ORDER BY 字段名），且必须用白名单校验后再拼接。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "Java 反射是什么？有哪些应用场景和性能问题？",
+    "answer": "反射允许运行时获取类的结构（Class/Field/Method/Constructor）并操作对象，Class.forName、getDeclaredFields、method.invoke 等。应用：Spring IOC 依赖注入、MyBatis 结果集映射、注解处理、JSON 序列化（Jackson）。性能问题：方法调用需解析、有安全检查、无法被 JIT 内联，比直接调用慢；优化手段：缓存 Method/Field 对象、setAccessible(true) 关闭检查、必要时用 MethodHandle 或字节码生成。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "BIO、NIO、AIO 的区别是什么？",
+    "answer": "BIO：同步阻塞，一个连接一个线程，连接数高时线程爆炸。NIO：同步非阻塞，基于 Channel + Buffer + Selector 多路复用，一个线程用 Selector 轮询管理多个连接的就绪事件，适合高并发短连接（Netty 基于此）。AIO：异步非阻塞，基于回调，操作系统完成 IO 后通知应用，编程模型复杂、Linux 支持不完善，实际应用少。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "synchronized 的锁升级过程是怎样的？",
+    "answer": "无锁 → 偏向锁 → 轻量级锁 → 重量级锁（只升不降）。偏向锁：第一个线程获取锁时在对象头 Mark Word 记录线程 ID，之后该线程再进入无需 CAS（JDK 15 后默认禁用并废弃）。轻量级锁：有竞争时，线程在栈帧中建 Lock Record，用 CAS 把 Mark Word 指向它，失败则自旋。自旋失败到阈值后升级为重量级锁，未抢到的线程进入 Monitor 阻塞队列。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "什么是 CAS？它有什么问题？如何解决 ABA 问题？",
+    "answer": "CAS（Compare And Swap）：比较内存值与预期值，相等才更新为新值，由 CPU 的 cmpxchg 指令保证原子性，是乐观锁的实现（AtomicInteger 底层 Unsafe.compareAndSwapInt）。三个问题：①ABA——值被改成 B 又改回 A，CAS 判定未变；②自旋时间长时 CPU 空转开销大；③只能保证单个变量的原子性。ABA 解决：加版本号（AtomicStampedReference）或时间戳。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "内存泄漏和内存溢出有什么区别？线上 OOM 如何排查？",
+    "answer": "内存泄漏：对象已无用但仍被引用无法回收，长期累积最终导致溢出；内存溢出：申请内存超过可用上限（OOM 是结果，泄漏是常见原因之一）。排查步骤：①启动参数加 -XX:+HeapDumpOnOutOfMemoryError 导出堆快照；②jps 找进程、jstat -gcutil 看 GC 频率与老年代占用、jmap -dump 导堆；③用 MAT/JVisualVM 分析支配树找最大对象和 GC Roots 引用链；④jstack 看线程栈定位死锁或阻塞；⑤常见根因：集合只增不减、ThreadLocal 未 remove、监听器未注销、连接未关闭。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "深拷贝和浅拷贝的区别？如何实现深拷贝？",
+    "answer": "浅拷贝：复制对象本身，但对象内的引用类型字段仍指向同一地址（Object.clone 默认行为），改其中一个的引用对象会互相影响。深拷贝：连同引用对象递归复制，完全独立。实现方式：①重写 clone 并逐层递归调用；②序列化再反序列化（JDK 序列化/JSON 库）；③手写拷贝构造器。实际开发中常用 JSON 序列化或 MapStruct/BeanUtils 拷贝。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "JAVA",
+    "content": "单例模式有哪些实现方式？推荐哪种？",
+    "answer": "①饿汉式：类加载即初始化，简单但可能浪费；②懒汉式：加锁性能差；③双重检查锁定（DCL）：volatile + 两次判空，兼顾性能与懒加载；④静态内部类：利用类加载机制保证线程安全与懒加载，推荐；⑤枚举：天生防反射、防序列化破坏，Effective Java 推荐方式。注意：反射可破坏前三者（枚举不能），序列化需实现 readResolve。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "InnoDB 和 MyISAM 有什么区别？",
+    "answer": "①事务：InnoDB 支持事务与回滚，MyISAM 不支持。②锁粒度：InnoDB 行级锁（默认），MyISAM 表级锁，并发差。③外键：InnoDB 支持，MyISAM 不支持。④索引结构：InnoDB 聚簇索引（数据即主键索引的叶子节点），MyISAM 是非聚簇索引（索引与数据文件分离，叶子存地址）。⑤崩溃恢复：InnoDB 靠 redo log 恢复，MyISAM 会丢数据。⑥MyISAM 不支持 MVCC，count(*) 全表计数因有内置计数器而更快。MySQL 5.5 起 InnoDB 为默认引擎。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "事务的 ACID 四大特性分别是什么？靠什么机制保证？",
+    "answer": "①原子性 Atomicity：事务内操作要么全成功要么全失败，靠 undo log 回滚。②一致性 Consistency：数据从一个合法状态到另一个合法状态，是最终目的，由其他三项共同保证。③隔离性 Isolation：并发事务互不干扰，靠锁 + MVCC 实现。④持久性 Durability：提交后数据不丢，靠 redo log（WAL 先写日志再刷盘）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "事务的四种隔离级别是什么？分别解决了什么问题？",
+    "answer": "①读未提交 READ UNCOMMITTED：能读到未提交数据，有脏读、不可重复读、幻读。②读已提交 READ COMMITTED：解决脏读，仍有不可重复读、幻读（Oracle/PostgreSQL 默认）。③可重复读 REPEATABLE READ：解决脏读、不可重复读，InnoDB 用间隙锁基本解决幻读（MySQL 默认）。④串行化 SERIALIZABLE：全部解决，但并发性能极差。隔离级别越高并发越低。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "MySQL InnoDB 的默认事务隔离级别是什么？",
+    "answer": "可重复读（REPEATABLE READ）",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "MVCC 的实现原理是什么？",
+    "answer": "MVCC（多版本并发控制）让读操作不加锁也能读到一致性快照。三要素：①隐藏字段——每行有 trx_id（最后修改的事务 ID）和 roll_pointer（指向 undo log 旧版本）。②undo log 版本链——每次修改把旧值串成链表。③ReadView——事务快照读时生成，记录当前活跃事务 ID 列表，沿版本链找到第一个对当前事务可见的版本。RC 级别每次 SELECT 都生成新 ReadView（所以能读到别人已提交的新数据），RR 级别只在第一次 SELECT 生成并复用（所以可重复读）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "InnoDB 索引的底层数据结构是什么？为什么用 B+ 树而不是 B 树或哈希表？",
+    "answer": "B+ 树。相比 B 树：①非叶子节点只存键不存数据，一页能放更多键，树更矮（3~4 层可存千万级数据），磁盘 IO 次数更少；②所有数据都在叶子节点且用双向链表相连，范围查询和排序只需顺序扫描链表，B 树要中序遍历回溯。相比哈希表：哈希索引只支持等值查询，不支持范围查询和排序，且哈希冲突严重时退化。相比平衡二叉树/红黑树：树高过高，一次查询要多次磁盘 IO。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "InnoDB 一个数据页的默认大小是多少？",
+    "answer": "16KB",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "聚簇索引和非聚簇索引有什么区别？什么是回表？",
+    "answer": "聚簇索引：InnoDB 主键索引即聚簇索引，叶子节点直接存整行数据，一张表只有一个。非聚簇索引（二级索引）：叶子节点存索引列 + 主键值，一张表可以有多个。回表：用二级索引查到主键值后，还要拿主键去聚簇索引再查一次完整行数据，多一次 B+ 树查找。避免回表的方法是使用覆盖索引（查询列都在索引里）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "什么是最左前缀原则？联合索引 (a, b, c) 哪些查询能走索引？",
+    "answer": "联合索引按定义时的字段顺序依次排序，只能用从最左列开始的连续前缀来匹配。能走：(a)、(a,b)、(a,b,c)、(a,c)（a 用索引，c 无法用索引排序但可过滤）、范围查询 a>1 后的列无法再走索引。不能走：(b)、(b,c)、(c)。另外 where a=1 and b>2 and c=3 中 c 用不上索引（范围后的列失效）。设计原则：区分度高的列放左边，等值查询列放范围查询列前面。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "哪些情况会导致索引失效？",
+    "answer": "①对索引列做运算或函数（WHERE YEAR(created_at)=2026、WHERE id+1=5）；②隐式类型转换（字符串列用数字查 WHERE phone=13800000000）；③前导模糊查询 LIKE '%abc'；④OR 连接的列有一个没索引；⑤不满足最左前缀；⑥索引列使用 != 、NOT IN、IS NOT NULL 等否定条件（优化器判断全表更快时）；⑦数据区分度太低（如性别、状态只有几个值），优化器可能放弃索引；⑧ORDER BY 的列与 WHERE 用的索引不一致。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "EXPLAIN 中 type 字段有哪些常见值？性能从好到坏如何排序？",
+    "answer": "system > const > eq_ref > ref > range > index > ALL。system/const 是常量查询（主键或唯一索引等值）；eq_ref 是联表时被驱动表用主键/唯一索引；ref 是普通二级索引等值；range 是索引范围扫描（between、in、>）；index 是全索引扫描；ALL 是全表扫描，必须优化。",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "redo log、undo log、binlog 三者的区别和作用？",
+    "answer": "①redo log（InnoDB 独有，物理日志）：记录数据页的物理修改，循环写、固定大小，保证崩溃恢复的持久性（WAL 机制，先写日志再刷脏页）。②undo log（InnoDB 独有，逻辑日志）：记录反向操作（insert 记 delete），用于事务回滚和 MVCC 版本链。③binlog（Server 层，逻辑日志）：记录所有 DDL/DML 语句或行变更，追加写、不循环，用于主从复制和数据恢复，格式有 STATEMENT/ROW/MIXED，生产用 ROW。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "什么是两阶段提交？为什么需要它？",
+    "answer": "事务提交时 redo log 与 binlog 必须保持一致，否则主从数据会不一致。流程：①prepare 阶段——写 redo log 并标记为 prepare 状态；②写 binlog；③commit 阶段——把 redo log 改为 commit 状态。崩溃恢复规则：redo 处于 prepare 且 binlog 完整则提交，binlog 不完整则回滚。由参数 innodb_flush_log_at_trx_commit=1 和 sync_binlog=1 保证双 1 配置不丢数据。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "InnoDB 有哪些锁？按粒度和模式如何分类？",
+    "answer": "按粒度：表锁（开销小、并发差）、行锁（InnoDB 默认，锁索引记录）、页锁。按模式：共享锁 S（读锁，允许其他事务读、阻止写）、排他锁 X（写锁，阻止其他读写）。意向锁（IS/IX）是表级锁，用于快速判断表中是否有行锁，避免逐行检查。间隙锁 Gap Lock 锁住索引记录之间的区间（防插入），临键锁 Next-Key Lock = 记录锁 + 间隙锁，是 RR 级别默认加锁单位，用于防幻读。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "MySQL 死锁是怎么产生的？如何排查和避免？",
+    "answer": "产生：两个事务互相持有对方需要的锁并等待（如事务 A 先锁 id=1 再锁 id=2，事务 B 反向操作）。排查：SHOW ENGINE INNODB STATUS 看 LATEST DETECTED DEADLOCK 段，或开 innodb_print_all_deadlocks 记日志。避免：①按固定顺序访问表和行；②事务尽量短小，避免大事务；③一次锁定所需全部资源；④降低隔离级别到 RC（减少间隙锁）；⑤给合适的索引，避免锁扫描过的全部行。InnoDB 有死锁检测（innodb_deadlock_detect），会自动回滚代价小的事务。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "深分页 LIMIT 1000000, 10 为什么慢？如何优化？",
+    "answer": "慢的原因：MySQL 要扫描并回表前 1000010 条记录，最后丢弃前 1000000 条，越翻到后面越慢。优化方案：①延迟关联——先用覆盖索引查出主键再关联（SELECT * FROM t JOIN (SELECT id FROM t ORDER BY id LIMIT 1000000,10) x USING(id)）；②游标/书签法——记录上次最大 id，下一页 WHERE id > last_id LIMIT 10（要求 id 有序，性能最好，但不支持跳页）；③业务上限制最大翻页深度，或改用搜索引擎（ES 的 search_after）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "count(*)、count(1)、count(字段) 有什么区别？",
+    "answer": "count(*) 和 count(1) 都统计行数，InnoDB 会选最小的二级索引扫描（不取值，只计数），性能基本一致，官方推荐 count(*)。count(字段) 会判断该字段是否为 NULL（NULL 不计数），且要读取实际值，性能更差；若字段上有索引则可能用索引。count(主键) 与 count(1) 性能接近。注意：InnoDB 不像 MyISAM 存了行数，count 需要真实扫描。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "CHAR 和 VARCHAR 有什么区别？VARCHAR(10) 中的 10 表示什么？",
+    "answer": "CHAR 定长，不足部分用空格补齐（检索时去掉尾空格），适合长度固定的值（如性别、MD5），查询效率略高。VARCHAR 变长，额外用 1~2 字节记录长度，适合长度差异大的值，节省空间但更新变长时可能产生页分裂。VARCHAR(10) 中的 10 表示最多存 10 个字符（不是字节），utf8mb4 下最多占 40 字节。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "为什么推荐使用自增主键而不是 UUID？",
+    "answer": "①自增主键插入时顺序追加到 B+ 树最右侧，几乎不产生页分裂与数据移动；UUID 无序，插入位置随机，会频繁触发页分裂、降低页填充率（约 50%），性能和空间都差。②自增主键占 8 字节，UUID 用 char(36) 或 binary(16) 更大，而二级索引叶子节点要存主键值，主键越大所有二级索引越大。③自增主键便于范围查询和排序。UUID 的唯一优势是分布式下无需中心生成、不可预测，分布式场景可用雪花算法（有序雪花 ID）折中。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "什么是覆盖索引？它有什么好处？",
+    "answer": "覆盖索引指查询需要的所有列都能从索引中直接取到，无需回表。例如联合索引 (a,b) 上执行 SELECT a,b FROM t WHERE a=1，直接从二级索引拿到数据。好处：①避免回表，减少一次 B+ 树查找与随机 IO；②减少数据传输量。判定方法：EXPLAIN 的 Extra 列显示 Using index 即命中覆盖索引。实践：把高频查询的少量字段建成联合索引，或用延迟关联让子查询走覆盖索引。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "一条 SQL 的执行流程是怎样的？",
+    "answer": "①连接器：建立连接、校验权限、管理连接（连接池）。②查询缓存（MySQL 8.0 已移除）：命中则直接返回。③分析器：词法分析识别关键字与表名，语法分析校验 SQL 合法性。④优化器：决定使用哪个索引、多表连接的驱动顺序、生成执行计划。⑤执行器：校验表权限，调用存储引擎接口逐行取数（未命中索引则全表扫描）。⑥存储引擎：InnoDB 从 Buffer Pool 或磁盘读取数据页返回。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "什么是 Buffer Pool？它如何提升性能？",
+    "answer": "Buffer Pool 是 InnoDB 在内存中缓存数据页（默认 128MB，生产建议设为物理内存的 50%~70%）的区域，读写都先经过它，避免每次访问磁盘。内部用改良 LRU（分 young/old 区，新页先进 old 区头部，避免全表扫描把热数据挤出）管理。脏页由后台线程按 checkpoint 刷盘。相关优化：innodb_buffer_pool_size 调大、多实例 innodb_buffer_pool_instances 减少锁竞争。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "主从复制的原理是什么？主从延迟如何解决？",
+    "answer": "原理：①主库把变更写入 binlog；②从库 IO 线程拉取 binlog 写入 relay log；③从库 SQL 线程重放 relay log。三种复制模式：异步（默认，性能好可能丢数据）、半同步（至少一个从库确认收到）、全同步（MGR）。主从延迟原因：从库单线程重放跟不上主库并发写（MySQL 5.7 起支持基于组提交的并行复制）。解决：①并行复制（slave_parallel_workers）；②业务上强制走主库读（如写后立即读的场景）；③半同步复制；④分库降低单库写入压力。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "什么是索引下推（ICP）？",
+    "answer": "索引下推（Index Condition Pushdown，MySQL 5.6+）：把 WHERE 中能用索引字段判断的条件下推到存储引擎层过滤，减少回表次数。举例：联合索引 (name, age) 上执行 WHERE name LIKE '张%' AND age = 20，无 ICP 时引擎只按 name 过滤出所有姓张的记录（可能几百条）全部回表再判断 age；有 ICP 时引擎在索引层就判断 age，只回表符合条件的记录。EXPLAIN 的 Extra 显示 Using index condition。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "大表加字段或加索引如何避免锁表？",
+    "answer": "①MySQL 5.6+ 支持 Online DDL，普通加索引/加列会尽量使用 INPLACE 算法不阻塞 DML（加索引仍要短暂拿元数据锁，需避开业务高峰）。②加列默认是 INSTANT 算法（8.0.12+），几乎瞬时完成。③一定避免在业务高峰期执行，用 ALGORITHM=INPLACE, LOCK=NONE 显式指定并做灰度。④大表结构变更建议用 gh-ost 或 pt-online-schema-change 工具（建影子表 + 触发器同步 + 切换）分步执行。⑤执行前用 SHOW PROCESSLIST 确认无长事务，否则 MDL 等待会雪崩。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "数据库层面的乐观锁和悲观锁如何实现？",
+    "answer": "悲观锁：认为冲突必然发生，先加锁再操作——SELECT ... FOR UPDATE（排他锁）或 FOR SHARE（共享锁），配合事务使用，锁持有期间其他事务阻塞。适合写冲突激烈的场景，但并发差、易死锁。乐观锁：认为冲突少，先读数据（含版本号），更新时校验版本——UPDATE t SET val=?, version=version+1 WHERE id=? AND version=?，影响行数为 0 说明被人改过，业务重试或报错。适合读多写少场景（如商品库存扣减、状态流转），无需数据库加锁。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "数据库连接池有什么作用？HikariCP 的默认最大连接数是多少？",
+    "answer": "作用：复用物理连接，避免每次请求都建立/销毁 TCP 连接与认证的开销；控制并发连接上限，防止数据库被压垮；统一管理超时、心跳保活与连接泄漏检测。HikariCP 是 Spring Boot 2.x 起的默认连接池，默认 maximumPoolSize = 10。经验值：连接数 ≈ CPU 核数 × 2 + 磁盘数，不是越大越好（连接过多反而因上下文切换与锁竞争变慢）。",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "什么是分库分表？什么时候需要做？",
+    "answer": "垂直拆分：按业务拆库（用户库/订单库）、把大字段拆到扩展表。水平拆分：同一张表按规则（取模、range、一致性哈希）拆到多个库/表。触发时机：单表数据量超过千万级且索引优化后仍慢、单库磁盘或连接数达到瓶颈。代价：跨库 JOIN 与分布式事务问题、全局唯一 ID（雪花算法）、分页与聚合困难、扩容数据迁移复杂。实践：优先做索引优化、读写分离、冷热数据分离（归档历史数据），最后才考虑分库分表。常用中间件：ShardingSphere、MyCat。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "慢 SQL 的排查流程是怎样的？",
+    "answer": "①开启慢查询日志（slow_query_log=ON、long_query_time=1），用 mysqldumpslow 或 pt-query-digest 找出 TOP 慢语句。②对目标 SQL 执行 EXPLAIN，看 type（是否 ALL 全表扫描）、key（用了哪个索引）、rows（扫描行数）、Extra（Using filesort/Using temporary 需优化）。③分析原因：索引缺失或失效、回表次数多、排序/分组无法用索引、join 驱动表选错、数据量本身过大。④优化手段：加合适的联合索引、改写 SQL（延迟关联、去子查询）、减少 SELECT *、拆分大事务、冷数据归档。⑤回归验证：对比优化前后的 rows 与执行时间。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "MySQL 的读写分离是怎么做的？主从延迟会导致什么问题？",
+    "answer": "读写分离：写请求走主库，读请求按权重分发到多个从库，靠中间件（ShardingSphere、MyCat、ProxySQL）或应用层多数据源 + AOP 注解动态切换实现。收益：分摊读压力、提升整体吞吐。典型问题：主从延迟（从库重放 binlog 慢于主库写入）导致「写后立即读」读到旧数据，表现为刚提交的数据查不到。解决方案：①写后一定时间窗口内的读强制走主库（按业务标识/用户维度，如注册后立即跳个人页）；②半同步复制——主库等至少一个从库确认收到 binlog 才返回成功，缩小延迟窗口；③开启并行复制（slave_parallel_workers）提高重放速度；④关键数据写主库时同步更新缓存，读走缓存。注意读写分离只解决读瓶颈，写瓶颈要靠分库分表。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "MYSQL",
+    "content": "自增主键为什么会出现不连续的「空洞」？",
+    "answer": "产生原因：①事务回滚或插入失败——自增值已经分配出去，回滚不会退回（InnoDB 的自增分配不参与事务）；②批量插入时按倍数预分配，用不完就浪费；③唯一键冲突（INSERT ... ON DUPLICATE KEY UPDATE 或唯一索引冲突）会先申请自增 ID 再失败；④删除历史数据留下空洞。关键结论：自增主键只保证唯一且递增，不保证连续，业务不能依赖它做序号或流水号（如订单号需连续则应另建序列或自行编号）。补充：MySQL 8.0 起自增计数器持久化到 redo log，重启后不会像 5.7 那样按 max(id)+1 重建而可能复用被删的 ID。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 三次握手的过程是怎样的？为什么需要三次而不是两次？",
+    "answer": "过程：①客户端发 SYN(seq=x) 进入 SYN_SENT；②服务端回 SYN+ACK(seq=y, ack=x+1) 进入 SYN_RCVD；③客户端发 ACK(ack=y+1) 双方进入 ESTABLISHED。为什么三次：①确认双方的收发能力都正常（两次只能确认客户端→服务端的通道和反向的确认能力，不能确认服务端的发送能力被客户端收到）；②防止历史失效的重复 SYN 报文造成服务端建立无效连接并浪费资源。三次是满足可靠双向确认的最小次数。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 四次挥手的过程？为什么 TIME_WAIT 要等 2MSL？",
+    "answer": "过程：①主动方发 FIN 进入 FIN_WAIT_1；②被动方回 ACK 进入 CLOSE_WAIT，主动方进入 FIN_WAIT_2；③被动方数据发完发 FIN 进入 LAST_ACK；④主动方回 ACK 进入 TIME_WAIT，等 2MSL 后关闭。为什么四次：TCP 是全双工，一方关闭只是不再发送数据，另一方可能还有数据要发，因此 ACK 与 FIN 不能合并。TIME_WAIT 等 2MSL 的原因：①保证最后一个 ACK 能到达对端（若丢失，对端会重传 FIN，此时还能响应）；②让本次连接的所有报文在网络中消散，避免旧连接报文干扰新连接。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 和 UDP 有什么区别？各自适用什么场景？",
+    "answer": "①连接：TCP 面向连接（三次握手），UDP 无连接。②可靠性：TCP 有确认、重传、排序、流量与拥塞控制，保证不丢不重按序；UDP 尽力交付，可能丢包乱序。③传输方式：TCP 面向字节流（有粘包问题），UDP 面向数据报（保留边界）。④开销：TCP 首部 20 字节起，UDP 8 字节，UDP 更轻量高效。⑤通信模式：TCP 一对一，UDP 支持一对一/一对多/多播广播。场景：TCP 用于 HTTP、文件传输、邮件等要求可靠的场景；UDP 用于直播、视频会议、游戏、DNS、QUIC 等要求低延迟、能容忍少量丢包的场景。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 是如何保证可靠传输的？",
+    "answer": "①序号与确认：每个字节编号，接收方回 ACK 确认，未确认的数据保留在发送缓冲区。②超时重传：发送后启动定时器，超时未收到 ACK 则重传（RTO 由 RTT 动态计算）；另有快速重传——收到三个重复 ACK 立即重传。③校验和：检验数据是否损坏，损坏则丢弃等待重传。④排序与去重：按序号重组，丢弃重复报文。⑤流量控制：接收方通过窗口字段告知可接收量，防止接收缓冲溢出。⑥拥塞控制：慢启动、拥塞避免、快重传、快恢复，防止压垮网络。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 的拥塞控制算法有哪几个阶段？",
+    "answer": "四个阶段：①慢启动——拥塞窗口 cwnd 从 1 个 MSS 开始，每收到一个 ACK 翻倍（指数增长），直到达到慢启动阈值 ssthresh。②拥塞避免——超过 ssthresh 后每轮 RTT 只加 1 个 MSS（线性增长）。③快重传——收到 3 个重复 ACK 立即重传丢失报文，不等超时。④快恢复——不回到慢启动，而是把 ssthresh 减半、cwnd 设为 ssthresh，进入拥塞避免。若发生超时重传（更严重），则 ssthresh 减半、cwnd 重置为 1 重新慢启动。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTP 和 HTTPS 有什么区别？TLS 握手过程是怎样的？",
+    "answer": "区别：HTTP 明文传输，端口 80；HTTPS = HTTP + TLS/SSL，加密传输，端口 443，需要 CA 证书，能防窃听、防篡改、防冒充（代价是握手延迟与少量性能开销，HTTP/2 起可通过会话复用优化）。TLS 1.2 握手：①ClientHello（客户端随机数 + 支持的加密套件）；②ServerHello（服务端随机数 + 选定套件）+ 证书；③客户端验证证书链有效性，生成 pre-master secret 用服务端公钥加密发送；④双方用三个随机数算出会话密钥；⑤ChangeCipherSpec + Finished 验证握手完整性；⑥之后用对称加密通信。TLS 1.3 简化为 1-RTT（首次）甚至 0-RTT（复用）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "在浏览器输入 URL 到页面展示，中间发生了什么？",
+    "answer": "①URL 解析与 DNS 查询：浏览器缓存 → 系统缓存 → hosts → 本地 DNS 服务器递归查询（根→顶级→权威），拿到 IP。②建立 TCP 连接（三次握手），HTTPS 还要 TLS 握手。③发送 HTTP 请求（请求行、请求头、请求体）。④服务端处理（Nginx 反向代理 → 应用服务器 → 数据库），返回响应。⑤浏览器渲染：解析 HTML 构建 DOM 树、解析 CSS 构建 CSSOM、合并成渲染树、布局（重排）、绘制（重绘）、合成图层显示；期间遇到 JS 会阻塞解析，遇到图片/外链资源会并发请求。⑥TCP 四次挥手断开（HTTP/1.1 默认 keep-alive 则复用连接）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTP/1.0、HTTP/1.1、HTTP/2、HTTP/3 有什么区别？",
+    "answer": "HTTP/1.0：每次请求都要新建连接，无状态短连接。HTTP/1.1：默认 keep-alive 长连接、支持管道化（实际很少用）、Host 头支持虚拟主机、断点续传；缺点是队头阻塞（同域并发连接数限制 6~8 个）。HTTP/2：二进制分帧、多路复用（一条连接并行交错传输多个流）、头部压缩 HPACK、服务端推送；仍有 TCP 层队头阻塞（一个包丢了所有流都等）。HTTP/3：基于 QUIC（UDP 之上实现可靠传输），彻底解决队头阻塞，0-RTT 建连，连接迁移（切换网络不断连）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTP 常见状态码有哪些？分别代表什么含义？",
+    "answer": "1xx 信息：101 协议切换（WebSocket）。2xx 成功：200 OK、204 无内容、206 部分内容（断点续传）。3xx 重定向：301 永久重定向（会缓存，SEO 权重转移）、302 临时重定向、304 资源未修改（走协商缓存）。4xx 客户端错误：400 请求语法错误、401 未认证、403 无权限、404 资源不存在、405 方法不允许、429 请求过多限流。5xx 服务端错误：500 内部错误、502 网关收到无效响应（后端挂了）、503 服务不可用、504 网关超时。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "GET 和 POST 有什么区别？",
+    "answer": "①语义：GET 用于获取资源（幂等、可缓存），POST 用于提交数据（非幂等、默认不缓存）。②参数位置：GET 放 URL 查询串，POST 放请求体。③长度限制：GET 受 URL 长度限制（浏览器约 2KB~8KB），POST 无限制（受服务端配置约束）。④安全性：GET 参数暴露在 URL 与日志、历史记录中，POST 相对隐蔽，但两者都是明文传输——安全必须靠 HTTPS。⑤编码：GET 只支持 URL 编码，POST 支持多种（form-data、json）。⑥本质：两者都是 TCP 传输，报文格式差别在于 GET 通常无 body，理论技术上可互换，区别来自规范语义、浏览器与服务端的实现约定。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "Cookie、Session、Token 有什么区别？JWT 的结构是什么？",
+    "answer": "Cookie：存在浏览器的键值对，随请求自动携带，容量约 4KB，可设 HttpOnly/Secure/SameSite。Session：存在服务端，用 sessionId 关联（通常借 Cookie 传递），有状态、集群需共享（Redis）。Token（如 JWT）：服务端签发、客户端保存、服务端无状态校验，适合分布式与跨域。JWT 结构：Header.Payload.Signature 三段 Base64URL 拼接——Header 声明算法类型，Payload 放业务声明（sub/exp/自定义）但不加密（可被解出，不能放敏感信息），Signature 用密钥对前两段签名防篡改。缺点：无法主动失效（需配合黑名单或短过期 + refresh token）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "对称加密和非对称加密有什么区别？HTTPS 为什么两者都用？",
+    "answer": "对称加密（AES、DES）：加解密用同一密钥，速度快，但密钥分发困难（怎么安全地把密钥给对方）。非对称加密（RSA、ECC）：公钥加密私钥解密（或私钥签名公钥验签），安全性高、无需共享密钥，但计算慢（比对称慢几百倍）。HTTPS 结合两者：握手阶段用非对称加密安全地协商出会话密钥（并验证证书身份），数据传输阶段用对称加密（会话密钥）保证性能。这样既解决了密钥分发问题，又保证了传输效率。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "DNS 解析的过程是怎样的？递归查询和迭代查询有何区别？",
+    "answer": "解析顺序：浏览器 DNS 缓存 → 操作系统缓存 → hosts 文件 → 本地 DNS 服务器（ISP）。本地 DNS 若没有缓存则：向根域名服务器查询 → 返回顶级域（.com）服务器地址 → 向顶级域查询 → 返回权威域名服务器地址 → 向权威服务器查询 → 得到 IP。递归查询：客户端只发一次请求，由本地 DNS 负责查到底（客户端与本地 DNS 之间是递归）。迭代查询：本地 DNS 逐级询问各服务器、每次得到下一级地址（本地 DNS 与根/顶级/权威之间是迭代）。记录类型：A（IPv4）、AAAA（IPv6）、CNAME（别名）、MX（邮件）、NS、TXT。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "什么是 TCP 粘包和拆包？如何解决？",
+    "answer": "原因：TCP 是面向字节流的，没有消息边界，发送方多次小数据可能被合并成一个报文（Nagle 算法），或大数据被拆成多个报文；接收方按缓冲区读取时无法区分消息边界。解决：①固定长度消息；②分隔符（如 \r\n，HTTP 用 Content-Length 或 chunked 界定）；③长度字段 + 消息体（TLV 格式，最常用，Netty 的 LengthFieldBasedFrameDecoder）；④应用层协议自带边界（如 Protobuf 带长度前缀）。注意：UDP 面向数据报，不存在粘包问题（但会丢包）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "什么是 HTTP 缓存？强缓存和协商缓存如何配合？",
+    "answer": "强缓存：不发请求直接用本地副本。Cache-Control: max-age=3600（相对时间，优先级高）或 Expires（绝对时间，已过时）；命中时状态码显示 200 (from disk/memory cache)。协商缓存：强缓存过期后带校验字段问服务端。①Last-Modified / If-Modified-Since（秒级精度，文件内容没变但修改时间变了会误判）；②ETag / If-None-Match（内容哈希，精度高，优先级更高）。服务端判断未变则回 304（无 body，省流量），变了则回 200 + 新资源。实践：HTML 用 no-cache（每次协商），带哈希的静态资源用长 max-age + immutable。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "什么是跨域？CORS 是如何解决的？",
+    "answer": "跨域：浏览器的同源策略（协议 + 域名 + 端口三者完全相同）限制脚本读取其他源的响应，这是浏览器行为，请求实际已发出。CORS 解决：服务端返回 Access-Control-Allow-Origin（指定源或 *，带 Cookie 时不能用 *）、Access-Control-Allow-Methods、Access-Control-Allow-Headers、Access-Control-Allow-Credentials: true。简单请求（GET/POST + 简单头）直接发；非简单请求（PUT/DELETE/自定义头/JSON 类型）浏览器先发 OPTIONS 预检请求，通过后才发真实请求。其他方案：Nginx 反向代理（同源转发，生产最常用）、JSONP（只支持 GET，老方案）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "什么是 WebSocket？它和 HTTP 有什么关系？",
+    "answer": "WebSocket 是全双工通信协议，一次握手后连接保持，服务端可主动推送消息。与 HTTP 的关系：握手阶段借用 HTTP 协议——客户端发 Upgrade: websocket 请求（含 Sec-WebSocket-Key），服务端回 101 Switching Protocols，之后升级为独立的 ws:// 或 wss:// 协议，不再遵循 HTTP 的请求-响应模型。相比轮询/长轮询：延迟低（无重复建连与头部开销）、服务端主动推送、适合聊天、实时通知、协同编辑、行情推送。注意：SSE 是另一个单向（服务端→客户端）的推送方案，基于普通 HTTP，实现更简单，只支持文本。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "OSI 七层模型和 TCP/IP 四层模型的对应关系是什么？",
+    "answer": "OSI 七层：物理层、数据链路层、网络层、传输层、会话层、表示层、应用层。TCP/IP 四层：网络接口层（对应 OSI 物理 + 数据链路）、网络层（IP、ICMP、ARP）、传输层（TCP、UDP）、应用层（HTTP、DNS、FTP、SMTP，对应 OSI 会话 + 表示 + 应用）。五层模型（教学常用）：物理、数据链路、网络、传输、应用。各层数据单元：应用层报文、传输层段（TCP）/数据报（UDP）、网络层包、链路层帧、物理层比特。封装与解封装：发送时逐层加头，接收时逐层去头。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTP 请求中 Cookie 和 Session 的传递过程？Session 在集群下如何共享？",
+    "answer": "过程：客户端首次请求 → 服务端创建 Session 存内存并返回 Set-Cookie: JSESSIONID=xxx → 浏览器保存 → 后续请求自动带 Cookie: JSESSIONID=xxx → 服务端据此找到对应 Session。集群共享方案：①Session 粘滞（Nginx ip_hash，同一客户端固定打到同一台，单点故障会丢）；②Session 复制（Tomcat 广播同步，节点多时开销大）；③集中存储（Redis 存 Session，最常用，需处理序列化与过期）；④无状态 Token（JWT，服务端不存，根治共享问题，代价是无法主动失效）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 的滑动窗口机制是什么？它如何实现流量控制？",
+    "answer": "滑动窗口：发送方维护一个窗口，窗口内的数据可以连续发送而不必逐个等待 ACK；收到 ACK 后窗口向右滑动。接收方在每次 ACK 中通过窗口字段（rwnd）告知自己还能接收多少字节，发送方据此调整发送窗口上限，避免把接收方缓冲区撑爆——这就是流量控制。窗口为 0 时发送方停止发送并定期发窗口探测报文。零窗口与糊涂窗口综合症可用 Nagle 算法、延迟确认与窗口更新策略缓解。窗口还影响吞吐：吞吐量 ≈ 窗口大小 / RTT。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 半连接队列和 SYN Flood 攻击是什么？如何防御？",
+    "answer": "半连接队列（SYN 队列）存放收到 SYN 并回了 SYN+ACK、但还没收到最终 ACK 的连接（状态 SYN_RCVD）；全连接队列（accept 队列）存放已完成三次握手等待 accept 的连接。SYN Flood：攻击者伪造大量源 IP 发送 SYN，服务端不断回 SYN+ACK 并占用半连接队列，队列满后正常用户无法建连（拒绝服务）。防御：①开启 syncookies（tcp_syncookies=1，不占用队列即可验证）；②增大 tcp_max_syn_backlog 与 somaxconn；③缩短 SYN+ACK 重试次数与超时；④用防火墙/CDN/云清洗服务在边缘过滤；⑤限制单 IP 建连速率。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TIME_WAIT 状态过多有什么危害？如何优化？",
+    "answer": "危害：每个 TIME_WAIT 占用一个本地端口与少量内存，大量堆积会耗尽端口（主动发起连接时无可用源端口）并占用内核资源。产生原因：高并发短连接场景下，主动关闭方（通常是服务端）大量进入 TIME_WAIT 并等待 2MSL。优化：①让客户端主动关闭（服务端配置长连接，减少独立连接）；②开启 tcp_tw_reuse（复用 TIME_WAIT 连接用于发起新连接，需时间戳支持）；③缩短 tcp_fin_timeout；④扩大端口范围 ip_local_port_range；⑤使用连接池复用连接，从根本上减少连接数。注意 tcp_tw_recycle 在新内核已移除，不要用。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "正向代理和反向代理有什么区别？Nginx 属于哪一种？",
+    "answer": "正向代理：代理客户端，客户端主动配置并使用，服务端不知道真实客户端（如翻墙工具、企业上网代理）。反向代理：代理服务端，客户端以为在直接访问目标服务器，实际由代理转发到后端集群（客户端不知道真实服务端）。区别本质是站在谁的角度隐藏谁。Nginx 通常作为反向代理（负载均衡、SSL 卸载、静态资源、限流、灰度），也可做正向代理（ngx_http_proxy_connect_module）。相关：负载均衡算法有轮询、加权轮询、IP Hash、最少连接。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "ping 命令用的是哪个协议？它和 traceroute 的原理是什么？",
+    "answer": "ping 使用 ICMP（网络层协议），发 ICMP Echo Request，对方回 Echo Reply，据此统计往返时延与丢包率（不经过 TCP/UDP）。traceroute（Windows 是 tracert）利用 IP 头的 TTL 字段：先发 TTL=1 的包，第一跳路由器减到 0 后丢弃并回 ICMP 超时报文，从而得到第一跳地址；再发 TTL=2 得到第二跳，依次递增直到到达目标，从而画出路径。Linux 的 traceroute 默认发 UDP 包，Windows 的 tracert 默认发 ICMP 包。ping 不通但服务可用是常见现象——很多服务器为安全禁用 ICMP。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "ARP 协议的作用是什么？ARP 欺骗是怎么回事？",
+    "answer": "ARP（地址解析协议）用于在同一局域网内把 IP 地址解析为 MAC 地址：主机广播 ARP 请求（谁拥有 192.168.1.1？），目标主机单播回自己的 MAC，双方缓存到 ARP 表。ARP 欺骗：攻击者伪造 ARP 响应，宣称某个 IP（如网关）对应自己的 MAC，使局域网内主机的流量都发到攻击者机器，从而窃听或篡改（中间人攻击）；无状态、无认证是 ARP 的先天缺陷。防御：静态 ARP 绑定、DHCP Snooping + 动态 ARP 检测（DAI）、ARP 防火墙、划分 VLAN 缩小广播域。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTP 请求中如何保证接口的幂等性？",
+    "answer": "幂等指同一请求执行多次结果与一次相同（GET/PUT/DELETE 天然幂等，POST 通常不幂等）。实现方案：①数据库唯一索引（最可靠，重复插入直接报错）；②乐观锁版本号（UPDATE ... WHERE version=?）；③状态机（只允许特定状态流转，如订单只有待支付才能支付）；④去重表/防重 Token（前端先申请 token，提交时校验并删除，Redis SETNX 天然原子）；⑤分布式锁（按业务 ID 加锁，串行化处理）；⑥消息表 + 消费端幂等（MQ 场景必备）。注意：限流与幂等是两回事，限流不保证幂等。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTPS 的证书是如何验证的？为什么证书能防中间人攻击？",
+    "answer": "验证流程（证书链）：①服务端返回自己的证书及中间 CA 证书；②客户端用内置的根 CA 公钥验证中间 CA 证书签名，再用中间 CA 公钥验证服务器证书签名，逐级到受信任的根证书；③校验证书域名是否匹配当前访问域名；④校验证书有效期与吊销状态（CRL / OCSP）；⑤校验证书用途（是否允许服务端认证）。防中间人原理：攻击者可以拦流量，但无法伪造受信任 CA 的签名，因此伪造证书会验证失败；同时 TLS 握手中客户端用随机数 + 服务端私钥签名证明持有私钥，攻击者拿不到私钥无法冒充。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 连接的序号（Sequence Number）是如何初始化和使用的？",
+    "answer": "初始化：三次握手时双方各自随机生成初始序号 ISN（不是从 0 开始，防止历史连接报文干扰和序号猜测攻击），SYN 报文携带 ISN，之后的序号 = ISN + 已发送字节数。使用：①标记每个数据字节，接收方按序号排序重组并检测重复；②ACK = 期望收到的下一个序号，表示该序号之前的数据都收到了（累积确认）；③序号回绕——32 位序号空间在高速网络下会回绕（约 4GB），靠时间戳选项 PAWS 和窗口限制避免新旧数据混淆；④序号还用于区分重传报文（SACK 选择性确认可提高重传效率）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTP 长连接和短连接有什么区别？keep-alive 是如何工作的？",
+    "answer": "短连接：每次请求-响应后关闭 TCP 连接，下次请求重新三次握手，延迟高、开销大（HTTP/1.0 默认）。长连接：一次 TCP 连接上串行发送多个请求，连接由 Keep-Alive 头协商保持（HTTP/1.1 默认开启）。工作方式：响应头 Connection: keep-alive 与 Keep-Alive: timeout=5, max=1000 声明保持时长与最大请求数；空闲超时或达到最大请求数后由服务端关闭。优缺点：省去反复建连的开销（TCP 握手 + 慢启动），但空闲连接占用服务端资源，需合理设置超时（如 Nginx keepalive_timeout）并与客户端保持一致，避免一端已关另一端仍在发送导致的报错。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "什么是 CDN？它的工作原理是什么？",
+    "answer": "CDN（内容分发网络）把静态资源缓存到全球各地边缘节点，用户就近访问，降低延迟与源站压力。工作原理：①用户请求域名，DNS 解析时返回智能调度的最优边缘节点 IP（基于地理、运营商、节点负载）；②边缘节点若已缓存资源则直接返回（命中）；③未命中则回源到源站拉取并缓存（可设 TTL 与预热）。关键技术：负载均衡、缓存策略（强缓存 + 协商缓存）、回源收敛、边缘计算。适用：静态资源（图片/JS/CSS/视频），动态内容可走动态加速（就近接入 + 最优链路回源）。副作用：缓存刷新延迟、https 证书在 CDN 侧部署。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "HTTPS 默认使用的端口号是多少？",
+    "answer": "443（HTTP 是 80）",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "NETWORK",
+    "content": "TCP 三次握手中，第二次握手报文的标志位是什么？",
+    "answer": "SYN + ACK（服务端同时确认客户端并发送自己的同步序号）",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "OS",
+    "content": "进程和线程有什么区别？",
+    "answer": "①资源：进程是资源分配的基本单位（独立地址空间、文件描述符表、页表），线程是 CPU 调度的基本单位，同进程内线程共享地址空间与资源（堆、全局变量、文件句柄），只有栈、寄存器和程序计数器私有。②开销：进程创建/切换开销大（要切换页表、刷新 TLB），线程切换轻量（同进程内不换页表）。③通信：进程间需 IPC（管道、共享内存、消息队列、socket），线程间直接读写共享变量（但需同步）。④隔离性：进程崩溃不影响其他进程，一个线程崩溃（如段错误）会导致整个进程退出。⑤健壮性与并发：多进程更稳，多线程更轻量高效。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "进程有哪些状态？状态之间如何转换？",
+    "answer": "五态：新建（New）、就绪（Ready，已分配资源只等 CPU）、运行（Running）、阻塞（Blocked/Waiting，等 IO 或事件）、终止（Terminated）。转换：就绪 → 运行（被调度）；运行 → 就绪（时间片用完或被更高优先级抢占）；运行 → 阻塞（主动请求 IO 或等待锁/事件）；阻塞 → 就绪（IO 完成或事件到达，不能直接到运行，必须重新排队）；运行 → 终止（正常结束或被 kill）。注意：阻塞是进程主动行为，挂起（换出到磁盘，Suspend）是内存不足时被动的。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "进程间通信（IPC）有哪些方式？各自特点是什么？",
+    "answer": "①管道 Pipe：半双工、亲缘进程间使用，内核缓冲区，读写阻塞。②命名管道 FIFO：无关进程也可用，有文件名。③消息队列：内核中按消息体传递，有类型可按类型读取，可随机读取但复制开销大。④共享内存：最快（零拷贝，直接映射同一物理页），但需配信号量做同步。⑤信号量 Semaphore：主要用于同步，不算数据传递。⑥信号 Signal：异步通知，只有标志位不能带数据。⑦Socket：可跨主机，通用但开销较大。⑧内存映射文件 mmap：文件映射到地址空间共享。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "线程同步有哪些方式？",
+    "answer": "①互斥锁 Mutex：保证临界区互斥，同一时刻一个线程进入，最常用（Java 的 synchronized/ReentrantLock）。②自旋锁 Spinlock：忙等待不睡眠，适合临界区极短的场景，避免上下文切换开销。③读写锁：读读并发、读写与写写互斥，适合读多写少（Java 的 ReentrantReadWriteLock）。④条件变量 Condition：配合互斥锁实现等待/通知（生产者-消费者模型），避免轮询。⑤信号量 Semaphore：控制并发数量（限流、连接池）。⑥原子变量 CAS：无锁编程，适合简单计数（AtomicInteger）。⑦屏障 Barrier：等待固定数量线程到齐再一起继续。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "死锁产生的四个必要条件是什么？如何预防、避免与检测？",
+    "answer": "四个必要条件（同时满足才死锁）：①互斥——资源同一时刻只能被一个进程占用；②占有并等待——持有资源同时等待其他资源；③不可剥夺——资源不能被强行抢走；④循环等待——存在进程-资源的环形等待链。预防（破坏任一条件）：资源一次性分配（破坏占有并等待）、可抢占式资源（破坏不可剥夺）、按序申请资源（破坏循环等待）、尽量使用可共享资源（破坏互斥）。避免：银行家算法（判断分配后是否处于安全状态，实际很少用）。检测与恢复：资源分配图找环、超时回滚、定期检查。工程实践：统一锁顺序、减少锁持有时间、tryLock 超时。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是虚拟内存？它解决了什么问题？",
+    "answer": "虚拟内存给每个进程一套独立的、连续的虚拟地址空间，由 MMU 通过页表映射到物理内存或磁盘（swap）。解决的问题：①物理内存有限——只把活跃页装在内存，其余放磁盘，程序可使用超过物理内存的空间；②隔离与安全——进程间地址空间独立，越界访问只影响自己（段错误），无法直接读写他人内存；③方便编程与重定位——程序无需关心物理布局，链接器按虚拟地址链接；④共享——多个进程可映射同一物理页（共享库、共享内存），写时复制让 fork 高效。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "分页和分段的区别是什么？",
+    "answer": "分页：把地址空间等分成固定大小的页（如 4KB），物理内存分成相同大小的页框，页表记录映射；对用户透明，解决内存分配与碎片问题（只有内部碎片）。分段：按程序的逻辑单位（代码段、数据段、栈段）分成不等长的段，段表记录基址与长度，程序员可见，便于共享与保护（如代码段只读共享），但外部碎片多。现代系统用段页式结合：先按逻辑分段（方便保护共享），每段内再分页（方便分配）。逻辑地址 = 段号 + 段内偏移（再拆成页号 + 页内偏移）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "常见的页面置换算法有哪些？各自的优缺点是什么？",
+    "answer": "①OPT 最优置换：淘汰未来最久不被访问的页，理论最优但无法实现，用作基准。②FIFO 先进先出：实现简单，但会出现 Belady 异常（内存增大缺页反而增多）。③LRU 最近最久未使用：效果好、局部性利用充分，但需维护访问顺序（链表/时间戳），成本高，且对循环扫描型访问会退化。④Clock（NRU）时钟算法：用环形链表 + 访问位近似 LRU，实现成本低，Linux 实际使用变体。⑤LFU 最不常用：按访问次数淘汰，但历史热点难以淘汰。实际：Linux 用双链表的活跃/非活跃 LRU 近似算法。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是缺页中断？缺页时操作系统做了什么？",
+    "answer": "程序访问的虚拟页不在物理内存（页表项有效位为 0）时，CPU 触发缺页异常，陷入内核处理。处理流程：①硬件保存现场并陷入内核；②检查虚拟地址是否合法（越界则发 SIGSEGV 终止进程）；③若合法，找一个空闲页框（没有则按置换算法淘汰一页，脏页先写回磁盘）；④从磁盘（swap 或文件）读入所需页到页框；⑤更新页表项，标记有效位；⑥返回用户态重新执行引起缺页的那条指令。缺页分两类：硬缺页（需磁盘 IO，代价高）、软缺页（页已在内存只是页表未映射，如写时复制、mmap 首次访问）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "用户态和内核态有什么区别？为什么要这样划分？如何切换？",
+    "answer": "区别：内核态可执行特权指令（如修改页表、关中断、访问硬件），用户态只能执行非特权指令，访问受限资源必须请求内核。划分原因：安全与稳定——防止用户程序直接操作硬件或破坏内核数据结构，实现隔离与保护。切换方式（三种）：①系统调用（主动，如 read/write）；②异常/陷阱（被动，如缺页、除零）；③外部中断（被动，如时钟中断、IO 完成）。切换开销：保存/恢复上下文、切换栈、刷新部分缓存（TLB 一般不刷但可能受影响），所以频繁系统调用是性能杀手（这也是零拷贝、io_uring、批量化系统调用存在的原因）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是零拷贝？有哪些实现方式？",
+    "answer": "传统 IO 读文件再发网络要 4 次拷贝（磁盘→内核页缓存→用户缓冲区→socket 缓冲区→网卡）：2 次 DMA 拷贝 + 2 次 CPU 拷贝，外加 4 次上下文切换。零拷贝减少 CPU 拷贝与切换：①mmap + write：把内核页缓存映射到用户空间，省去内核→用户的一次拷贝。②sendfile：数据不出内核，直接从页缓存送到 socket 缓冲区，2 次拷贝 2 次切换（Linux 2.4 起配合 SG-DMA 可做到真正零 CPU 拷贝）。③splice / 管道：在两个文件描述符间移动。④Java 的 FileChannel.transferTo 底层就是 sendfile；Kafka、Nginx、Netty 都大量使用零拷贝提性能。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "IO 多路复用中 select、poll、epoll 有什么区别？",
+    "answer": "①select：用位图传 fd，最大 1024（FD_SETSIZE）限制；每次调用要把 fd 集合从用户态拷到内核态，返回后还要 O(n) 遍历才知道谁就绪；且 fd 集合每次都要重置。②poll：用 pollfd 数组解决 1024 限制，但仍是线性遍历 O(n)、仍需整体拷贝。③epoll：epoll_create 建红黑树 + 就绪链表，epoll_ctl 增删改 O(log n) 且只注册一次，epoll_wait 直接返回就绪链表，O(1) 拿到结果；支持边缘触发 ET（只通知一次，必须一次读完）与水平触发 LT（默认，未处理会反复通知）。海量连接（C10K+）用 epoll，少量连接 select/poll 也够用。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "阻塞 IO、非阻塞 IO、同步 IO、异步 IO 有什么区别？",
+    "answer": "两个维度：①阻塞 vs 非阻塞——调用后线程是否被挂起（等待数据阶段的行为）。②同步 vs 异步——数据从内核拷贝到用户缓冲区这一步是否由调用者参与（真正的异步是内核拷完再通知，调用者完全不参与）。组合：阻塞 IO（read 阻塞到数据就绪并拷完）、非阻塞 IO（read 立即返回，没数据则轮询——异步非阻塞常被误用在此）、IO 多路复用（select/epoll 阻塞在事件上，就绪后再 read，仍是同步 IO）、信号驱动 IO、异步 IO（AIO/io_uring，内核完成后回调，真正的异步）。Linux 的 AIO 一直不成熟，io_uring 是现在的最佳实践；Java NIO 本质是同步非阻塞 + 多路复用。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "协程和线程有什么区别？为什么协程更轻量？",
+    "answer": "线程由内核调度（1:1 模型），切换需陷入内核、保存寄存器与栈、可能刷新缓存，开销约微秒级；协程由用户态库调度（N:1 或 M:N 模型），切换只保存少量寄存器与自己的栈（很多实现只有 KB 级），不陷入内核，开销约纳秒级。协程的特点：协作式调度（在 IO 挂起处主动让出，不会像线程那样被抢占）、同步写法实现异步效果（避免回调地狱）、单线程内串行执行无数据竞争（但要小心阻塞调用会卡住整个调度器）。适用：高并发 IO 密集（Go 的 goroutine、Python asyncio、Kotlin、Java 虚拟线程）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是上下文切换？它的开销来自哪里？",
+    "answer": "上下文切换指 CPU 从一个任务切换到另一个任务时，保存当前任务的执行状态（寄存器、程序计数器、栈指针、页表等）并恢复下一个任务状态的过程。开销来源：①直接开销——保存/恢复寄存器与 PCB、执行调度代码；②间接开销——切换地址空间（进程切换需换页表、导致 TLB 失效、缓存局部性被破坏，这是主要开销）；③用户态/内核态切换本身的代价。线程切换比进程切换便宜（不换页表）。规避手段：减少线程数、减少锁竞争（竞争会导致线程挂起）、用协程/异步 IO、批量处理、CPU 亲和性绑定。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "常见的进程调度算法有哪些？",
+    "answer": "①先来先服务 FCFS：简单，长作业会拖慢短作业（护航效应），非抢占。②短作业优先 SJF/SRTF：平均等待时间最短，但长作业可能饿死，需预知运行时间。③时间片轮转 RR：每个进程轮流运行一个时间片，公平、响应快，时间片过大退化为 FCFS，过小则切换开销大。④优先级调度：按优先级抢占或非抢占，低优先级饥饿（可用老化解决）。⑤多级反馈队列 MLFQ：多个优先级队列 + 动态调整（用完时间片降级、等待久了升优先级），兼顾短作业响应与长作业吞吐，通用系统最常用。⑥CFS（Linux 完全公平调度）：用红黑树按 vruntime 选最小者，按权重分配 CPU 时间。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是写时复制（Copy-On-Write）？有哪些应用？",
+    "answer": "原理：多个进程共享同一份只读页面，当某个进程要写时，内核才复制出一份新的物理页给该进程并改为可写，其他进程仍用原页。优点：延迟复制成本、节省内存，避免无谓拷贝。应用：①fork 创建子进程——子进程与父进程共享内存，只在修改时才复制（Linux 的 fork 因此很快，exec 前的临时拷贝被完全省掉）；②Redis 的 RDB 持久化——fork 子进程写快照，主进程继续服务；③Java 的 CopyOnWriteArrayList（写时整体复制新数组，适合读多写极少）；④Docker 镜像分层（UnionFS，多个容器共享只读层）；⑤文件系统（ZFS、Btrfs 快照）。注意：写时复制期间内存占用量可能翻倍。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是活锁和饥饿？如何解决？",
+    "answer": "活锁：进程/线程没有被阻塞，一直在重试却又不断失败，看起来在运行但无法推进（如两个线程互相谦让资源、冲突后同时退避又同时重试）。解决：引入随机退避时间（如以太网 CSMA/CD、分布式锁重试加 jitter）、按优先级/身份打破对称。饥饿：某个进程长期得不到资源（低优先级、年老请求、不公平锁），一直等待。解决：公平锁（FIFO 队列）、老化（等待越久优先级越高）、资源配额与限流、避免长事务长期占用。区别：死锁是互相等待静止不动，活锁是不停重试无进展，饥饿是永远排在后面。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "缓冲（Buffer）和缓存（Cache）有什么区别？",
+    "answer": "Buffer 缓冲：用于临时存放要传输的数据，解决速度不匹配与批量传输问题（如写文件先攒到缓冲区再刷盘、网络发送缓冲、Java 的 BufferedWriter），通常一次写入一次读出，缓冲的数据是必须保留的。Cache 缓存：存放频繁访问的数据的副本，用空间换时间提高读取命中率（如 CPU 缓存、页缓存、Redis、CDN），缓存的数据是可重建的、可被淘汰的（LRU 等策略）。实践中两者常混用：内核的页缓存既是缓存也是缓冲，MySQL 的 Buffer Pool 名字叫 Buffer 但本质是缓存。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是 inode？它包含哪些信息？",
+    "answer": "inode（索引节点）是 Unix/Linux 文件系统中描述文件元数据的结构，每个文件一个 inode，通过 inode 号定位。包含：文件类型与权限、属主/属组、大小、时间戳（atime/mtime/ctime）、链接数、数据块指针（直接块 + 一级/二级/三级间接块，或 ext4 的 extent 树）。不包含文件名（文件名存在目录项中，目录本质是 文件名 → inode 号的映射表）。由此产生几个经典现象：①删除文件名不等于删除数据（多硬链接或进程仍打开时 inode 未释放，磁盘空间不归还）；②df 显示满而 du 统计小——多因删除的文件仍被进程占用（lsof | grep deleted）；③inode 数量在格式化时固定，inode 用完即使磁盘有空间也无法创建新文件。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "硬链接和软链接（符号链接）有什么区别？",
+    "answer": "硬链接：多个文件名指向同一 inode，删除任一文件名只是减少链接计数，只有计数为 0 才真正删除数据；不能跨文件系统、不能对目录建立（防环）、inode 号相同。软链接（符号链接）：是一个独立文件，内容是目标路径字符串，有自己的 inode；可跨文件系统、可指向目录、目标删除后成为悬空链接（dangling）；用 ln -s 创建。应用：软链接常用于版本切换（如 /usr/local/java 指向具体 JDK 目录）、配置切换；硬链接常用于节约空间的同一文件多入口与备份（rsync --link-dest）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "Linux 下 CPU 使用率过高如何排查？",
+    "answer": "①top 或 htop 找到占用高的进程 PID，按 1 展开看每个核心、看 %us（用户态耗时）与 %sy（内核态耗时）判断方向。②top -Hp <pid> 或 ps -T 找到该进程内占 CPU 的线程 TID。③把 TID 转成十六进制：printf '%x' <tid>，再 jstack <pid> | grep -A 20 <nid> 定位到具体线程栈（Java 应用标准流程）。④内核态高——用 perf top / perf record 看热点函数（如自旋锁竞争、系统调用过多、软中断）。⑤常见根因：死循环或频繁 GC（jstat -gcutil 看到 Full GC 频繁）、锁自旋、正则回溯、频繁系统调用、大量线程上下文切换（vmstat 看 cs 与 r）。⑥优化：减少锁竞争、加大内存减 GC、异步化 IO、限流。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "系统调用（System Call）的过程是怎样的？",
+    "answer": "以 read 为例：①用户程序调用 libc 的 read 包装函数，把系统调用号（如 read 是 0）放入寄存器（x86-64 用 rax，参数放 rdi/rsi/rdx）。②执行 syscall/trap 指令触发软中断，CPU 从用户态切到内核态，跳转到内核的中断处理入口。③内核根据系统调用号在系统调用表中找到处理函数，先做参数合法性检查（地址是否属于用户空间、权限是否足够）。④执行实际功能（如从文件读数据到用户缓冲区）。⑤把返回值放到 rax，执行 sysret 返回用户态。⑥libc 检查返回值，出错时设置 errno 并返回 -1。关键点：参数检查防止用户程序传入内核地址做提权攻击；每次调用都有两次模式切换开销。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是内存对齐？为什么需要它？",
+    "answer": "内存对齐指变量的地址必须是其自身大小（或对齐要求）的整数倍，如 int（4 字节）地址须是 4 的倍数，结构体成员间可能插入填充字节，结构体总大小也要补齐到最大成员对齐数的倍数。原因：①硬件访问效率——CPU 按字长（如 8 字节）读取，未对齐的变量可能跨两个内存块，需要两次访问并拼接；②部分架构（ARM 早期、SPARC）不支持非对齐访问，会直接抛异常；③对齐后便于 CPU 缓存行利用（避免伪共享需再按缓存行 64 字节对齐）。代价：结构体内存占用变大。优化：把成员按大小从大到小排列可减少填充；用 #pragma pack 可强制紧凑（但损失性能，网络协议解析时才用）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是守护进程？如何创建？",
+    "answer": "守护进程（daemon）是脱离终端、在后台长期运行的系统服务进程（如 sshd、nginx、mysqld），特点是：无控制终端、父进程为 init/systemd（PID 1）、会话组长、工作目录为 /、文件描述符重定向。创建步骤（传统做法）：①fork 后父进程退出，使子进程被 init 收养、不再是进程组长；②setsid() 创建新会话、脱离控制终端；③再次 fork 确保不是会话组长（防止重新获得终端）；④chdir(\"/\") 防止占用可卸载的文件系统；⑤umask(0) 明确权限；⑥关闭或重定向标准输入输出到 /dev/null；⑦写 pid 文件。现代做法：由 systemd 管理（Type=simple/forking + Restart 策略），不必自己实现双 fork。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "信号量（Semaphore）和互斥锁（Mutex）有什么区别？PV 操作是什么？",
+    "answer": "互斥锁：值只有 0/1，用于临界区互斥，强调所有权（谁加锁谁解锁）。信号量：是一个非负整数计数器，可以 >1，用于控制同时访问某类资源的线程数量或做事件同步，不强调所有权（可由别的线程释放）。PV 操作：P（wait/down）——信号量减 1，若结果 < 0 则阻塞；V（signal/up）——信号量加 1，若有等待者则唤醒一个。经典应用：①互斥（初值 1）；②限流（初值 N，控制并发数，如数据库连接池）；③生产者-消费者（empty 初值 N、full 初值 0、mutex 初值 1，生产者 P(empty)→P(mutex)→放入→V(mutex)→V(full)）；④前趋关系同步。Java 的 Semaphore 即此模型。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "Linux 内存中的 swap 是什么？它对性能有什么影响？",
+    "answer": "swap（交换空间）是磁盘上的一块区域，当物理内存不足时，内核把不常访问的匿名页换出到 swap，腾出内存给活跃页；访问时再换入（触发缺页）。影响：磁盘随机 IO 比内存慢几个数量级，频繁换入换出（thrashing 抖动）会让系统响应急剧下降——表现为 CPU 的 %si/%wa 升高、磁盘 IO 打满、应用卡顿。实践建议：①数据库、Java 应用等延迟敏感服务常建议关闭或调低 swappiness（vm.swappiness=1~10）；②但完全关闭 swap 在内存突发时会导致 OOM Killer 直接杀进程，保留少量 swap 更安全；③加内存或优化内存使用（减少缓存、修内存泄漏）才是根本。相关参数：vm.swappiness、vm.overcommit_memory。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "什么是伪共享（False Sharing）？如何避免？",
+    "answer": "CPU 缓存以缓存行（通常 64 字节）为单位加载与失效。伪共享指两个线程分别修改同一缓存行内不同的变量：虽然逻辑上互不相干，但一个线程的写入会让另一个线程的缓存行失效，导致反复从内存重新加载，性能大幅下降（多核下能拖慢数倍，是高性能并发代码的隐形杀手）。避免：①填充（padding）——在变量前后加入无用字段，把两个变量撑到不同缓存行（Java 8 前的手工填充或 Java 8+ 的 @Contended 注解，需开启 -XX:-RestrictContended）；②把高频写的变量独立成对象；③局部聚合后再写共享（如 LongAdder 把计数分散到多个 Cell，最后求和，正是解决 AtomicLong 的伪共享）。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "Linux 中如何查看系统资源？常用命令有哪些？",
+    "answer": "①CPU 与负载：top/htop 看实时进程；uptime 看 1/5/15 分钟平均负载（与核数比较，超核数说明排队）；vmstat 1 看 r（运行队列）、cs（上下文切换）、si/so（swap 换入换出）。②内存：free -h 看 total/used/available 与 buff/cache（可用内存是 available 不是 free）；/proc/meminfo 看细节。③磁盘 IO：iostat -x 1 看 %util（利用率）与 await（响应时间）；iotop 看进程级 IO。④网络：ss -s / netstat -anp 看连接数与端口；iftop、sar -n DEV 看带宽。⑤磁盘空间：df -h 看分区，du -sh * 看目录占用（两者不一致多为已删除但被进程占用的文件）；lsof | grep deleted 定位。⑥进程详情：pidstat -p <pid> 1 看单进程的 CPU/内存/IO。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "线程池中线程数量应该如何设置？",
+    "answer": "按任务类型：①CPU 密集型（计算、加解密、序列化）——线程数 ≈ CPU 核数 + 1（多的 1 个用于在偶发缺页/中断时顶上）；线程过多只会增加上下文切换开销。②IO 密集型（网络调用、数据库、文件）——线程数 ≈ 核数 × (1 + 等待时间/计算时间)，如等待占 90% 则约为核数 × 10；实践中常用核数 × 2 起步再做压测调整。③混合型——拆分任务类型用不同线程池，避免互相影响。其他要点：队列要有界（无界队列会把内存撑爆且 maxPoolSize 形同虚设）、拒绝策略要明确、线程要有业务命名便于排查、核心业务与边缘业务隔离线程池（防止一个业务拖垮全部）。最终还是要靠压测找拐点。",
+    "qtype": "SUBJECTIVE"
+  },
+  {
+    "direction": "OS",
+    "content": "Linux 中普通进程的默认栈大小通常是多少？",
+    "answer": "8MB（x86-64 平台 ulimit -s 默认值，可用 ulimit -s 调整）",
+    "qtype": "CHOICE"
+  },
+  {
+    "direction": "OS",
+    "content": "fork() 调用成功后，在子进程中的返回值是什么？",
+    "answer": "0（父进程中返回子进程的 PID，出错返回 -1）",
+    "qtype": "CHOICE"
+  }
+]
