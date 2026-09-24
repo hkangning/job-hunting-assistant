@@ -314,7 +314,7 @@ def test_init_db_idempotent(client: TestClient):
 
 
 def test_enum_members_match_doc():
-    """用例 15：9 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。"""
+    """用例 15：10 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。"""
     for enum_name, expected in ENUM_MEMBERS.items():
         enum_cls = getattr(enums, enum_name)
         actual = {member.value for member in enum_cls}

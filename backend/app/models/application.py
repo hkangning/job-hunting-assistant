@@ -28,6 +28,7 @@ class Application(Base):
     status: Mapped[str] = mapped_column(
         String(20), default=ApplicationStatus.APPLIED
     )  # 进度状态，枚举 ApplicationStatus
+    close_reason: Mapped[str | None] = mapped_column(String(20))  # 结束原因，仅 status=CLOSED 时有值（枚举 CloseReason）
     next_event_at: Mapped[datetime | None] = mapped_column(DateTime)  # 下次笔试/面试时间（概览置顶依据）
     remark: Mapped[str | None] = mapped_column(Text)  # 备注
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 创建时间
