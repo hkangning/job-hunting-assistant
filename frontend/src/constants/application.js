@@ -34,3 +34,15 @@ export const LEGAL_TRANSITIONS = {
 export function canTransit(from, to) {
   return (LEGAL_TRANSITIONS[from] || []).includes(to)
 }
+
+/** 投递结束原因（SRS 4.1 数据字典 / 数据库设计 §5）：仅当状态为 CLOSED 时有值。
+ *  三类处境对应完全不同的复盘动作，故不接受「不指明原因」的结束。 */
+export const CLOSE_REASONS = [
+  { value: 'FAILED', label: '未通过', hint: '笔试或面试被淘汰，需要补短板' },
+  { value: 'DECLINED', label: '主动放弃', hint: '拒了 offer、不去了，无需复盘' },
+  { value: 'EXPIRED', label: '无消息', hint: '长期没进展，自己归档' }
+]
+
+export const CLOSE_REASON_LABELS = Object.fromEntries(
+  CLOSE_REASONS.map((r) => [r.value, r.label])
+)

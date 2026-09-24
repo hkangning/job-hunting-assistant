@@ -6,10 +6,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import { changeStatus, deleteApplication, getTrend, listApplications } from '../api/applications'
 import { STATUS_LABELS } from '../constants/application'
+import { CITY_OPTIONS } from '../constants/regions'
 import ApplicationStats from '../components/ApplicationStats.vue'
 import StatusKanban from '../components/StatusKanban.vue'
 import ApplicationFormDialog from '../components/ApplicationFormDialog.vue'
 import ApplicationImportDialog from '../components/ApplicationImportDialog.vue'
+import CloseReasonDialog from '../components/CloseReasonDialog.vue'
 import TrendChart from '../components/TrendChart.vue'
 
 const PAGE_SIZE = 50 // 接口上限（接口文档 §1.1）
@@ -22,10 +24,19 @@ const loading = ref(false)
 const items = ref([])
 const totalCount = ref(0)
 const filters = reactive({ company: '', city: '' })
+// 级联选择器的值是「路径数组」（如 ['江苏省','南京']），筛选只需最后一级
+const cityPath = ref([])
+
+function onCityChange(path) {
+  filters.city = Array.isArray(path) && path.length ? path[path.length - 1] : ''
+  load()
+}
 
 const formVisible = ref(false)
 const editingId = ref(null)
 const importVisible = ref(false)
+const closeDialogVisible = ref(false)
+const closingItem = ref(null)
 
 const trendVisible = ref(false)
 const trendLoading = ref(false)
@@ -92,10 +103,21 @@ async function onDelete(item) {
   load()
 }
 
+/** 取消流转 / 取消原因选择：本地还原卡片位置，不发任何请求 */
+function restoreCard() {
+  items.value = [...items.value] // 触发看板重建分组，卡片回到原列
+}
+
 /** 拖拽流转：先确认再落库。
  *  拖拽是瞬时动作，而状态流转不可逆（状态机单向），误拖一次就得重建数据才能挽回，
  *  故落库前给一次确认；取消时本地还原卡片位置，不发任何请求。 */
 async function onTransit({ item, status }) {
+  // 转「已结束」走专门的原因选择（结束原因是终态记录的唯一分类信息，不能随手带过）
+  if (status === 'CLOSED') {
+    closingItem.value = item
+    closeDialogVisible.value = true
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `将「${item.company} · ${item.position}」从「${STATUS_LABELS[item.status]}」流转到「${STATUS_LABELS[status]}」？`,
@@ -103,7 +125,7 @@ async function onTransit({ item, status }) {
       { type: 'info', confirmButtonText: '确认流转', cancelButtonText: '取消' }
     )
   } catch {
-    items.value = [...items.value] // 触发看板重建分组，卡片回到原列
+    restoreCard()
     return
   }
   try {
@@ -111,6 +133,24 @@ async function onTransit({ item, status }) {
     const target = items.value.find((it) => it.id === item.id)
     if (target) target.status = status
     ElMessage.success(`已流转至「${STATUS_LABELS[status]}」`)
+  } catch {
+    load()
+  }
+}
+
+/** 结束原因确认：带 close_reason 落库 */
+async function onCloseConfirmed(reason) {
+  const item = closingItem.value
+  closingItem.value = null
+  if (!item) return
+  try {
+    await changeStatus(item.id, { status: 'CLOSED', close_reason: reason })
+    const target = items.value.find((it) => it.id === item.id)
+    if (target) {
+      target.status = 'CLOSED'
+      target.close_reason = reason
+    }
+    ElMessage.success('已标记为结束')
   } catch {
     load()
   }
@@ -170,12 +210,17 @@ onMounted(load)
         clearable
         @input="onFilterInput"
       />
-      <el-input
-        v-model="filters.city"
+      <!-- 城市：先选省再选市（直辖市一级直达），可搜索；筛选值只取最后一级 -->
+      <el-cascader
+        v-model="cityPath"
         class="apps__filter"
+        :options="CITY_OPTIONS"
+        :show-all-levels="false"
         placeholder="城市"
         clearable
-        @input="onFilterInput"
+        filterable
+        popper-class="city-cascader-popper"
+        @change="onCityChange"
       />
       <el-button text type="primary" @click="toggleTrend">
         {{ trendVisible ? '收起趋势' : '查看趋势' }}
@@ -207,6 +252,12 @@ onMounted(load)
 
     <ApplicationFormDialog v-model="formVisible" :application-id="editingId" @saved="onSaved" />
     <ApplicationImportDialog v-model="importVisible" @imported="onImported" />
+    <CloseReasonDialog
+      v-model="closeDialogVisible"
+      :item="closingItem"
+      @confirmed="onCloseConfirmed"
+      @cancel="restoreCard"
+    />
   </div>
 </template>
 
@@ -238,5 +289,15 @@ onMounted(load)
   display: flex;
   align-items: center;
   justify-content: center;
+}
+</style>
+
+<!-- 非 scoped：级联面板 teleport 到 body，scoped 样式够不到 -->
+<style>
+.city-cascader-popper .el-cascader-menu__list {
+  max-height: 260px;
+}
+.city-cascader-popper .el-cascader-node {
+  font-size: 12.5px;
 }
 </style>

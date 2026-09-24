@@ -5,7 +5,13 @@
 import { reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
 import { Delete } from '@element-plus/icons-vue'
-import { APPLICATION_STATUSES, LEGAL_TRANSITIONS, STATUS_COLORS, canTransit } from '../constants/application'
+import {
+  APPLICATION_STATUSES,
+  CLOSE_REASON_LABELS,
+  LEGAL_TRANSITIONS,
+  STATUS_COLORS,
+  canTransit
+} from '../constants/application'
 
 const props = defineProps({
   items: { type: Array, default: () => [] }
@@ -146,6 +152,13 @@ function isUrgent(value) {
 
             <div class="kanban-card__foot">
               <span class="kanban-card__days">投递 {{ daysSince(element.applied_at) }} 天</span>
+              <span
+                v-if="element.close_reason"
+                class="kanban-card__reason"
+                :title="`结束原因：${CLOSE_REASON_LABELS[element.close_reason]}`"
+              >
+                {{ CLOSE_REASON_LABELS[element.close_reason] }}
+              </span>
               <span
                 v-if="element.next_event_at && eventLabel(element.status)"
                 class="kanban-card__event"
@@ -315,6 +328,16 @@ function isUrgent(value) {
 .kanban-card__event--urgent {
   color: var(--s-interview);
   font-weight: 700;
+}
+/* 结束原因是终态记录的唯一分类信息，用最浅一级标记承载（分类非警示，不铺强调色） */
+.kanban-card__reason {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--r-mark);
+  background: var(--c-divider);
+  color: var(--c-text-2);
+  font-size: 11px;
 }
 /* 删除按钮 hover 才显示：常显图标会抢占小卡片的视觉焦点 */
 .kanban-card__del {
