@@ -32,9 +32,21 @@ task_plan.md
 findings.md
 progress.md
 
-# ===== 依赖与构建产物（技术栈确定后按需调整）=====
-target/
-*.class
+# ===== 依赖与构建产物 =====
 node_modules/
 dist/
+dist-ssr/
 build/
+.vite/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.db
+
+# ===== 本地覆盖文件 =====
+*.local
