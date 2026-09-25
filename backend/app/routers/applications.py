@@ -1,12 +1,15 @@
 """投递管理接口：CRUD/状态流转/批量导入/模板下载/趋势统计（接口文档 3.3）。
 
 路由层只做协议转换（系统设计 3.1）：参数校验、调服务层、包统一响应体，不直接访问 ORM。
+数据归属一律取自登录态（current_user.id），请求体与查询参数中的 user_id 不接受、传入亦忽略。
 """
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.deps import get_current_user
+from app.models import User
 from app.models.enums import ApplicationStatus, CloseReason
 from app.schemas.application import (
     ApplicationCreate,
@@ -27,7 +30,7 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 
 # 固定路径端点必须注册在 /{application_id} 之前，否则会被路径参数匹配
 @router.get("/template", summary="下载导入模板")
-def download_template() -> Response:
+def download_template(current_user: User = Depends(get_current_user)) -> Response:
     """返回 xlsx 模板文件流（文件下载不走统一响应体）。"""
     return Response(
         content=application_service.build_import_template(),
@@ -39,20 +42,22 @@ def download_template() -> Response:
 @router.get("/trend", response_model=ApiResponse[TrendData], summary="投递趋势统计")
 def trend(
     days: int = Query(30, ge=1, le=90, description="统计最近 N 天，默认 30，最大 90"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[TrendData]:
-    """按投递日期统计每日投递数量（含无投递的 0 值日期）。"""
-    return ApiResponse[TrendData](data=application_service.trend(db, days))
+    """按投递日期统计当前账号每日投递数量（含无投递的 0 值日期）。"""
+    return ApiResponse[TrendData](data=application_service.trend(db, current_user.id, days))
 
 
 @router.post("/import", response_model=ApiResponse[ImportResult], summary="批量导入（Excel/CSV）")
 async def import_applications(
     file: UploadFile = File(..., description=".xlsx 或 .csv 文件，≤2MB，表头见模板接口"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[ImportResult]:
-    """解析上传清单入库：行级校验互不影响；全部行非法返回错误码 20002 并携带行级清单。"""
+    """解析上传清单入库（归属当前账号）：行级校验互不影响；全部行非法返回 20002 并携带行级清单。"""
     content = await file.read()
-    result = application_service.import_from_file(db, file.filename or "", content)
+    result = application_service.import_from_file(db, current_user.id, file.filename or "", content)
     return ApiResponse[ImportResult](data=result)
 
 
@@ -64,11 +69,13 @@ def list_applications(
     company: str | None = Query(None, description="公司关键字（模糊匹配）"),
     page: int = Query(1, ge=1, description="页码，从 1 起"),
     page_size: int = Query(10, ge=1, le=50, description="每页条数，默认 10，最大 50"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[PageData[ApplicationListItem]]:
-    """投递列表：按投递日期倒序，列表项不含备注（接口文档 3.3）。"""
+    """当前账号的投递列表：按投递日期倒序，列表项不含备注（接口文档 3.3）。"""
     data = application_service.list_applications(
         db,
+        user_id=current_user.id,
         status=status,
         close_reason=close_reason,
         city=city,
@@ -82,37 +89,48 @@ def list_applications(
 @router.post("", response_model=ApiResponse[ApplicationDTO], summary="新增投递")
 def create_application(
     payload: ApplicationCreate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[ApplicationDTO]:
-    """新增投递记录，返回含 id 的完整 DTO。"""
-    return ApiResponse[ApplicationDTO](data=application_service.create_application(db, payload))
+    """新增投递记录（归属当前账号），返回含 id 的完整 DTO。"""
+    return ApiResponse[ApplicationDTO](
+        data=application_service.create_application(db, current_user.id, payload)
+    )
 
 
 @router.get("/{application_id}", response_model=ApiResponse[ApplicationDTO], summary="投递详情")
 def get_application(
     application_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[ApplicationDTO]:
-    """投递详情（含备注全文）；不存在返回 10002。"""
-    return ApiResponse[ApplicationDTO](data=application_service.get_application(db, application_id))
+    """投递详情（含备注全文）；不存在或不属于当前账号返回 10002。"""
+    return ApiResponse[ApplicationDTO](
+        data=application_service.get_application(db, current_user.id, application_id)
+    )
 
 
 @router.put("/{application_id}", response_model=ApiResponse[ApplicationDTO], summary="编辑投递")
 def update_application(
     application_id: int,
     payload: ApplicationCreate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[ApplicationDTO]:
     """全量更新投递记录（请求体同新增）；状态变更走状态流转接口。"""
     return ApiResponse[ApplicationDTO](
-        data=application_service.update_application(db, application_id, payload)
+        data=application_service.update_application(db, current_user.id, application_id, payload)
     )
 
 
 @router.delete("/{application_id}", response_model=ApiResponse[None], summary="删除投递")
-def delete_application(application_id: int, db: Session = Depends(get_db)) -> ApiResponse[None]:
-    """物理删除投递记录；不存在返回 10002。"""
-    application_service.delete_application(db, application_id)
+def delete_application(
+    application_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApiResponse[None]:
+    """物理删除投递记录；不存在或不属于当前账号返回 10002。"""
+    application_service.delete_application(db, current_user.id, application_id)
     return ApiResponse[None]()
 
 
@@ -120,9 +138,10 @@ def delete_application(application_id: int, db: Session = Depends(get_db)) -> Ap
 def change_status(
     application_id: int,
     payload: ApplicationStatusUpdate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[ApplicationDTO]:
     """按状态机流转进度状态，非法流转返回 10001。"""
     return ApiResponse[ApplicationDTO](
-        data=application_service.change_status(db, application_id, payload)
+        data=application_service.change_status(db, current_user.id, application_id, payload)
     )

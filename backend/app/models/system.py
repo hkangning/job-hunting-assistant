@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -13,11 +13,15 @@ class Reminder(Base):
 
     __tablename__ = "reminder"
     __table_args__ = (
-        UniqueConstraint("reminder_type", "ref_id", "remind_date"),
+        UniqueConstraint(
+            "user_id", "reminder_type", "ref_id", "remind_date", name="uq_reminder_user_type_ref_date"
+        ),
+        Index("idx_reminder_user", "user_id"),
         Index("idx_reminder_date", "remind_date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（提醒按账号分别生成）
     reminder_type: Mapped[str] = mapped_column(String(20))  # 类型，枚举 ReminderType
     ref_id: Mapped[int | None] = mapped_column(Integer)  # 关联业务 id（跟进/面试=application.id，错题=wrong_question.id）
     content: Mapped[str] = mapped_column(Text)  # 提醒文案（LLM 或模板生成）
@@ -45,10 +49,11 @@ class CampusEvent(Base):
 
 
 class Config(Base):
-    """系统配置：key-value；密钥只存本机库、不回显明文（FR-015）。"""
+    """系统配置：key-value；`user_id=0` 为系统级（不建外键），其余为账号级；密钥只存本机库、不回显明文（FR-015）。"""
 
     __tablename__ = "config"
 
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)  # 所属账号；0=系统级配置
     key: Mapped[str] = mapped_column(String(50), primary_key=True)  # 配置键
     value: Mapped[str | None] = mapped_column(Text)  # 配置值（开关/URL/模型名/Key 覆盖值）
     updated_at: Mapped[datetime] = mapped_column(
@@ -57,11 +62,13 @@ class Config(Base):
 
 
 class UserProfile(Base):
-    """用户画像：仅一条记录（id=1），JD 分析与 Agent 记忆的输入（FR-012）。"""
+    """用户画像：每账号一条，JD 分析与 Agent 记忆的输入（FR-012）。"""
 
     __tablename__ = "user_profile"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_profile_user"),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键（固定 1）
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（每账号有且仅有一条画像）
     name: Mapped[str | None] = mapped_column(String(50))  # 姓名
     school: Mapped[str | None] = mapped_column(String(100))  # 学校
     major: Mapped[str | None] = mapped_column(String(100))  # 专业

@@ -13,8 +13,10 @@ class Experience(Base):
     """面经主记录：保留原文全文，条目由 LLM 提取或手补（FR-008）。"""
 
     __tablename__ = "experience"
+    __table_args__ = (Index("idx_experience_user", "user_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     company: Mapped[str | None] = mapped_column(String(100))  # 公司
     position: Mapped[str | None] = mapped_column(String(100))  # 岗位
     source: Mapped[str | None] = mapped_column(String(100))  # 来源（牛客/公众号/同学分享）

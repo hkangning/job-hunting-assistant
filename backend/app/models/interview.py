@@ -13,9 +13,13 @@ class InterviewSession(Base):
     """模拟面试会话：可由投递记录发起，也可手填公司岗位（FR-007）。"""
 
     __tablename__ = "interview_session"
-    __table_args__ = (Index("idx_session_status", "status"),)
+    __table_args__ = (
+        Index("idx_session_user", "user_id"),
+        Index("idx_session_status", "status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     application_id: Mapped[int | None] = mapped_column(ForeignKey("application.id"))  # 关联投递（手填发起则空）
     company: Mapped[str] = mapped_column(String(100))  # 公司（从投递带入或手填）
     position: Mapped[str] = mapped_column(String(100))  # 岗位

@@ -39,6 +39,14 @@ class ErrorCode(IntEnum):
     AGENT_TOOL_ARGS_MISSING = (50001, 400, "工具参数不完整")
     ASR_FAILED = (60001, 502, "语音转写失败")
     CRAWL_FAILED = (70001, 502, "就业网抓取失败")
+    # —— 8xxxx 账号与鉴权段（接口文档 1.3）——
+    UNAUTHORIZED = (80001, 401, "登录状态已失效，请重新登录")
+    TOKEN_EXPIRED = (80002, 401, "登录状态已失效，请重新登录")  # 与 80001 同款文案，不暴露失效原因
+    USERNAME_EXISTS = (80003, 409, "用户名已存在")
+    LOGIN_FAILED = (80004, 401, "用户名或密码错误")  # 统一文案，不区分账号不存在与密码错误（防枚举）
+    ACCOUNT_LOCKED = (80005, 403, "账号已锁定，请稍后重试")
+    PASSWORD_WEAK = (80006, 400, "密码强度不足，至少 6 位")
+    OLD_PASSWORD_WRONG = (80007, 400, "原密码错误")
 
 
 class BizException(Exception):

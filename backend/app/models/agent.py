@@ -12,8 +12,10 @@ class AgentConversation(Base):
     """Agent 会话（FR-011）。"""
 
     __tablename__ = "agent_conversation"
+    __table_args__ = (Index("idx_agent_conv_user", "user_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     title: Mapped[str] = mapped_column(String(100), default="新对话")  # 会话标题（首条输入截取）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 创建时间
     updated_at: Mapped[datetime] = mapped_column(

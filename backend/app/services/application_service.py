@@ -76,6 +76,7 @@ MAX_IMPORT_BYTES = 2 * 1024 * 1024  # 上传文件上限 2MB（接口文档 3.3�
 def list_applications(
     db: Session,
     *,
+    user_id: int,
     status: ApplicationStatus | None = None,
     close_reason: CloseReason | None = None,
     city: str | None = None,
@@ -83,8 +84,8 @@ def list_applications(
     page: int = 1,
     page_size: int = 10,
 ) -> PageData[ApplicationListItem]:
-    """投递列表：状态/结束原因/城市/公司关键字筛选 + 分页，按投递日期倒序（最近投递在前）。"""
-    conditions = []
+    """投递列表：仅当前账号数据；状态/结束原因/城市/公司关键字筛选 + 分页，按投递日期倒序。"""
+    conditions = [Application.user_id == user_id]
     if status is not None:
         conditions.append(Application.status == status)
     if close_reason is not None:
@@ -105,18 +106,18 @@ def list_applications(
     return PageData[ApplicationListItem](total=total, items=[_to_list_item(row) for row in rows])
 
 
-def get_application(db: Session, application_id: int) -> ApplicationDTO:
-    """投递详情；不存在返回 10002。"""
-    return _to_dto(_get_or_raise(db, application_id))
+def get_application(db: Session, user_id: int, application_id: int) -> ApplicationDTO:
+    """投递详情；不存在或不属于当前账号返回 10002（不暴露资源存在性）。"""
+    return _to_dto(_get_or_raise(db, user_id, application_id))
 
 
-def trend(db: Session, days: int) -> TrendData:
-    """投递趋势：按投递日期 GROUP BY 计数，补齐无投递日期（count=0），按日期升序（接口文档 3.3）。"""
+def trend(db: Session, user_id: int, days: int) -> TrendData:
+    """投递趋势：仅统计当前账号，按投递日期 GROUP BY 计数，补齐无投递日期（count=0），按日期升序。"""
     end = date.today()
     start = end - timedelta(days=days - 1)
     rows = db.execute(
         select(func.date(Application.applied_at), func.count())
-        .where(Application.applied_at >= to_datetime(start))
+        .where(Application.user_id == user_id, Application.applied_at >= to_datetime(start))
         .group_by(func.date(Application.applied_at))
     ).all()
     counts = {str(day): count for day, count in rows}
@@ -131,11 +132,12 @@ def trend(db: Session, days: int) -> TrendData:
 # ---------- 写入 ----------
 
 
-def create_application(db: Session, payload: ApplicationCreate) -> ApplicationDTO:
-    """新增投递：status 缺省 APPLIED、applied_at 缺省当天（接口文档 3.3）。"""
+def create_application(db: Session, user_id: int, payload: ApplicationCreate) -> ApplicationDTO:
+    """新增投递：归属由登录态决定（请求体不接受 user_id）；status 缺省 APPLIED、applied_at 缺省当天。"""
     now = datetime.now()
     status = payload.status or ApplicationStatus.APPLIED
     app = Application(
+        user_id=user_id,
         company=payload.company,
         position=payload.position,
         city=payload.city,
@@ -156,12 +158,14 @@ def create_application(db: Session, payload: ApplicationCreate) -> ApplicationDT
     return _to_dto(app)
 
 
-def update_application(db: Session, application_id: int, payload: ApplicationCreate) -> ApplicationDTO:
+def update_application(
+    db: Session, user_id: int, application_id: int, payload: ApplicationCreate
+) -> ApplicationDTO:
     """编辑投递：全量更新，未传字段按空处理；status 不在本接口变更（走 PATCH，接口文档 3.3）。
 
     结束原因仅在记录当前处于 CLOSED 时可改（用于更正选错的原因），其余状态下传该字段返回 10001。
     """
-    app = _get_or_raise(db, application_id)
+    app = _get_or_raise(db, user_id, application_id)
     is_closed = ApplicationStatus(app.status) == ApplicationStatus.CLOSED
     if payload.close_reason is not None and not is_closed:
         raise BizException(ErrorCode.PARAM_INVALID, "仅已结束的投递可修改结束原因")
@@ -181,22 +185,24 @@ def update_application(db: Session, application_id: int, payload: ApplicationCre
     return _to_dto(app)
 
 
-def delete_application(db: Session, application_id: int) -> None:
+def delete_application(db: Session, user_id: int, application_id: int) -> None:
     """删除投递：物理删除（数据库设计 §1 不引入软删除）。
 
     关联的 JD 分析报告、模拟面试会话保留数据但解除关联（application_id 置空，两表该列本就可空），
     否则外键约束会拦下删除导致 500。提醒表 ref_id 无外键约束，不作为拦截源。
     """
-    app = _get_or_raise(db, application_id)
+    app = _get_or_raise(db, user_id, application_id)
     for model in (JdAnalysisReport, InterviewSession):
         db.execute(update(model).where(model.application_id == application_id).values(application_id=None))
     db.delete(app)
     db.commit()
 
 
-def change_status(db: Session, application_id: int, payload: ApplicationStatusUpdate) -> ApplicationDTO:
+def change_status(
+    db: Session, user_id: int, application_id: int, payload: ApplicationStatusUpdate
+) -> ApplicationDTO:
     """状态流转：按 SRS FR-004 状态机校验，非法流转返回 10001；转 CLOSED 必须带结束原因。"""
-    app = _get_or_raise(db, application_id)
+    app = _get_or_raise(db, user_id, application_id)
     current = ApplicationStatus(app.status)
     target = payload.status
     if target not in LEGAL_TRANSITIONS[current]:
@@ -227,8 +233,8 @@ def change_status(db: Session, application_id: int, payload: ApplicationStatusUp
 # ---------- 批量导入 ----------
 
 
-def import_from_file(db: Session, filename: str, content: bytes) -> ImportResult:
-    """批量导入 xlsx/csv：行级校验互不影响，非法行进 errors；全部行非法时抛 20002（带 errors 清单）。"""
+def import_from_file(db: Session, user_id: int, filename: str, content: bytes) -> ImportResult:
+    """批量导入 xlsx/csv：导入记录归属当前账号；行级校验互不影响，全部行非法时抛 20002（带清单）。"""
     _check_import_file(filename, content)
     header, rows = _parse_import_file(filename, content)
     _check_header(header)
@@ -242,7 +248,7 @@ def import_from_file(db: Session, filename: str, content: bytes) -> ImportResult
         if reason is not None:
             errors.append(ImportErrorItem(row=row_no, reason=reason))
             continue
-        db.add(_build_import_record(raw))
+        db.add(_build_import_record(user_id, raw))
         success_count += 1
 
     if success_count == 0 and errors:
@@ -388,12 +394,13 @@ def _validate_row(raw: dict[str, str]) -> str | None:
     return None
 
 
-def _build_import_record(raw: dict[str, str]) -> Application:
-    """把已通过校验的一行转成 ORM 记录：applied_at 缺省当天、status 缺省 APPLIED。"""
+def _build_import_record(user_id: int, raw: dict[str, str]) -> Application:
+    """把已通过校验的一行转成 ORM 记录：归属当前账号，applied_at 缺省当天、status 缺省 APPLIED。"""
     now = datetime.now()
     applied_at = raw.get("applied_at", "").strip()
     status = raw.get("status", "").strip()
     return Application(
+        user_id=user_id,
         company=raw["company"].strip(),
         position=raw["position"].strip(),
         city=raw.get("city", "").strip() or None,
@@ -420,9 +427,11 @@ def _parse_import_date(text: str) -> date:
 # ---------- 内部转换 ----------
 
 
-def _get_or_raise(db: Session, application_id: int) -> Application:
-    """取投递记录，不存在返回 10002。"""
-    app = db.get(Application, application_id)
+def _get_or_raise(db: Session, user_id: int, application_id: int) -> Application:
+    """取当前账号的投递记录；不存在或属于其他账号一律返回 10002（系统设计 3.6：不暴露存在性）。"""
+    app = db.scalar(
+        select(Application).where(Application.id == application_id, Application.user_id == user_id)
+    )
     if app is None:
         raise BizException(ErrorCode.NOT_FOUND, "投递记录不存在")
     return app
