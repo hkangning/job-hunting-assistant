@@ -1,10 +1,13 @@
-"""建表冒烟（TC-51）：15 表存在、字段/索引/约束与设计文档一致、默认值正确、种子题库就位。
+"""建表冒烟（TC-51）：17 表存在、字段/索引/约束与设计文档一致、默认值正确、注册预置数据、种子题库就位。
 
-期望值来源：《数据库设计文档》v1.1 §3，固化在 tests/expected_schema.py。
+期望值来源：《数据库设计文档》v1.5 §3~§4，固化在 tests/expected_schema.py。
 设计依据：docs/superpowers/specs/2026-09-24-步骤2建表冒烟测试-design.md
 
 约定：写数据的用例一律 flush + rollback，**不 commit**——保证用例之间互不残留，
 否则种子题库类断言（题数、题干唯一）会被前面用例插入的临时数据干扰。
+需要真实提交的用例（注册预置数据）改走 HTTP 接口，由接口自身提交。
+
+步骤 5（多账号）后：账号私有写入一律带 `user_id`，故需要账号的用例加 `account` fixture。
 """
 
 from datetime import date, datetime
@@ -28,15 +31,17 @@ from app.models import (
     JdAnalysisReport,
     Question,
     Reminder,
+    User,
     UserProfile,
     WrongQuestion,
 )
 from tests.expected_schema import (
-    CONFIG_DEFAULTS,
+    ACCOUNT_CONFIG,
     ENUM_MEMBERS,
     SEED_DIRECTIONS,
     SEED_MIN_PER_DIRECTION,
     SEED_MIN_TOTAL,
+    SYSTEM_CONFIG,
     TABLES,
 )
 
@@ -51,11 +56,23 @@ def _columns_of(table: str) -> dict[str, tuple[str, bool, bool]]:
     }
 
 
-def test_all_15_tables_exist(client: TestClient):
-    """用例 1：经应用启动（lifespan → init_db）后，15 张表全部建出。"""
+def _new_user(db, username: str = "helper_user") -> User:
+    """造一个账号行（用例内部使用，password_hash 占位即可）。
+
+    默认名不能用 "tester"——`client` fixture 已注册该账号，重名会撞 `user.username` 唯一约束。
+    """
+    user = User(username=username, password_hash="x")
+    db.add(user)
+    db.flush()
+    return user
+
+
+def test_all_17_tables_exist(client: TestClient):
+    """用例 1：经应用启动（lifespan → init_db）后，17 张表全部建出（多账号改造前为 15 张）。"""
     actual = set(inspect(engine).get_table_names())
     missing = set(TABLES) - actual
     assert not missing, f"缺失表：{sorted(missing)}"
+    assert len(TABLES) == 17, f"期望 17 张表，期望值文件中有 {len(TABLES)} 张"
 
 
 def test_table_columns_match_doc(client: TestClient):
@@ -89,7 +106,7 @@ def test_table_indexes_match_doc(client: TestClient):
 
 
 def test_unique_constraints_match_doc(client: TestClient):
-    """用例 4：核对唯一约束（wrong_question / reminder / campus_event 三处）。"""
+    """用例 4：核对唯一约束（user / user_profile / wrong_question / reminder / campus_event / llm_provider_config）。"""
     insp = inspect(engine)
     for table, spec in TABLES.items():
         actual = sorted(
@@ -100,7 +117,7 @@ def test_unique_constraints_match_doc(client: TestClient):
 
 
 def test_foreign_keys_match_doc(client: TestClient):
-    """用例 5：核对 7 处外键的（本表列 → 目标表.目标列）。"""
+    """用例 5：核对外键（本表列 → 目标表.目标列），含 8 张私有表指向 user 的归属外键。"""
     insp = inspect(engine)
     for table, spec in TABLES.items():
         actual = sorted(
@@ -125,9 +142,10 @@ def test_sqlite_pragmas(client: TestClient):
 def test_foreign_key_enforced(client: TestClient):
     """用例 7：外键开关真生效——引用不存在的 application.id 应被拒绝。"""
     with SessionLocal() as db:
+        user = _new_user(db)
         db.add(
             JdAnalysisReport(
-                application_id=999_999, jd_text="JD 原文", report_text="报告全文"
+                user_id=user.id, application_id=999_999, jd_text="JD 原文", report_text="报告全文"
             )
         )
         with pytest.raises(IntegrityError):
@@ -135,35 +153,63 @@ def test_foreign_key_enforced(client: TestClient):
         db.rollback()
 
 
-def test_default_rows_created(client: TestClient):
-    """用例 8：初始行——user_profile 仅 id=1 一条；config 含 8 个默认项且值正确。"""
+def test_default_rows_created(client: TestClient, account):
+    """用例 8：初始行——系统级 config（user_id=0）2 条；画像与账号级配置**随注册产生**，建表时不预置。
+
+    多账号改造前建表会预置一条 `id=1` 的空画像（单用户假设），现改为每账号在注册时建。
+    """
     with SessionLocal() as db:
-        assert [p.id for p in db.scalars(select(UserProfile)).all()] == [1]
-        actual = {c.key: c.value for c in db.scalars(select(Config)).all()}
-        assert actual == CONFIG_DEFAULTS, f"config 默认项不符：{actual}"
+        rows = db.scalars(select(Config)).all()
+        assert {row.key: row.value for row in rows if row.user_id == 0} == SYSTEM_CONFIG
+        assert {row.user_id for row in rows} == {0, account["id"]}, "config 应只有系统级与默认账号两组"
+
+        # 画像条数与账号一一对应（client 注册了 1 个账号 → 恰 1 条），而非建表时预置
+        profiles = db.scalars(select(UserProfile)).all()
+        assert [p.user_id for p in profiles] == [account["id"]]
 
 
-def test_enum_column_defaults(client: TestClient):
+def test_register_provisions_account_data(client: TestClient, account):
+    """用例 8b：注册为新账号预置**一条空画像 + 6 项账号级 config**（数据库设计 §4）。"""
+    with SessionLocal() as db:
+        user_id = account["id"]
+        profiles = db.scalars(select(UserProfile).where(UserProfile.user_id == user_id)).all()
+        assert len(profiles) == 1, "每个账号应有且仅有一条画像"
+        assert profiles[0].name is None
+
+        account_config = {
+            row.key: row.value
+            for row in db.scalars(select(Config).where(Config.user_id == user_id)).all()
+        }
+        assert account_config == ACCOUNT_CONFIG
+
+        # 系统级配置不因注册而变动
+        system_rows = db.scalars(select(Config).where(Config.user_id == 0)).all()
+        assert {row.key for row in system_rows} == set(SYSTEM_CONFIG)
+
+
+def test_enum_column_defaults(client: TestClient, account):
     """用例 9：枚举列默认值——插入时不指定，读回应为设计文档规定的值。"""
     with SessionLocal() as db:
-        application = Application(company="甲公司", position="后端开发")
+        user_id = account["id"]
+        application = Application(user_id=user_id, company="甲公司", position="后端开发")
         question = Question(direction="JAVA", content="默认值验证题", answer="参考答案")
         db.add_all([application, question])
         db.flush()
 
-        session = InterviewSession(company="甲公司", position="后端开发")
-        experience = Experience(original_text="面经原文")
-        conversation = AgentConversation()
+        session = InterviewSession(user_id=user_id, company="甲公司", position="后端开发")
+        experience = Experience(user_id=user_id, original_text="面经原文")
+        conversation = AgentConversation(user_id=user_id)
         db.add_all([session, experience, conversation])
         db.flush()
 
         qa = InterviewQa(session_id=session.id, seq=1, question="第一题")
         item = ExperienceItem(experience_id=experience.id, question="面经问题")
         wrong = WrongQuestion(
-            question_id=question.id, source_type="MANUAL", next_review_at=datetime.now()
+            user_id=user_id, question_id=question.id, source_type="MANUAL",
+            next_review_at=datetime.now(),
         )
         reminder = Reminder(
-            reminder_type="FOLLOW_UP", content="跟进提醒", remind_date=date.today()
+            user_id=user_id, reminder_type="FOLLOW_UP", content="跟进提醒", remind_date=date.today()
         )
         db.add_all([qa, item, wrong, reminder])
         db.flush()
@@ -185,17 +231,18 @@ def test_enum_column_defaults(client: TestClient):
         db.rollback()
 
 
-def test_int_and_text_defaults(client: TestClient):
-    """用例 10：整型/文本默认值，以及时间戳列非空。"""
+def test_int_and_text_defaults(client: TestClient, account):
+    """用例 10：整型/文本默认值、时间戳列非空，以及账号表的枚举与计数默认值。"""
     with SessionLocal() as db:
-        application = Application(company="乙公司", position="后端开发")
+        user_id = account["id"]
+        application = Application(user_id=user_id, company="乙公司", position="后端开发")
         question = Question(direction="OS", content="默认值验证题二", answer="答案")
         db.add_all([application, question])
         db.flush()
 
-        session = InterviewSession(company="乙公司", position="后端开发")
-        experience = Experience(original_text="面经原文二")
-        conversation = AgentConversation()
+        session = InterviewSession(user_id=user_id, company="乙公司", position="后端开发")
+        experience = Experience(user_id=user_id, original_text="面经原文二")
+        conversation = AgentConversation(user_id=user_id)
         db.add_all([session, experience, conversation])
         db.flush()
 
@@ -213,42 +260,62 @@ def test_int_and_text_defaults(client: TestClient):
         assert experience.created_at is not None
         assert conversation.created_at is not None
         assert conversation.updated_at is not None
+
+        # 账号表：role / plan / 失败计数默认值（数据库设计 §3.16）
+        new_user = _new_user(db, username="default_checker")
+        db.refresh(new_user)
+        assert new_user.role == "USER"
+        assert new_user.plan == "FREE"
+        assert new_user.login_fail_count == 0
+        assert new_user.locked_until is None
+        assert new_user.password_changed_at is None
         db.rollback()
 
 
-def test_unique_constraints_enforced(client: TestClient):
-    """用例 11：唯一约束真生效——三处重复插入均被拒。"""
-    # wrong_question.question_id 唯一
+def test_unique_constraints_enforced(client: TestClient, account, make_account):
+    """用例 11：唯一约束真生效，且**账号隔离口径正确**——同账号重复被拒、跨账号互不冲突。"""
+    other = make_account("other_user")
+
+    # wrong_question：UNIQUE(user_id, question_id)——跨账号各存一份成功，同账号重复被拒
     with SessionLocal() as db:
         question = Question(direction="MYSQL", content="唯一约束验证题", answer="答案")
         db.add(question)
         db.flush()
-        db.add(
-            WrongQuestion(
-                question_id=question.id, source_type="MANUAL", next_review_at=datetime.now()
-            )
-        )
-        db.flush()
-        db.add(
-            WrongQuestion(
-                question_id=question.id, source_type="PRACTICE", next_review_at=datetime.now()
-            )
-        )
+
+        db.add(WrongQuestion(
+            user_id=account["id"], question_id=question.id, source_type="MANUAL",
+            next_review_at=datetime.now(),
+        ))
+        db.add(WrongQuestion(
+            user_id=other["id"], question_id=question.id, source_type="MANUAL",
+            next_review_at=datetime.now(),
+        ))
+        db.flush()  # 两个账号各一条，应成功（多账号改造前 UNIQUE(question_id) 会拒）
+        assert db.scalar(select(func.count()).select_from(WrongQuestion)) == 2
+
+        db.add(WrongQuestion(
+            user_id=account["id"], question_id=question.id, source_type="PRACTICE",
+            next_review_at=datetime.now(),
+        ))
         with pytest.raises(IntegrityError):
-            db.flush()
+            db.flush()  # 同账号同题第二条：被拒
         db.rollback()
 
-    # reminder(reminder_type, ref_id, remind_date) 唯一
+    # reminder：UNIQUE(user_id, reminder_type, ref_id, remind_date)——同账号同日不重复
     with SessionLocal() as db:
         today = date.today()
-        db.add(Reminder(reminder_type="FOLLOW_UP", ref_id=1, content="提醒一", remind_date=today))
+        db.add(Reminder(
+            user_id=account["id"], reminder_type="FOLLOW_UP", ref_id=1, content="提醒一", remind_date=today
+        ))
         db.flush()
-        db.add(Reminder(reminder_type="FOLLOW_UP", ref_id=1, content="提醒二", remind_date=today))
+        db.add(Reminder(
+            user_id=account["id"], reminder_type="FOLLOW_UP", ref_id=1, content="提醒二", remind_date=today
+        ))
         with pytest.raises(IntegrityError):
             db.flush()
         db.rollback()
 
-    # campus_event(title, event_date) 唯一
+    # campus_event(title, event_date) 唯一：公共表，与账号无关
     with SessionLocal() as db:
         event_date = datetime.now()
         db.add(CampusEvent(title="宣讲会", event_date=event_date))
@@ -258,9 +325,25 @@ def test_unique_constraints_enforced(client: TestClient):
             db.flush()
         db.rollback()
 
+    # user.username 唯一（库层只管精确重复；大小写变体由服务层拦，见 TC-52）
+    with SessionLocal() as db:
+        db.add(User(username="dup_user", password_hash="x"))
+        db.flush()
+        db.add(User(username="dup_user", password_hash="x"))
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+
+    # user_profile：UNIQUE(user_id)——每账号仅一条（client 已为其账号建过一条）
+    with SessionLocal() as db:
+        db.add(UserProfile(user_id=account["id"], updated_at=datetime.now()))
+        with pytest.raises(IntegrityError):
+            db.flush()
+        db.rollback()
+
 
 def test_seed_questions_count(client: TestClient):
-    """用例 12：种子题库总量 ≥120，Java/MySQL/网络/OS 四方向各 ≥30。"""
+    """用例 12：种子题库总量 ≥120，Java/MySQL/网络/OS 四方向各 ≥30（题库为公共表，全账号共享）。"""
     with SessionLocal() as db:
         total = db.scalar(select(func.count()).select_from(Question))
         assert total >= SEED_MIN_TOTAL, f"种子题总数 {total} < {SEED_MIN_TOTAL}"
@@ -299,22 +382,22 @@ def test_seed_questions_fields(client: TestClient):
 
 
 def test_init_db_idempotent(client: TestClient):
-    """用例 14：重复初始化不产生副作用——表数、题数、画像行数均不变。"""
+    """用例 14：重复初始化不产生副作用——表数、题数、config 行数均不变。"""
     tables_before = set(inspect(engine).get_table_names())
     with SessionLocal() as db:
         questions_before = db.scalar(select(func.count()).select_from(Question))
-        profiles_before = db.scalar(select(func.count()).select_from(UserProfile))
+        configs_before = db.scalar(select(func.count()).select_from(Config))
 
     init_db()  # client fixture 已触发过一次，这里构成"重复初始化"
 
     assert set(inspect(engine).get_table_names()) == tables_before
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(Question)) == questions_before
-        assert db.scalar(select(func.count()).select_from(UserProfile)) == profiles_before
+        assert db.scalar(select(func.count()).select_from(Config)) == configs_before
 
 
 def test_enum_members_match_doc():
-    """用例 15：10 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。"""
+    """用例 15：12 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。"""
     for enum_name, expected in ENUM_MEMBERS.items():
         enum_cls = getattr(enums, enum_name)
         actual = {member.value for member in enum_cls}
