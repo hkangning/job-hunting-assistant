@@ -32,10 +32,16 @@ from app.schemas.application import (
 from app.schemas.common import PageData
 from app.utils.datetime_utils import DATE_FORMAT, date_range, to_datetime
 
-# 合法状态流转（SRS FR-004）：已投递→待笔试→面试中→已获 offer；除已结束外任意状态均可流转至已结束（含 OFFER，覆盖拒 offer / 被撤回 / 谈崩），不可回退
+# 合法状态流转（SRS FR-004，v1.8 起放开跳级）：链上顺序 已投递→待笔试→面试中→已获 offer，可前进到任意更靠后的
+# 状态（跳过环节合法，如不设笔试的公司可从已投递直接进面试中），亦可终止；除已结束外任意状态均可流转至已结束
+# （含 OFFER，覆盖拒 offer / 被撤回 / 谈崩），不可回退
 LEGAL_TRANSITIONS: dict[ApplicationStatus, frozenset[ApplicationStatus]] = {
-    ApplicationStatus.APPLIED: frozenset({ApplicationStatus.WRITTEN, ApplicationStatus.CLOSED}),
-    ApplicationStatus.WRITTEN: frozenset({ApplicationStatus.INTERVIEW, ApplicationStatus.CLOSED}),
+    ApplicationStatus.APPLIED: frozenset(
+        {ApplicationStatus.WRITTEN, ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER, ApplicationStatus.CLOSED}
+    ),
+    ApplicationStatus.WRITTEN: frozenset(
+        {ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER, ApplicationStatus.CLOSED}
+    ),
     ApplicationStatus.INTERVIEW: frozenset({ApplicationStatus.OFFER, ApplicationStatus.CLOSED}),
     ApplicationStatus.OFFER: frozenset({ApplicationStatus.CLOSED}),
     ApplicationStatus.CLOSED: frozenset(),
