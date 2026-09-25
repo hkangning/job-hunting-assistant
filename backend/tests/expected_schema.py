@@ -1,8 +1,12 @@
-"""数据库结构期望值：逐字段固化自《数据库设计文档》v1.1 §3，供建表冒烟测试（TC-51）比对。
+"""数据库结构期望值：逐字段固化自《数据库设计文档》v1.5 §3，供建表冒烟测试（TC-51）比对。
 
 本文件只存数据、不写逻辑：设计文档升版时同步改这里。
 类型字符串取 SQLAlchemy 在 SQLite 下的编译结果（String(n)→VARCHAR(n)、Text→TEXT、
 DateTime→DATETIME、Date→DATE、Integer→INTEGER）。
+
+多账号改造（v1.3）后：表数 15 → **17**（新增 `user`、`llm_provider_config`），
+8 张账号私有表补 `user_id` + `idx_*_user` 索引，`wrong_question` / `reminder` /
+`user_profile` / `config` 四张表的约束一并变更。
 """
 
 # 每表结构：columns 元组为 (列名, 类型, 允许为空, 是否主键)
@@ -10,6 +14,7 @@ TABLES: dict[str, dict] = {
     "application": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("company", "VARCHAR(100)", False, False),
             ("position", "VARCHAR(100)", False, False),
             ("city", "VARCHAR(50)", True, False),
@@ -24,28 +29,31 @@ TABLES: dict[str, dict] = {
             ("updated_at", "DATETIME", False, False),
         ],
         "indexes": {
+            "idx_application_user": ["user_id"],
             "idx_application_status": ["status"],
             "idx_application_applied_at": ["applied_at"],
         },
         "uniques": [],
-        "foreign_keys": [],
+        "foreign_keys": [("user_id", "user", "id")],
     },
     "jd_analysis_report": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("application_id", "INTEGER", True, False),
             ("jd_text", "TEXT", False, False),
             ("report_text", "TEXT", False, False),
             ("score", "INTEGER", True, False),
             ("created_at", "DATETIME", False, False),
         ],
-        "indexes": {"idx_jd_app_id": ["application_id"]},
+        "indexes": {"idx_jd_user": ["user_id"], "idx_jd_app_id": ["application_id"]},
         "uniques": [],
-        "foreign_keys": [("application_id", "application", "id")],
+        "foreign_keys": [("user_id", "user", "id"), ("application_id", "application", "id")],
     },
     "interview_session": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("application_id", "INTEGER", True, False),
             ("company", "VARCHAR(100)", False, False),
             ("position", "VARCHAR(100)", False, False),
@@ -56,9 +64,9 @@ TABLES: dict[str, dict] = {
             ("created_at", "DATETIME", False, False),
             ("finished_at", "DATETIME", True, False),
         ],
-        "indexes": {"idx_session_status": ["status"]},
+        "indexes": {"idx_session_user": ["user_id"], "idx_session_status": ["status"]},
         "uniques": [],
-        "foreign_keys": [("application_id", "application", "id")],
+        "foreign_keys": [("user_id", "user", "id"), ("application_id", "application", "id")],
     },
     "interview_qa": {
         "columns": [
@@ -80,6 +88,7 @@ TABLES: dict[str, dict] = {
     "experience": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("company", "VARCHAR(100)", True, False),
             ("position", "VARCHAR(100)", True, False),
             ("source", "VARCHAR(100)", True, False),
@@ -87,9 +96,9 @@ TABLES: dict[str, dict] = {
             ("item_count", "INTEGER", False, False),
             ("created_at", "DATETIME", False, False),
         ],
-        "indexes": {},
+        "indexes": {"idx_experience_user": ["user_id"]},
         "uniques": [],
-        "foreign_keys": [],
+        "foreign_keys": [("user_id", "user", "id")],
     },
     "experience_item": {
         "columns": [
@@ -121,6 +130,7 @@ TABLES: dict[str, dict] = {
     "practice_record": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("question_id", "INTEGER", False, False),
             ("user_answer", "TEXT", False, False),
             ("score", "INTEGER", True, False),
@@ -129,15 +139,17 @@ TABLES: dict[str, dict] = {
             ("created_at", "DATETIME", False, False),
         ],
         "indexes": {
+            "idx_practice_user": ["user_id"],
             "idx_practice_q": ["question_id"],
             "idx_practice_time": ["created_at"],
         },
         "uniques": [],
-        "foreign_keys": [("question_id", "question", "id")],
+        "foreign_keys": [("user_id", "user", "id"), ("question_id", "question", "id")],
     },
     "wrong_question": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("question_id", "INTEGER", False, False),
             ("source_type", "VARCHAR(20)", False, False),
             ("review_stage", "INTEGER", False, False),
@@ -148,22 +160,25 @@ TABLES: dict[str, dict] = {
             ("created_at", "DATETIME", False, False),
         ],
         "indexes": {
+            "idx_wq_user": ["user_id"],
             "idx_wq_review": ["next_review_at"],
             "idx_wq_stage": ["review_stage"],
         },
-        "uniques": [["question_id"]],
-        "foreign_keys": [("question_id", "question", "id")],
+        # 多账号改造前为 UNIQUE(question_id)：现为"同账号内一题仅一条"
+        "uniques": [["user_id", "question_id"]],
+        "foreign_keys": [("user_id", "user", "id"), ("question_id", "question", "id")],
     },
     "agent_conversation": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("title", "VARCHAR(100)", False, False),
             ("created_at", "DATETIME", False, False),
             ("updated_at", "DATETIME", False, False),
         ],
-        "indexes": {},
+        "indexes": {"idx_agent_conv_user": ["user_id"]},
         "uniques": [],
-        "foreign_keys": [],
+        "foreign_keys": [("user_id", "user", "id")],
     },
     "agent_message": {
         "columns": [
@@ -182,6 +197,7 @@ TABLES: dict[str, dict] = {
     "reminder": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("reminder_type", "VARCHAR(20)", False, False),
             ("ref_id", "INTEGER", True, False),
             ("content", "TEXT", False, False),
@@ -189,9 +205,10 @@ TABLES: dict[str, dict] = {
             ("checked", "INTEGER", False, False),
             ("created_at", "DATETIME", False, False),
         ],
-        "indexes": {"idx_reminder_date": ["remind_date"]},
-        "uniques": [["reminder_type", "ref_id", "remind_date"]],
-        "foreign_keys": [],
+        "indexes": {"idx_reminder_user": ["user_id"], "idx_reminder_date": ["remind_date"]},
+        # 多账号改造前为 UNIQUE(reminder_type, ref_id, remind_date)：现为"同账号同日不重复"
+        "uniques": [["user_id", "reminder_type", "ref_id", "remind_date"]],
+        "foreign_keys": [("user_id", "user", "id")],
     },
     "campus_event": {
         "columns": [
@@ -209,6 +226,8 @@ TABLES: dict[str, dict] = {
     },
     "config": {
         "columns": [
+            # 联合主键：user_id = 0 为系统级（数据库设计 §3.14）
+            ("user_id", "INTEGER", False, True),
             ("key", "VARCHAR(50)", False, True),
             ("value", "TEXT", True, False),
             ("updated_at", "DATETIME", False, False),
@@ -220,6 +239,7 @@ TABLES: dict[str, dict] = {
     "user_profile": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
             ("name", "VARCHAR(50)", True, False),
             ("school", "VARCHAR(100)", True, False),
             ("major", "VARCHAR(100)", True, False),
@@ -235,8 +255,47 @@ TABLES: dict[str, dict] = {
             ("updated_at", "DATETIME", False, False),
         ],
         "indexes": {},
-        "uniques": [],
+        # 每账号有且仅有一条画像（多账号改造前靠"仅 id=1 一行"的约定）
+        "uniques": [["user_id"]],
+        "foreign_keys": [("user_id", "user", "id")],
+    },
+    "user": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("username", "VARCHAR(50)", False, False),
+            ("password_hash", "VARCHAR(100)", False, False),
+            ("nickname", "VARCHAR(50)", True, False),
+            ("email", "VARCHAR(100)", True, False),
+            ("avatar", "VARCHAR(200)", True, False),
+            ("role", "VARCHAR(20)", False, False),
+            ("plan", "VARCHAR(20)", False, False),
+            ("login_fail_count", "INTEGER", False, False),
+            ("locked_until", "DATETIME", True, False),
+            ("last_login_at", "DATETIME", True, False),
+            ("password_changed_at", "DATETIME", True, False),
+            ("created_at", "DATETIME", False, False),
+            ("updated_at", "DATETIME", False, False),
+        ],
+        "indexes": {},
+        "uniques": [["username"]],
         "foreign_keys": [],
+    },
+    "llm_provider_config": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
+            ("provider", "VARCHAR(30)", False, False),
+            ("base_url", "VARCHAR(200)", True, False),
+            ("api_key", "TEXT", True, False),
+            ("model", "VARCHAR(100)", True, False),
+            ("models_cache", "TEXT", True, False),
+            ("is_active", "INTEGER", False, False),
+            ("created_at", "DATETIME", False, False),
+            ("updated_at", "DATETIME", False, False),
+        ],
+        "indexes": {"idx_llm_cfg_user": ["user_id"]},
+        "uniques": [["user_id", "provider"]],
+        "foreign_keys": [("user_id", "user", "id")],
     },
 }
 
@@ -252,6 +311,9 @@ ENUM_MEMBERS: dict[str, set[str]] = {
     "WrongSourceType": {"PRACTICE", "INTERVIEW", "MANUAL"},
     "ReminderType": {"FOLLOW_UP", "WRONG_QUESTION", "INTERVIEW"},
     "MessageRole": {"USER", "ASSISTANT", "TOOL"},
+    # 步骤 5 新增两个枚举（数据库设计 §5 user.role / user.plan）
+    "UserRole": {"USER", "ADMIN"},
+    "UserPlan": {"FREE", "PRO"},
 }
 
 # 《数据库设计文档》§4 种子题库要求 + 开发计划步骤 2 验收标准
@@ -259,14 +321,18 @@ SEED_MIN_TOTAL = 120
 SEED_MIN_PER_DIRECTION = 30
 SEED_DIRECTIONS = ("JAVA", "MYSQL", "NETWORK", "OS")
 
-# app/database.py 的 DEFAULT_CONFIG（键与接口文档 GET /settings 响应字段一一对应）
-CONFIG_DEFAULTS = {
-    "llm_provider": "deepseek",
-    "llm_model": "deepseek-flash",
-    "llm_base_url": "",
-    "tts_enabled": "false",
-    "voice_enabled": "false",
+# app/database.py 的 SYSTEM_CONFIG（user_id=0，建表时插入）
+SYSTEM_CONFIG = {
     "crawl_enabled": "false",
     "crawl_url": "",
+}
+
+# app/database.py 的 ACCOUNT_CONFIG（注册时按账号插入，键与接口文档 GET /settings 字段对应）
+ACCOUNT_CONFIG = {
+    "tts_enabled": "false",
+    "voice_enabled": "false",
     "default_question_count": "8",
+    "asr_provider": "funasr",
+    "tts_voice": "zh-CN-XiaoxiaoNeural",
+    "guide_done": "false",
 }

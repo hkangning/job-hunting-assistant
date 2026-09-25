@@ -6,7 +6,42 @@ import { createRouter, createWebHistory } from 'vue-router'
 //   color      模块色（CSS 变量名，用于侧栏色点与该模块强调元素）
 //   hidden     true 时不进菜单
 //   activeMenu 高亮指向的菜单 path
+//   layout     'blank' 时走全屏壳（无侧栏无顶栏），用于账号页
 const routes = [
+  // ---------- 账号页（全屏壳，免登录） ----------
+  {
+    path: '/welcome',
+    name: 'Welcome',
+    component: () => import('../views/Welcome.vue'),
+    meta: { title: '欢迎', layout: 'blank', hidden: true }
+  },
+  {
+    path: '/login',
+    name: 'Login',
+    component: () => import('../views/Login.vue'),
+    meta: { title: '登录', layout: 'blank', hidden: true }
+  },
+  {
+    path: '/register',
+    name: 'Register',
+    component: () => import('../views/Register.vue'),
+    meta: { title: '注册', layout: 'blank', hidden: true }
+  },
+  // ---------- 账号与配置页（用户菜单入口，不进侧栏） ----------
+  {
+    path: '/profile',
+    name: 'Profile',
+    component: () => import('../views/Profile.vue'),
+    meta: { title: '个人中心', hidden: true }
+  },
+  {
+    path: '/ai-config',
+    name: 'AiConfig',
+    component: () => import('../views/AiConfig.vue'),
+    meta: { title: 'AI 配置', hidden: true }
+  },
+
+  // ---------- 业务页（默认壳） ----------
   {
     path: '/',
     name: 'Overview',
@@ -62,16 +97,32 @@ const routes = [
     meta: { title: '面经整理', group: '能力提升', color: 'var(--m-experience)' }
   },
   {
+    // 设置迁入右上角用户菜单，不进侧栏（设计文档 v1.5 §4.4）
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue'),
-    meta: { title: '系统设置', group: '系统', color: 'var(--m-system)' }
+    meta: { title: '系统设置', hidden: true }
   }
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+// 免登录白名单（接口文档 1.1：/health、/auth/register、/auth/login 免鉴权；/welcome 为入口页）
+const PUBLIC_PAGES = ['/welcome', '/login', '/register']
+
+// 路由守卫（系统设计 §4.1）：显式白名单，不做"反向推断"，避免新增页面时漏判
+router.beforeEach((to) => {
+  // 读 localStorage 而非 store：避免「路由模块 ↔ store 模块」循环依赖；Token 唯一写入点是 useUserStore.setToken
+  const token = localStorage.getItem('jobpilot_token')
+
+  if (PUBLIC_PAGES.includes(to.path)) {
+    if (token && (to.path === '/login' || to.path === '/register')) return '/'
+    return true
+  }
+  return token ? true : '/welcome'
 })
 
 export default router

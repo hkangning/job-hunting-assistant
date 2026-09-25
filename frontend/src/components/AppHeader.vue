@@ -1,7 +1,9 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Fold, Expand, Bell } from '@element-plus/icons-vue'
+import UserMenu from './UserMenu.vue'
+import { useUserStore } from '../stores/user'
 
 defineProps({
   collapse: { type: Boolean, default: false }
@@ -11,6 +13,13 @@ defineEmits(['toggle'])
 const route = useRoute()
 const router = useRouter()
 const title = computed(() => route.meta.title || '')
+const userStore = useUserStore()
+
+// 刷新业务页时 store 重建、user 为空：补拉一次，否则顶栏头像与用户名会空一截。
+// 非 silent——Token 已失效时由拦截器统一清状态并跳登录页。
+onMounted(() => {
+  if (userStore.token && !userStore.user) userStore.fetchMe().catch(() => {})
+})
 
 // 「新增投递」是最高频操作，固定在顶栏；跳转带 query，由投递页打开新增表单
 function goNewApplication() {
@@ -31,6 +40,8 @@ function goNewApplication() {
       <slot name="actions" />
       <el-icon class="app-header__icon" title="提醒"><Bell /></el-icon>
       <el-button type="primary" @click="goNewApplication">＋ 新增投递</el-button>
+      <!-- 用户菜单固定在顶栏最右（设计文档 §4.4） -->
+      <UserMenu v-if="userStore.isLoggedIn" />
     </div>
   </div>
 </template>

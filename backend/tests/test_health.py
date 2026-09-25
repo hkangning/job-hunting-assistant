@@ -3,28 +3,26 @@
 from fastapi import Query
 from fastapi.testclient import TestClient
 
-from app.config import settings
 from app.exceptions import BizException, ErrorCode
 from app.schemas.common import ApiResponse
 
 
-def test_health_ok(client: TestClient, monkeypatch):
-    """未配置密钥：成功态响应体结构完整，llm_configured=false。"""
-    monkeypatch.setattr(settings, "llm_api_key", "")
+def test_health_ok(client: TestClient):
+    """健康检查成功态：响应体结构完整且**不含任何账号信息**（免鉴权接口）。"""
     resp = client.get("/api/v1/health")
     assert resp.status_code == 200
     assert resp.json() == {
         "code": 0,
         "message": "ok",
-        "data": {"status": "ok", "llm_configured": False},
+        "data": {"status": "ok"},
     }
 
 
-def test_health_llm_configured(client: TestClient, monkeypatch):
-    """配置密钥后 llm_configured=true。"""
-    monkeypatch.setattr(settings, "llm_api_key", "sk-test")
+def test_health_has_no_account_info(client: TestClient):
+    """回归防护：原 `llm_configured` 字段随多账号改造移出健康检查（改由 GET /auth/me 按账号返回）。"""
     resp = client.get("/api/v1/health")
-    assert resp.json()["data"]["llm_configured"] is True
+    assert "llm_configured" not in resp.json()["data"]
+    assert "user" not in resp.json()["data"]
 
 
 def test_response_param_invalid(client: TestClient):

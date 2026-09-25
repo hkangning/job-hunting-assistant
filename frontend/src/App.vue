@@ -1,13 +1,19 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import SideNav from './components/SideNav.vue'
 import AppHeader from './components/AppHeader.vue'
 
+const route = useRoute()
 const collapse = ref(false)
+
+// 账号页（入场动画/登录/注册）走全屏壳：无侧栏无顶栏（系统设计 §4.1）
+const isBlank = computed(() => route.meta.layout === 'blank')
 </script>
 
 <template>
-  <el-container class="app-layout">
+  <router-view v-if="isBlank" />
+  <el-container v-else class="app-layout">
     <el-aside :width="collapse ? '64px' : '230px'" class="app-aside">
       <SideNav :collapse="collapse" />
     </el-aside>
