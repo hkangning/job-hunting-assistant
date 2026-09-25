@@ -35,6 +35,8 @@ progress.md
 # ===== AI 工作过程文档（设计/计划，不入库）=====
 # docs/ 是公共文件区，只放 00~07 体系文档（07=工作日志），避免同步时污染对方分支
 docs/superpowers/
+# Claude Code 项目说明（AI 协作文档，各人本地维护，不入库）
+CLAUDE.md
 
 # ===== 依赖与构建产物 =====
 node_modules/
