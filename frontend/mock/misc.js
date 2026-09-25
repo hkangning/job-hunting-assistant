@@ -63,7 +63,7 @@ export const health = () => [ok({ status: 'ok' }), 200]
 
 /** 头像静态文件：返回上传时的原始字节（二进制，不经统一响应体）。 */
 export function staticAvatar(req) {
-  const name = decodeURIComponent(req.url.split('?')[0].replace('/static/avatars/', ''))
+  const name = decodeURIComponent(req.url.split('?')[0].replace('/uploads/avatars/', ''))
   const bytes = db.avatars.get(name)
   return bytes ? [bytes, 200] : [null, 404]
 }

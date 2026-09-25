@@ -39,8 +39,8 @@ export default function mockApi() {
         const path = req.url.split('?')[0]
         const method = req.method.toUpperCase()
 
-        // 头像静态文件（前端按 /static/avatars/<file> 渲染）
-        if (path.startsWith('/static/avatars/')) {
+        // 头像静态文件（与后端一致：/uploads/avatars/<file>）
+        if (path.startsWith('/uploads/avatars/')) {
           const [bytes, status] = staticAvatar(req)
           return status === 404 ? next() : sendBytes(res, bytes)
         }

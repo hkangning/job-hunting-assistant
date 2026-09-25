@@ -1,7 +1,7 @@
 /**
  * /auth/* 7 个 handler（接口文档 §3.2 / SRS §3.13）。
  * 返回 [body, httpStatus]，由 index.js 统一写出。
- * 注：HTTP 状态码为合理推断（如锁定用 423），前端只依赖响应体 code，接口文档亦未规定状态码。
+ * 注：HTTP 状态码已与后端 `exceptions.py` 的 ErrorCode 逐码对齐（8xxxx 段），前端只依赖响应体 code。
  */
 import { ok, fail, readBody, parseMultipart, signToken, verifyToken, randomUUID } from './utils.js'
 import { db, createUser, findByUsername, findById, toUserDto } from './db.js'
@@ -33,7 +33,7 @@ export async function login(req) {
 
   if (user.locked_until && user.locked_until > Date.now()) {
     const mins = Math.ceil((user.locked_until - Date.now()) / 60000)
-    return [fail(80005, `账号已锁定，请 ${mins} 分钟后重试`), 423]
+    return [fail(80005, `账号已锁定，请 ${mins} 分钟后重试`), 403]
   }
   if (user.password !== password) {
     user.login_fail_count += 1

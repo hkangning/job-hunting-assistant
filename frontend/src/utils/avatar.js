@@ -9,8 +9,12 @@ export function defaultAvatar(name = '?') {
   return { text: text.trim().charAt(0).toUpperCase() || '?', color: PALETTE[hash % PALETTE.length] }
 }
 
-/** 头像相对路径 → 可渲染 URL（后端存 uploads/avatars/x.png，静态访问为 /static/avatars/x.png）。 */
-export const avatarUrl = (avatar) => (avatar ? '/static/avatars/' + avatar.split('/').pop() : null)
+/** 头像相对路径 → 可渲染 URL。
+ *
+ * 后端把 `uploads/` 挂在 `/uploads` 静态路径下，库中存的就是 `uploads/avatars/x.png`，
+ * 故直接拼前导斜杠即可访问，不做任何路径改写（接口文档 §3.2）。
+ */
+export const avatarUrl = (avatar) => (avatar ? '/' + avatar : null)
 
 /** canvas 压缩至 256×256 居中裁切，输出 jpeg Blob（约 20~50KB，满足后端 ≤2MB 校验）。 */
 export function compressTo256(file) {

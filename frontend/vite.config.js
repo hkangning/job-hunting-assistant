@@ -26,8 +26,8 @@ export default defineConfig(({ mode }) => {
               target: 'http://localhost:8000',
               changeOrigin: true
             },
-            // 头像静态文件（后端 StaticFiles 挂载 /static/avatars）
-            '/static': {
+            // 头像静态文件（后端 StaticFiles 挂载 /uploads → backend/uploads/）
+            '/uploads': {
               target: 'http://localhost:8000',
               changeOrigin: true
             }
