@@ -63,6 +63,25 @@ def test_change_status_legal_chain(db_session: Session):
 
 
 @pytest.mark.parametrize(
+    ("start", "target"),
+    [
+        (ApplicationStatus.APPLIED, ApplicationStatus.INTERVIEW),  # 不设笔试的公司
+        (ApplicationStatus.APPLIED, ApplicationStatus.OFFER),  # 直通 offer
+        (ApplicationStatus.WRITTEN, ApplicationStatus.OFFER),  # 面试环节合并
+    ],
+)
+def test_change_status_legal_skip_level(db_session: Session, start: ApplicationStatus, target: ApplicationStatus):
+    """TC-02：跳级前进合法（SRS v1.8 放开）——可前进到链上任意更靠后的状态。"""
+    dto = application_service.create_application(
+        db_session, ApplicationCreate(company="云器科技", position="后端开发", status=start)
+    )
+
+    dto = application_service.change_status(db_session, dto.id, ApplicationStatusUpdate(status=target))
+
+    assert dto.status == target
+
+
+@pytest.mark.parametrize(
     "start",
     [
         ApplicationStatus.APPLIED,
@@ -90,14 +109,17 @@ def test_change_status_closed_from_any_active_state(db_session: Session, start: 
 @pytest.mark.parametrize(
     ("start", "target"),
     [
-        (ApplicationStatus.APPLIED, ApplicationStatus.INTERVIEW),  # 跳级
-        (ApplicationStatus.APPLIED, ApplicationStatus.OFFER),  # 跳级
+        (ApplicationStatus.WRITTEN, ApplicationStatus.APPLIED),  # 回退
+        (ApplicationStatus.INTERVIEW, ApplicationStatus.WRITTEN),  # 回退
+        (ApplicationStatus.OFFER, ApplicationStatus.INTERVIEW),  # 回退
         (ApplicationStatus.APPLIED, ApplicationStatus.APPLIED),  # 原地不动
-        (ApplicationStatus.CLOSED, ApplicationStatus.WRITTEN),  # 已结束不可回退
+        (ApplicationStatus.INTERVIEW, ApplicationStatus.INTERVIEW),  # 原地不动
+        (ApplicationStatus.CLOSED, ApplicationStatus.WRITTEN),  # 终态不可再流转
+        (ApplicationStatus.CLOSED, ApplicationStatus.APPLIED),  # 终态不可再流转
     ],
 )
 def test_change_status_illegal_rejected(db_session: Session, start: ApplicationStatus, target: ApplicationStatus):
-    """TC-02：非法流转拒绝（错误码 10001），且库中状态不变。"""
+    """TC-02：非法流转拒绝（错误码 10001）——回退 / 原地 / 终态；且库中状态不变。"""
     dto = application_service.create_application(
         db_session,
         ApplicationCreate(company="新华三", position="Java 开发", status=start),
@@ -312,10 +334,20 @@ def test_close_reason_api_flow(client: TestClient):
     assert closed["status"] == "CLOSED"
     assert closed["close_reason"] == "DECLINED"
 
-    assert client.patch(f"{API}/{app_id}/status", json={"status": "INTERVIEW"}).json()["code"] == 10001  # 不可回退
+    assert client.patch(f"{API}/{app_id}/status", json={"status": "INTERVIEW"}).json()["code"] == 10001  # 终态不可再流转
     assert client.get(API, params={"close_reason": "FAILD"}).json()["code"] == 10001  # 非法枚举值
     assert client.get(API, params={"close_reason": "DECLINED"}).json()["data"]["total"] == 1
     assert client.get(f"{API}/{app_id}").json()["data"]["close_reason"] == "DECLINED"
+
+
+def test_status_skip_level_api(client: TestClient):
+    """TC-02：跳级流转走 HTTP 链路（前端看板拖拽场景）——APPLIED 直跳 INTERVIEW 成功、回退仍被拒。"""
+    app_id = client.post(API, json={"company": "云器科技", "position": "后端开发"}).json()["data"]["id"]
+
+    jumped = client.patch(f"{API}/{app_id}/status", json={"status": "INTERVIEW"}).json()["data"]
+    assert jumped["status"] == "INTERVIEW"
+
+    assert client.patch(f"{API}/{app_id}/status", json={"status": "WRITTEN"}).json()["code"] == 10001  # 回退
 
 
 def test_import_endpoints_api(client: TestClient):
