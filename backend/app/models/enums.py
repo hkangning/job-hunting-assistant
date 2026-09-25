@@ -81,3 +81,17 @@ class MessageRole(StrEnum):
     USER = "USER"  # 用户
     ASSISTANT = "ASSISTANT"  # AI 回复（可含工具调用）
     TOOL = "TOOL"  # 工具执行结果
+
+
+class UserRole(StrEnum):
+    """账号角色（user.role）：本期无权限差异，为后续管理功能预留。"""
+
+    USER = "USER"  # 普通用户
+    ADMIN = "ADMIN"  # 管理员（预留，本期不启用）
+
+
+class UserPlan(StrEnum):
+    """账号套餐（user.plan）：预留字段，本期不启用。"""
+
+    FREE = "FREE"  # 免费版
+    PRO = "PRO"  # 高级版（预留）

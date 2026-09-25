@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -33,11 +33,13 @@ class PracticeRecord(Base):
 
     __tablename__ = "practice_record"
     __table_args__ = (
+        Index("idx_practice_user", "user_id"),
         Index("idx_practice_q", "question_id"),
         Index("idx_practice_time", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     question_id: Mapped[int] = mapped_column(ForeignKey("question.id"))  # 题目
     user_answer: Mapped[str] = mapped_column(Text)  # 用户作答
     score: Mapped[int | None] = mapped_column(Integer)  # AI 评分 0~10
@@ -47,16 +49,19 @@ class PracticeRecord(Base):
 
 
 class WrongQuestion(Base):
-    """错题本：一题至多一条（UNIQUE），复习档位 1~4 间隔 1/3/7/15 天（FR-010、FR-013）。"""
+    """错题本：同账号内一题至多一条，复习档位 1~4 间隔 1/3/7/15 天（FR-010、FR-013）。"""
 
     __tablename__ = "wrong_question"
     __table_args__ = (
+        UniqueConstraint("user_id", "question_id", name="uq_wq_user_question"),
+        Index("idx_wq_user", "user_id"),
         Index("idx_wq_review", "next_review_at"),
         Index("idx_wq_stage", "review_stage"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
-    question_id: Mapped[int] = mapped_column(ForeignKey("question.id"), unique=True)  # 题目（唯一）
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
+    question_id: Mapped[int] = mapped_column(ForeignKey("question.id"))  # 题目（同账号内唯一）
     source_type: Mapped[str] = mapped_column(String(20))  # 入本来源，枚举 WrongSourceType
     review_stage: Mapped[int] = mapped_column(Integer, default=1)  # 复习档位 1~4
     next_review_at: Mapped[datetime] = mapped_column(DateTime)  # 下次复习时间（到期判定依据）

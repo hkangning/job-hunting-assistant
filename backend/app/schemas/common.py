@@ -23,7 +23,6 @@ class PageData(BaseModel, Generic[T]):
 
 
 class HealthData(BaseModel):
-    """健康检查响应数据。"""
+    """健康检查响应数据（免鉴权接口，不含任何账号信息；"是否已配置 AI"见 `GET /auth/me`）。"""
 
     status: str = Field(description="服务状态，正常为 ok")
-    llm_configured: bool = Field(description="是否已配置 AI 密钥（供前端提示未配置 AI）")

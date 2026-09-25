@@ -5,6 +5,7 @@ from app.models.agent import AgentConversation, AgentMessage
 from app.models.application import Application, JdAnalysisReport
 from app.models.enums import (
     ApplicationStatus,
+    CloseReason,
     Direction,
     ExperienceItemSource,
     MessageRole,
@@ -12,16 +13,21 @@ from app.models.enums import (
     QuestionType,
     ReminderType,
     SessionStatus,
+    UserPlan,
+    UserRole,
     WrongSourceType,
 )
 from app.models.experience import Experience, ExperienceItem
 from app.models.interview import InterviewQa, InterviewSession
 from app.models.question import PracticeRecord, Question, WrongQuestion
 from app.models.system import CampusEvent, Config, Reminder, UserProfile
+from app.models.user import LlmProviderConfig, User
 
 __all__ = [
     "Base",
     # 模型
+    "User",
+    "LlmProviderConfig",
     "Application",
     "JdAnalysisReport",
     "InterviewSession",
@@ -39,6 +45,7 @@ __all__ = [
     "UserProfile",
     # 枚举
     "ApplicationStatus",
+    "CloseReason",
     "Direction",
     "SessionStatus",
     "ExperienceItemSource",
@@ -47,4 +54,6 @@ __all__ = [
     "WrongSourceType",
     "ReminderType",
     "MessageRole",
+    "UserRole",
+    "UserPlan",
 ]

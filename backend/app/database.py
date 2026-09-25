@@ -12,16 +12,23 @@ from app.config import settings
 
 SEED_FILE = Path(__file__).resolve().parent.parent / "seed" / "questions.json"
 
+# config 表系统级配置的账号标识（数据库设计 §3.14）：不建外键，全站共用
+SYSTEM_USER_ID = 0
+
 # config 表默认配置项：键名与接口文档 GET /settings 响应字段一一对应，值统一以文本存储
-DEFAULT_CONFIG: dict[str, str] = {
-    "llm_provider": "deepseek",
-    "llm_model": "deepseek-flash",
-    "llm_base_url": "",
-    "tts_enabled": "false",
-    "voice_enabled": "false",
+# 系统级（user_id=0）在建表时插入；账号级在注册时按账号插入（见 init_account_data）
+SYSTEM_CONFIG: dict[str, str] = {
     "crawl_enabled": "false",
     "crawl_url": "",
+}
+
+ACCOUNT_CONFIG: dict[str, str] = {
+    "tts_enabled": "false",
+    "voice_enabled": "false",
     "default_question_count": "8",
+    "asr_provider": "funasr",
+    "tts_voice": "zh-CN-XiaoxiaoNeural",
+    "guide_done": "false",
 }
 
 
@@ -67,15 +74,26 @@ def init_db() -> None:
 
 
 def _init_default_rows(db: Session) -> None:
-    """插入 user_profile 空记录（id=1）与 config 默认项，已存在则跳过。"""
+    """插入系统级 config 默认项（user_id=0），已存在则跳过；账号级配置与画像在注册时按账号建。"""
+    from app.models import Config
+
+    for key, value in SYSTEM_CONFIG.items():
+        if db.get(Config, (SYSTEM_USER_ID, key)) is None:
+            db.add(
+                Config(user_id=SYSTEM_USER_ID, key=key, value=value, updated_at=datetime.now())
+            )
+
+
+def init_account_data(db: Session, user_id: int) -> None:
+    """注册时为新账号预置数据：一条空画像 + 账号级 config 默认项（数据库设计 §4），幂等。"""
     from app.models import Config, UserProfile
 
-    if db.get(UserProfile, 1) is None:
-        db.add(UserProfile(id=1, updated_at=datetime.now()))
+    if db.scalar(select(UserProfile).where(UserProfile.user_id == user_id)) is None:
+        db.add(UserProfile(user_id=user_id, updated_at=datetime.now()))
 
-    for key, value in DEFAULT_CONFIG.items():
-        if db.get(Config, key) is None:
-            db.add(Config(key=key, value=value, updated_at=datetime.now()))
+    for key, value in ACCOUNT_CONFIG.items():
+        if db.get(Config, (user_id, key)) is None:
+            db.add(Config(user_id=user_id, key=key, value=value, updated_at=datetime.now()))
 
 
 def _load_seed_questions(db: Session) -> int:

@@ -14,11 +14,13 @@ class Application(Base):
 
     __tablename__ = "application"
     __table_args__ = (
+        Index("idx_application_user", "user_id"),
         Index("idx_application_status", "status"),
         Index("idx_application_applied_at", "applied_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     company: Mapped[str] = mapped_column(String(100))  # 公司名称
     position: Mapped[str] = mapped_column(String(100))  # 岗位名称
     city: Mapped[str | None] = mapped_column(String(50))  # 工作城市
@@ -41,9 +43,13 @@ class JdAnalysisReport(Base):
     """JD 匹配分析报告：一条投递可多次分析（FR-006）。"""
 
     __tablename__ = "jd_analysis_report"
-    __table_args__ = (Index("idx_jd_app_id", "application_id"),)
+    __table_args__ = (
+        Index("idx_jd_user", "user_id"),
+        Index("idx_jd_app_id", "application_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     application_id: Mapped[int | None] = mapped_column(ForeignKey("application.id"))  # 关联投递（未选则空）
     jd_text: Mapped[str] = mapped_column(Text)  # JD 原文快照
     report_text: Mapped[str] = mapped_column(Text)  # 报告全文（五段结构）

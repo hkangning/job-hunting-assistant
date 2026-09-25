@@ -5,11 +5,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import init_db
 from app.exceptions import register_exception_handlers
-from app.routers import applications, health
+from app.routers import applications, auth, health, profile
+from app.utils.security import AVATAR_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,4 +44,10 @@ app.add_middleware(
 register_exception_handlers(app)
 
 app.include_router(health.router, prefix=settings.api_prefix)
+app.include_router(auth.router, prefix=settings.api_prefix)
+app.include_router(profile.router, prefix=settings.api_prefix)
 app.include_router(applications.router, prefix=settings.api_prefix)
+
+# 头像静态访问：库中存的 uploads/avatars/xxx.png 直接拼后端地址即可（系统设计 3.5，本机运行）
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=AVATAR_DIR.parent), name="uploads")
