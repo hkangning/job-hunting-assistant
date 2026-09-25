@@ -197,7 +197,7 @@ onMounted(load)
 <template>
   <div class="apps">
     <Teleport to="#app-header-actions-slot">
-      <el-button size="small" :icon="Upload" @click="importVisible = true">批量导入</el-button>
+      <el-button :icon="Upload" @click="importVisible = true">批量导入</el-button>
     </Teleport>
 
     <ApplicationStats :items="items" :truncated="truncated" />
@@ -222,7 +222,8 @@ onMounted(load)
         popper-class="city-cascader-popper"
         @change="onCityChange"
       />
-      <el-button text type="primary" @click="toggleTrend">
+      <!-- 有文案的次操作 → 描边级（设计文档 4.5.4 的三级体系）；text 属「纯图标」级，用在这里会显得过小 -->
+      <el-button type="primary" plain @click="toggleTrend">
         {{ trendVisible ? '收起趋势' : '查看趋势' }}
       </el-button>
     </div>

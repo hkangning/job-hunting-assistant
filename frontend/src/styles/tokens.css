@@ -22,11 +22,14 @@
   --s-closed: #9E9BB0;
 
   /* ---------- 中性色 ---------- */
+  /* --c-border / --c-divider 于「投递页体验修订」加深：原 #ECEBF5 与白色卡片的对比度仅
+     1.18:1，卡片、看板列、趋势图容器的边界实际不可辨（用户反馈「边框看不见」）。
+     现 1.59:1；两者仍保持「分隔线比边框弱一档」的层级关系不变。 */
   --c-bg: #F7F8FC;
   --c-card: #FFFFFF;
   --c-sidebar: #FAFAFE;
-  --c-border: #ECEBF5;
-  --c-divider: #F3F2FA;
+  --c-border: #CFCBDD;
+  --c-divider: #EAE8F2;
   --c-text: #2A2740;
   --c-text-2: #7A7590;
   --c-text-3: #A5A0BC;

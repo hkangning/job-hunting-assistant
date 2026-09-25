@@ -30,7 +30,7 @@ function goNewApplication() {
       <div id="app-header-actions-slot" class="app-header__slot"></div>
       <slot name="actions" />
       <el-icon class="app-header__icon" title="提醒"><Bell /></el-icon>
-      <el-button type="primary" size="small" @click="goNewApplication">＋ 新增投递</el-button>
+      <el-button type="primary" @click="goNewApplication">＋ 新增投递</el-button>
     </div>
   </div>
 </template>

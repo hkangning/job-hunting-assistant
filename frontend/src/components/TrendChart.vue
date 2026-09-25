@@ -8,6 +8,14 @@ import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
+/** 读取设计 token 的实值。ECharts 渲染在 canvas 上读不到 CSS 变量，只能在构建 option 时取实值；
+ *  回落值取自 tokens.css 的定义值，防止变量缺失时图表失去配色。
+ *  此前这里是 token 的硬编码副本，后果是「改 token 图表不跟随」。 */
+function token(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name)
+  return value.trim() || fallback
+}
+
 const props = defineProps({
   items: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
@@ -29,6 +37,12 @@ watch(
 )
 
 function buildOption() {
+  const border = token('--c-border', '#CFCBDD')
+  const divider = token('--c-divider', '#EAE8F2')
+  const textMuted = token('--c-text-3', '#A5A0BC')
+  const textSecondary = token('--c-text-2', '#7A7590')
+  const moduleColor = token('--m-application', '#5B8DD9')
+
   return {
     grid: { left: 40, right: 16, top: 16, bottom: 28 },
     tooltip: { trigger: 'axis' },
@@ -36,16 +50,16 @@ function buildOption() {
       type: 'category',
       boundaryGap: false,
       data: props.items.map((item) => item.date.slice(5)),
-      axisLine: { lineStyle: { color: '#ECEBF5' } },
-      axisLabel: { color: '#A5A0BC', fontSize: 11 }
+      axisLine: { lineStyle: { color: border } },
+      axisLabel: { color: textMuted, fontSize: 11 }
     },
     yAxis: {
       type: 'value',
       minInterval: 1,
-      splitLine: { lineStyle: { color: '#F3F2FA' } },
+      splitLine: { lineStyle: { color: divider } },
       // 计数轴不出现小数刻度（minInterval 在极小区间下仍会给出 0.5 一类的中间刻度）
       axisLabel: {
-        color: '#A5A0BC',
+        color: textMuted,
         fontSize: 11,
         formatter: (value) => (Number.isInteger(value) ? value : '')
       }
@@ -57,12 +71,12 @@ function buildOption() {
         smooth: false,
         symbolSize: 5,
         data: props.items.map((item) => item.count),
-        lineStyle: { color: '#5B8DD9', width: 2 },
-        itemStyle: { color: '#5B8DD9' },
+        lineStyle: { color: moduleColor, width: 2 },
+        itemStyle: { color: moduleColor },
         // 区间较短时逐点标注，便于与看板卡片数对账
         label: {
           show: props.items.length <= 30,
-          color: '#7A7590',
+          color: textSecondary,
           fontSize: 11,
           formatter: (params) => (params.value > 0 ? params.value : '')
         }
@@ -103,7 +117,7 @@ watch(() => props.items, render)
   <div class="trend">
     <div class="trend__head">
       <span class="trend__title">投递趋势</span>
-      <el-radio-group v-model="range" size="small" @change="onRangeChange">
+      <el-radio-group v-model="range" @change="onRangeChange">
         <el-radio-button :value="7">7 天</el-radio-button>
         <el-radio-button :value="30">30 天</el-radio-button>
         <el-radio-button :value="90">90 天</el-radio-button>
