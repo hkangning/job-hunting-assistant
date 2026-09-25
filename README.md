@@ -9,9 +9,10 @@
 | 层 | 技术 |
 |---|---|
 | 后端 | Python 3.11+ / FastAPI / SQLAlchemy 2.x / SQLite（WAL） |
-| LLM | 多供应商+模型两级可配置（DeepSeek 默认；智谱/Kimi/硅基流动/自定义 OpenAI 兼容接口），模型列表动态拉取保持最新，SSE 流式 |
+| 账号 | 多账号：JWT 鉴权（1 天 / 30 天免登录）+ bcrypt 密码哈希，**数据按账号隔离**，每账号独立配置 AI 供应商 |
+| LLM | 多供应商+模型两级可配置（12 家：DeepSeek / 智谱 / Kimi / 通义千问 / 豆包 / OpenAI / Gemini / Claude / Grok / OpenRouter / Ollama / 自定义），模型列表动态拉取保持最新，SSE 流式 |
 | Agent | 手写实现：意图路由 + 工具注册表 + 画像记忆（不用 LangChain） |
-| 语音（P2） | 讯飞语音听写 + 浏览器 speechSynthesis |
+| 语音（P2） | 转写：**FunASR 本地流式模型**（进程内、不限时长、不出网；讯飞云端为备选）；播报：**edge-tts**（中文音色 20+）。前端 VAD 静音自动断句，支持长时长连续作答 |
 | 前端 | Vue 3 + Vite + Element Plus + Pinia + Vue Router |
 | 定时 | APScheduler |
 | 测试 | pytest + FastAPI TestClient（LLM 调用全 mock） |
@@ -27,7 +28,7 @@
 
 - [x] 选题确定（个人求职助手）
 - [x] 文档定稿（项目介绍/需求/设计/数据库/接口/测试/开发计划）
-- [ ] 开发（按开发计划 21 个步骤 / 5 个阶段推进，不预设时间节点；当前：步骤 3 投递管理已完成）
+- [ ] 开发（按开发计划 25 个步骤 / 5 个阶段推进，不预设时间节点；当前：步骤 1~4 已完成，多账号体系文档已落定，下一步做步骤 5 账号与鉴权）
 
 ## 目录结构
 
@@ -52,7 +53,7 @@ job-hunting-assistant/
 1. 开发严格按照 `docs/` 目录下的文档执行，严禁自由发挥。
 2. 文档先行：先定稿文档，再动代码；改需求先改文档。
 3. 测试随开发：LLM 调用全 mock，测试离线可跑。
-4. 环境变量：复制 `backend/.env.example` 为 `.env` 填入供应商 Key（已 gitignore，严禁提交）；也可在系统设置页配置。
+4. 环境变量：复制 `backend/.env.example` 为 `.env` 填入 `APP_SECRET_KEY`（JWT 签名与 Key 加密的主密钥，必填）及供应商 API Key（可选，登录后在 **AI 配置页**填更灵活，存库优先）；`.env` 已 gitignore，严禁提交。
 
 ## 快速开始
 
@@ -97,9 +98,13 @@ pytest                                          # 全量（LLM 全 mock，离线
 | 后端接口前缀 | http://127.0.0.1:8000/api/v1 | 所有 REST 接口的统一前缀 |
 | **在线接口文档** | **http://127.0.0.1:8000/docs** | Swagger UI：展开接口 → `Try it out` → `Execute`，直接在页面上发请求调试 |
 | 在线接口文档（只读） | http://127.0.0.1:8000/redoc | 同一份文档的只读版，排版适合截图 |
-| 健康检查 | http://127.0.0.1:8000/api/v1/health | 返回 `{"code":0,...}` 表示服务与数据库正常 |
-| 前端页面 | http://localhost:5173 | Vite 开发服务器（`npm run dev`） |
+| 健康检查 | http://127.0.0.1:8000/api/v1/health | 返回 `{"code":0,...}` 表示服务与数据库正常（免鉴权） |
+| 前端页面 | http://localhost:5173 | Vite 开发服务器（`npm run dev`）；未登录会先进入场动画 → `/login` |
 
 > `/docs` 与 `/redoc` 由 FastAPI 依据代码中的路由与数据模型自动生成，改代码后自动更新；接口的业务规则（状态机、错误码含义等）以 `docs/04-接口文档/接口文档.md` 为准。
+>
+> 在 `/docs` 里调业务接口需先登录：`POST /auth/login` 拿到 `token` → 点页面右上角 **Authorize** → 粘贴 token 本体（不必手写 `Bearer`，Swagger 自动补）→ 之后所有请求自动带鉴权头。
 
-首次使用：进入系统设置页，选择 AI 供应商与模型（如 DeepSeek 的 deepseek-flash）→ 填写 API Key → 连通性测试 → 保存，即可使用全部 AI 功能。
+**首次使用**：打开 http://localhost:5173 → 入场动画后进入**注册页**建账号（用户名 + 密码 ≥ 6 位）→ 自动登录进入今日概览 → 右上角头像下拉进入 **AI 配置**页，选供应商与模型（如 DeepSeek 的 deepseek-flash）→ 填 API Key → 连通性测试 → 保存，即可使用全部 AI 功能。
+
+**账号说明**：投递、面经、错题、AI 配置等数据**按账号隔离**，换账号登录互不可见（题库、宣讲会为全站共享）；登录时勾选「30 天免登录」可保持 30 天，不勾选为 1 天。

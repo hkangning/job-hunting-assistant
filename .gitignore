@@ -54,5 +54,9 @@ htmlcov/
 *.db-shm
 *.db-wal
 
+# ===== 运行时产物（本地生成，不入库）=====
+backend/uploads/
+backend/cache/
+
 # ===== 本地覆盖文件 =====
 *.local
