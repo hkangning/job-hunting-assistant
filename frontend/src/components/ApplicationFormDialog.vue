@@ -10,7 +10,7 @@ const props = defineProps({
   modelValue: { type: Boolean, default: false },
   applicationId: { type: Number, default: null }
 })
-const emit = defineEmits(['update:modelValue', 'saved'])
+const emit = defineEmits(['update:modelValue', 'saved', 'delete'])
 
 const formRef = ref(null)
 const saving = ref(false)
@@ -133,6 +133,11 @@ watch(
   }
 )
 
+/** 请求删除当前记录：确认与接口调用交由父组件（删除流程保持单一出处），成功后才关闭本对话框 */
+function emitDelete() {
+  emit('delete', { id: props.applicationId, company: form.company, position: form.position })
+}
+
 function close() {
   emit('update:modelValue', false)
 }
@@ -182,7 +187,7 @@ async function submit() {
     width="560px"
     @update:model-value="close"
   >
-    <el-form ref="formRef" v-loading="loading" :model="form" :rules="rules" label-width="100px">
+    <el-form ref="formRef" v-loading="loading" :model="form" :rules="rules" label-width="120px">
       <el-form-item label="公司名称" prop="company">
         <el-input v-model="form.company" maxlength="100" placeholder="如：浩鲸科技" />
       </el-form-item>
@@ -240,13 +245,30 @@ async function submit() {
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="close">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
+      <div class="form-footer">
+        <!-- 删除入口：仅编辑态（新增时无记录可删）。置于左侧与主操作分离，降低误点概率 -->
+        <el-button v-if="isEdit" type="danger" plain @click="emitDelete">删除</el-button>
+        <div class="form-footer__main">
+          <el-button @click="close">取消</el-button>
+          <el-button type="primary" :loading="saving" @click="submit">保存</el-button>
+        </div>
+      </div>
     </template>
   </el-dialog>
 </template>
 
 <style scoped>
+/* 底部操作区：删除靠左与主操作分离——危险操作不该和「保存」挤在一起 */
+.form-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.form-footer__main {
+  display: flex;
+  gap: 12px;
+  margin-left: auto;
+}
 .form-status__dot {
   width: 8px;
   height: 8px;

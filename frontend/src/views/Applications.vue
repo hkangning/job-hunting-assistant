@@ -88,6 +88,7 @@ function openEdit(item) {
   formVisible.value = true
 }
 
+/** 删除一条投递：确认 → 调接口 → 刷新看板。返回是否真的删掉（供对话框决定关不关自己） */
 async function onDelete(item) {
   try {
     await ElMessageBox.confirm(
@@ -96,11 +97,17 @@ async function onDelete(item) {
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
   } catch {
-    return // 用户取消
+    return false // 用户取消
   }
   await deleteApplication(item.id)
   ElMessage.success('已删除')
   load()
+  return true
+}
+
+/** 表单对话框内的删除入口：删除成功才关闭对话框（失败/取消时保持打开，用户仍可继续编辑） */
+async function onDeleteFromDialog(item) {
+  if (await onDelete(item)) formVisible.value = false
 }
 
 /** 取消流转 / 取消原因选择：本地还原卡片位置，不发任何请求 */
@@ -233,7 +240,6 @@ onMounted(load)
         v-show="!isEmpty"
         :items="items"
         @edit="openEdit"
-        @delete="onDelete"
         @transit="onTransit"
       />
       <div v-if="isEmpty" class="apps__empty">
@@ -251,7 +257,12 @@ onMounted(load)
       @change-days="loadTrend"
     />
 
-    <ApplicationFormDialog v-model="formVisible" :application-id="editingId" @saved="onSaved" />
+    <ApplicationFormDialog
+      v-model="formVisible"
+      :application-id="editingId"
+      @saved="onSaved"
+      @delete="onDeleteFromDialog"
+    />
     <ApplicationImportDialog v-model="importVisible" @imported="onImported" />
     <CloseReasonDialog
       v-model="closeDialogVisible"

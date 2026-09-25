@@ -4,7 +4,6 @@
 // 卡片只放关键信息（公司 / 岗位 / 投递天数 / 排期），其余点开卡片看详情
 import { reactive, ref, watch } from 'vue'
 import draggable from 'vuedraggable'
-import { Delete } from '@element-plus/icons-vue'
 import {
   APPLICATION_STATUSES,
   CLOSE_REASON_LABELS,
@@ -16,7 +15,7 @@ import {
 const props = defineProps({
   items: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['edit', 'delete', 'transit'])
+const emit = defineEmits(['edit', 'transit'])
 
 // 拖拽中记录源状态，用于给「放不下」的列加视觉反馈（否则用户拖过去松手只看到弹回，不知为何）
 const dragFromStatus = ref(null)
@@ -168,10 +167,6 @@ function isUrgent(value) {
                 {{ eventLabel(element.status) }} {{ shortTime(element.next_event_at) }}
               </span>
             </div>
-
-            <el-icon class="kanban-card__del" title="删除" @click.stop="emit('delete', element)">
-              <Delete />
-            </el-icon>
           </div>
         </template>
       </draggable>
@@ -338,21 +333,5 @@ function isUrgent(value) {
   background: var(--c-divider);
   color: var(--c-text-2);
   font-size: 11px;
-}
-/* 删除按钮 hover 才显示：常显图标会抢占小卡片的视觉焦点 */
-.kanban-card__del {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  font-size: 12px;
-  color: var(--c-text-3);
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.kanban-card:hover .kanban-card__del {
-  opacity: 1;
-}
-.kanban-card__del:hover {
-  color: var(--m-wrong);
 }
 </style>
