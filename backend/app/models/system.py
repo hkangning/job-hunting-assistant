@@ -68,7 +68,9 @@ class UserProfile(Base):
     __table_args__ = (UniqueConstraint("user_id", name="uq_user_profile_user"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（每账号有且仅有一条画像）
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE")
+    )  # 所属账号（每账号有且仅有一条画像，随账号级联删除）
     name: Mapped[str | None] = mapped_column(String(50))  # 姓名
     school: Mapped[str | None] = mapped_column(String(100))  # 学校
     major: Mapped[str | None] = mapped_column(String(100))  # 专业
