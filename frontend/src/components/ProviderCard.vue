@@ -78,9 +78,11 @@ function toggle() {
 
 // ---------- 只读探测：模型列表 ----------
 
-async function loadModels(refresh = false) {
-  if (needsKey.value && !props.item.key_set) {
-    modelsError.value = '保存 Key 后可拉取模型列表，也可直接输入模型 ID'
+// force=true：跳过「Key 是否已存」的前置检查——保存成功后的自动拉取用它。
+// 那一刻 Key 刚落库、但 props 还没随页面重拉刷新，照常检查会被误拦。
+async function loadModels(refresh = false, force = false) {
+  if (!force && needsKey.value && !props.item.key_set) {
+    modelsError.value = '该供应商的模型列表需凭 Key 查询——填写 Key 后会自动拉取，也可直接输入模型 ID'
     return
   }
   modelsLoading.value = true
@@ -142,7 +144,12 @@ async function onSave() {
     await saveProviderApi(props.item.provider, payload)
     form.api_key = ''
     ElMessage.success('已保存')
-    emit('changed')
+    emit('changed') // 页面重拉 providers（刷新状态标签与模型名）
+    // 保存成功后自动探测：拉模型列表 + 测连通性，结果就地展示。
+    // 用户点一次「保存」即可知道 Key 是否可用，不必再手动点两次。
+    // 两者并行且不阻塞保存本身的反馈（保存此刻已成功）。
+    loadModels(false, true)
+    onTest()
   } finally {
     saving.value = false
   }
@@ -159,12 +166,20 @@ async function onActivate() {
 }
 
 async function onDelete() {
-  const tip = props.item.is_active
-    ? `删除「${props.item.name}」的配置？删除后 AI 功能将不可用。`
-    : `删除「${props.item.name}」的配置？`
+  // 提示要说清「删了什么、还能不能用」——原文案只对激活项提了一句后果，
+  // 非激活项连删掉什么都不说。HTML 内**不含任何动态内容**（供应商名只出现在纯文本标题里），无注入面。
+  const tip = `
+    <p>将一并删除该供应商的 <b>API Key、所选模型、自定义端点与模型列表缓存</b>。</p>
+    <p style="margin-top:8px">${
+      props.item.is_active
+        ? '该供应商当前正在使用，删除后 AI 功能将不可用。'
+        : '删除后需重新填写才能使用。'
+    }</p>
+  `
   try {
-    await ElMessageBox.confirm(tip, '删除配置', {
+    await ElMessageBox.confirm(tip, `删除「${props.item.name}」的配置`, {
       type: 'warning',
+      dangerouslyUseHTMLString: true,
       confirmButtonText: '删除',
       cancelButtonText: '取消'
     })
