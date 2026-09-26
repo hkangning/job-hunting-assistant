@@ -64,7 +64,7 @@ function goNewApplication() {
 }
 .app-header__title {
   margin: 0;
-  font-size: 15.5px;
+  font-size: var(--fs-h1);
   font-weight: 700;
   color: var(--c-text);
 }

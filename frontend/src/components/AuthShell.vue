@@ -45,14 +45,14 @@
   border-radius: var(--r-control);
   background: var(--brand);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .auth__name {
-  font-size: 13px;
+  font-size: var(--fs-title);
   font-weight: 700;
   color: var(--brand);
   letter-spacing: 0.3px;

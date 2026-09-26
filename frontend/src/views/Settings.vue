@@ -182,18 +182,18 @@ onMounted(load)
   margin-bottom: var(--card-gap);
 }
 .settings__title {
-  font-size: 13px;
+  font-size: var(--fs-title);
   font-weight: 700;
   color: var(--c-text);
   margin: 0 0 14px;
 }
 .settings__hint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
   margin-left: 10px;
 }
 .settings__note {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
   margin: 0 0 12px;
 }

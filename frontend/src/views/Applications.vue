@@ -310,6 +310,6 @@ onMounted(load)
   max-height: 260px;
 }
 .city-cascader-popper .el-cascader-node {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 </style>

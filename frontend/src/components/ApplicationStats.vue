@@ -88,13 +88,13 @@ const segments = computed(() =>
   gap: 2px;
 }
 .stats__total {
-  font-size: 15px;
+  font-size: var(--fs-title);
   font-weight: 700;
   color: var(--c-text);
   line-height: 1.2;
 }
 .stats__week {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 .stats__right {
@@ -124,7 +124,7 @@ const segments = computed(() =>
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-2);
 }
 .stats__legend-item b {
@@ -138,7 +138,7 @@ const segments = computed(() =>
 }
 .stats__truncated {
   flex: none;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--s-interview);
 }
 </style>

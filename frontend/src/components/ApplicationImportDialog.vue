@@ -160,7 +160,7 @@ async function submit() {
   border-radius: 50%;
   background: var(--el-color-primary-light-9);
   color: var(--brand);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   display: inline-flex;
   align-items: center;
@@ -168,7 +168,7 @@ async function submit() {
   flex: none;
 }
 .import__step-text {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
 }
 .import__step .el-button {
@@ -176,7 +176,7 @@ async function submit() {
 }
 .import__head {
   margin: 0 0 14px 26px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
   line-height: 1.6;
 }
@@ -185,7 +185,7 @@ async function submit() {
   color: var(--c-text-3);
 }
 .import__upload-text {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
 .import__alert {
@@ -195,7 +195,7 @@ async function submit() {
   margin-top: 14px;
 }
 .import__summary {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
   margin-bottom: 8px;
 }
@@ -203,7 +203,7 @@ async function submit() {
   color: var(--m-practice);
 }
 .import__ok {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 </style>

@@ -293,7 +293,7 @@ onUnmounted(() => {
 }
 .jd__card-title {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--c-text);
 }
@@ -337,13 +337,13 @@ onUnmounted(() => {
 .jd__list-company {
   flex: 1;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .jd__list-score {
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--m-jd);
 }
@@ -351,11 +351,11 @@ onUnmounted(() => {
   padding: 0 6px;
   border-radius: var(--r-mark);
   background: var(--c-bg);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 .jd__list-time {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .jd__pager {
@@ -365,7 +365,7 @@ onUnmounted(() => {
   margin-top: 10px;
 }
 .jd__pager-text {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .jd__main {
@@ -385,7 +385,7 @@ onUnmounted(() => {
   margin-bottom: 10px;
 }
 .jd__report-title {
-  font-size: 15px;
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--c-text);
 }
@@ -395,7 +395,7 @@ onUnmounted(() => {
   gap: 10px;
 }
 .jd__report-time {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .jd__jd-snapshot {
@@ -406,7 +406,7 @@ onUnmounted(() => {
   max-height: 220px;
   overflow: auto;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--c-text-2);
   white-space: pre-wrap;
@@ -415,7 +415,7 @@ onUnmounted(() => {
   display: flex;
   gap: 12px;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text-2);
 }
 .jd__degraded {
@@ -428,7 +428,7 @@ onUnmounted(() => {
   color: var(--m-jd);
 }
 .jd__report-body {
-  font-size: 14px;
+  font-size: var(--fs-title);
   line-height: 1.8;
   color: var(--c-text);
   white-space: pre-wrap;

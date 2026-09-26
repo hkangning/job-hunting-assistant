@@ -199,7 +199,7 @@ onMounted(load)
   padding: 9px 14px;
   border-radius: var(--r-card);
   background: var(--c-bg);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text-2);
 }
 .ai__current strong {
@@ -213,7 +213,7 @@ onMounted(load)
 }
 .ai__card-title {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--c-text);
 }
@@ -231,7 +231,7 @@ onMounted(load)
 }
 .ai__hint {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .ai__list {
@@ -261,13 +261,13 @@ onMounted(load)
 }
 .ai__name {
   min-width: 120px;
-  font-size: 14px;
+  font-size: var(--fs-title);
   color: var(--c-text);
 }
 .ai__model {
   flex: 1;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text-2);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -276,11 +276,11 @@ onMounted(load)
   padding: 0 6px;
   border-radius: var(--r-mark);
   background: var(--c-bg);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--m-jd);
 }
 .ai__group {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .ai__ops {

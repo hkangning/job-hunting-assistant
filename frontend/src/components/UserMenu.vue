@@ -79,7 +79,7 @@ async function onCommand(command) {
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 700;
 }
 .user-menu__name {
@@ -87,11 +87,11 @@ async function onCommand(command) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
 }
 .user-menu__arrow {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 </style>

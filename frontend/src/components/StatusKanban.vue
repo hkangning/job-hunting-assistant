@@ -213,7 +213,7 @@ function isUrgent(value) {
   flex: none;
 }
 .kanban__title {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--c-text-2);
   overflow: hidden;
@@ -222,7 +222,7 @@ function isUrgent(value) {
 }
 .kanban__count {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
   flex: none;
 }
@@ -258,7 +258,7 @@ function isUrgent(value) {
 }
 .kanban__list--empty::before {
   content: '拖入卡片';
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 .kanban-card {
@@ -276,7 +276,7 @@ function isUrgent(value) {
   box-shadow: 0 2px 8px rgba(122, 107, 196, 0.13);
 }
 .kanban-card__company {
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--c-text);
   line-height: 1.35;
@@ -286,7 +286,7 @@ function isUrgent(value) {
 }
 .kanban-card__position {
   margin-top: 2px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-2);
   line-height: 1.35;
   overflow: hidden;
@@ -300,7 +300,7 @@ function isUrgent(value) {
   gap: 4px 8px;
   /* 窄列时允许折行：排期带标签后更长，宁可换行也不截断 */
   flex-wrap: wrap;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 /* nowrap + flex:none：否则列宽偏窄时会被 flex 压到一个字宽，中文逐字竖排 */
@@ -328,6 +328,6 @@ function isUrgent(value) {
   border-radius: var(--r-mark);
   background: var(--c-divider);
   color: var(--c-text-2);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 </style>

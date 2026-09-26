@@ -130,7 +130,7 @@ function abort() {
 }
 .dev-stream__hint {
   margin: 0 0 16px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.6;
   color: var(--c-text-2);
 }
@@ -149,18 +149,18 @@ function abort() {
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
   background: var(--c-card);
-  font-size: 14px;
+  font-size: var(--fs-title);
   line-height: 1.8;
   color: var(--c-text);
 }
 .dev-stream__extra {
   margin-top: 10px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text-2);
 }
 .dev-stream__logs {
   margin-top: 18px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
 .dev-stream__logs-title {

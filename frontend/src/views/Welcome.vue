@@ -166,7 +166,7 @@ onBeforeUnmount(() => {
 
 .welcome__subtitle {
   margin: 12px 0 0;
-  font-size: 14px;
+  font-size: var(--fs-title);
   letter-spacing: 1px;
   color: rgba(255, 255, 255, 0.72);
   opacity: 0;
@@ -195,7 +195,7 @@ onBeforeUnmount(() => {
   position: absolute;
   bottom: 40px;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: rgba(255, 255, 255, 0.5);
   opacity: 0;
   animation: fadeIn 0.35s ease-out 1000ms both;
