@@ -115,27 +115,40 @@ def activate_provider(db: Session, user_id: int, provider: str) -> ActiveProvide
     return ActiveProviderDTO(active=provider)
 
 
-def get_models(db: Session, user_id: int, provider: str, refresh: bool = False) -> ModelListDTO:
+def get_models(
+    db: Session,
+    user_id: int,
+    provider: str,
+    refresh: bool = False,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> ModelListDTO:
     """模型列表（GET /llm-providers/{provider}/models）：24h 缓存优先，失败回退内置表。
 
-    Key 取当前账号已存配置；已存 Key 无效 → 10013（不回退），其余失败不报错、`source=builtin`。
+    传入 `api_key` / `base_url` = **临时探测**（与 /test 同口径，不落库）——供「配置已填、尚未保存」时先看模型：
+    跳过缓存读写（结果属于未保存的配置，写进缓存会污染已存 Key 的模型列表）。
+    不传：Key 取当前账号已存配置；已存 Key 无效 → 10013（不回退），其余失败不报错、`source=builtin`。
     """
     meta = _require_meta(provider)
     row = _get_row(db, user_id, provider)
-    base_url = registry.resolve_base_url(meta, row.base_url if row else None)
-    if not base_url:
+    incoming_key = (api_key or "").strip()
+    incoming_url = (base_url or "").strip()
+    ad_hoc = bool(incoming_key or incoming_url)  # 传了探测参数即临时探测
+
+    endpoint = registry.resolve_base_url(meta, incoming_url or (row.base_url if row else None))
+    if not endpoint:
         raise BizException(ErrorCode.PARAM_INVALID, "自定义供应商需先填写 API 端点")
 
-    cached = None if refresh else _load_cache(row, base_url)
+    cached = None if (refresh or ad_hoc) else _load_cache(row, endpoint)
     if cached is not None:
         return cached
 
-    api_key = decrypt_text(row.api_key) if row and row.api_key else None
-    if meta.needs_key and not api_key:
+    probe_key = incoming_key or (decrypt_text(row.api_key) if row and row.api_key else None)
+    if meta.needs_key and not probe_key:
         raise BizException(ErrorCode.LLM_KEY_MISSING)
 
     try:
-        models = registry.list_models(provider, base_url, api_key)
+        models = registry.list_models(provider, endpoint, probe_key)
     except registry.ProviderAuthError as exc:
         raise BizException(ErrorCode.LLM_TEST_FAILED, str(exc)) from exc
     except registry.ProviderProbeError:
@@ -146,8 +159,9 @@ def get_models(db: Session, user_id: int, provider: str, refresh: bool = False) 
         )
 
     fetched_at = datetime.now()
-    _store_cache(row, base_url, models, fetched_at)
-    db.commit()
+    if not ad_hoc:  # 临时探测不落库
+        _store_cache(row, endpoint, models, fetched_at)
+        db.commit()
     return ModelListDTO(
         models=[ModelItemDTO(**asdict(item)) for item in models],
         source="remote",

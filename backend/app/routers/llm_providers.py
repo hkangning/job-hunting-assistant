@@ -11,6 +11,7 @@ from app.deps import get_current_user
 from app.models import User
 from app.schemas.common import ApiResponse
 from app.schemas.llm_provider import (
+    BASE_URL_MAX,
     ActiveProviderDTO,
     ModelListDTO,
     ProviderItemDTO,
@@ -72,12 +73,24 @@ def activate_provider(
 def list_models(
     provider: str,
     refresh: bool = Query(default=False, description="true = 强制重拉（默认走 24h 缓存）"),
+    api_key: str | None = Query(
+        default=None, description="临时探测的 Key（不落库）；省略则用当前账号已存 Key"
+    ),
+    base_url: str | None = Query(
+        default=None, max_length=BASE_URL_MAX, description="临时探测的端点（custom 必填，其余可省略）"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApiResponse[ModelListDTO]:
-    """实时拉取供应商可用模型；拉取失败回退内置模型表（`source=builtin`，不报错）。"""
+    """实时拉取供应商可用模型；拉取失败回退内置模型表（`source=builtin`，不报错）。
+
+    传 `api_key` / `base_url` 为**临时探测**（与 /test 同口径）：不读缓存、不落库，
+    供「配置已填、尚未保存」时先看有哪些模型可选。
+    """
     return ApiResponse[ModelListDTO](
-        data=llm_provider_service.get_models(db, current_user.id, provider, refresh)
+        data=llm_provider_service.get_models(
+            db, current_user.id, provider, refresh, api_key=api_key, base_url=base_url
+        )
     )
 
 
