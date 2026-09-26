@@ -10,7 +10,7 @@
 
 | 层 | 技术 |
 |---|---|
-| 后端 | Python 3.11+ / FastAPI / SQLAlchemy 2.x / SQLite（WAL） |
+| 后端 | Python 3.11+ / FastAPI / SQLAlchemy 2.x / MySQL 8.0（InnoDB，utf8mb4） |
 | 账号 | 多账号：JWT 鉴权（1 天 / 30 天免登录）+ bcrypt 密码哈希，**数据按账号隔离**，每账号独立配置 AI 供应商 |
 | LLM | 多供应商+模型两级可配置（12 家：DeepSeek / 智谱 / Kimi / 通义千问 / 豆包 / OpenAI / Gemini / Claude / Grok / OpenRouter / Ollama / 自定义），模型列表动态拉取保持最新，SSE 流式 |
 | Agent | 手写实现：意图路由 + 工具注册表 + 画像记忆（不用 LangChain） |
@@ -60,6 +60,23 @@ job-hunting-assistant/
 ## 快速开始
 
 > 命令以 **Windows PowerShell** 为准（VS Code 终端直接用）。Linux / macOS：路径 `\` 换成 `/`，激活改用 `source .venv/bin/activate`。
+
+### 数据库（首次，一次性）
+
+```powershell
+# MySQL80 服务需已启动。注意：<密码> 是占位符，必须替换成真实密码再执行（尖括号一并替换掉），
+# 原样执行会把密码设成中文占位符、后端报 1045 且很难查；命令末 -p 回车后输入 root 密码
+& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p -e "CREATE DATABASE IF NOT EXISTS job_hunter DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE DATABASE IF NOT EXISTS job_hunter_test DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE USER IF NOT EXISTS 'jobhunter'@'localhost' IDENTIFIED BY '<密码>'; GRANT ALL PRIVILEGES ON job_hunter.* TO 'jobhunter'@'localhost'; GRANT ALL PRIVILEGES ON job_hunter_test.* TO 'jobhunter'@'localhost'; FLUSH PRIVILEGES;"
+```
+
+```powershell
+# 建完自检：用刚设的账号连一次（密码即上面设的那个），能列出两个库即成功
+& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u jobhunter -p -e "SHOW DATABASES LIKE 'job_hunter%';"
+```
+
+一条命令建好**两个库**（开发库 `job_hunter` + 测试库 `job_hunter_test`）、专用账号与授权；报 `1045` 时的排查与重置、逐条 SQL 见 [数据库设计文档 §7.1](docs/03-数据库/数据库设计文档.md)
+- 连接串写入 `backend/.env` 的 `DATABASE_URL`（模板见 `backend/.env.example`；`.env` 已 gitignore）
+- **表结构与种子题库由服务启动时自动创建并导入**（585 题），无需手工执行 DDL
 
 ### 后端
 

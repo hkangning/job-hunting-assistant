@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     app_name: str = "个人求职助手"  # 应用名（OpenAPI 文档标题）
     debug: bool = True  # 调试模式（开发期开启）
     api_prefix: str = "/api/v1"  # 业务接口统一前缀（接口文档 1.1 Base URL）
-    database_url: str = "sqlite:///./app.db"  # SQLite 单文件库
+    database_url: str = "mysql+pymysql://jobhunter@127.0.0.1:3306/job_hunter?charset=utf8mb4"  # MySQL 连接串（库需先手工创建，见数据库设计文档 §7）；密码涉密不写进代码，真实值在 .env 的 DATABASE_URL
     cors_origins: list[str] = ["http://localhost:5173"]  # 允许跨域的前端地址（Vite 开发端口）
     app_secret_key: str = ""  # JWT 签名 + Fernet 加密主密钥；为空时启动自动生成（见下）
 

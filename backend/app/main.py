@@ -22,7 +22,9 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动钩子：建库 + 种子导入（步骤 2，幂等）；定时任务注册见步骤 17。"""
-    init_db()
+    added = init_db()
+    if added:
+        logging.info("种子题库新增 %d 题", added)
     # TODO(步骤 17)：注册每日提醒定时任务
     yield
 
