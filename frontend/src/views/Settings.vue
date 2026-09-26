@@ -18,14 +18,14 @@ const TTS_VOICES = [
 ]
 
 // 参与 diff 的字段（asr_app_id / asr_api_key 不在其中：留空 = 不修改，不是"清空"）
+// crawl_url 已于 SRS v1.11 废弃——抓取目标改由「信息源清单」多行承载，不再有单一目标地址
 const DIFF_KEYS = [
   'voice_enabled',
   'asr_provider',
   'tts_enabled',
   'tts_voice',
   'default_question_count',
-  'crawl_enabled',
-  'crawl_url'
+  'crawl_enabled'
 ]
 
 const appStore = useAppStore()
@@ -42,8 +42,7 @@ const form = reactive({
   tts_enabled: false,
   tts_voice: 'zh-CN-XiaoxiaoNeural',
   default_question_count: 8,
-  crawl_enabled: false,
-  crawl_url: ''
+  crawl_enabled: false
 })
 
 let snapshot = {} // 加载时的原始值，用于 diff
@@ -66,8 +65,7 @@ function applySettings(data) {
     tts_enabled: !!data.tts_enabled,
     tts_voice: data.tts_voice || 'zh-CN-XiaoxiaoNeural',
     default_question_count: data.default_question_count ?? 8,
-    crawl_enabled: !!data.crawl_enabled,
-    crawl_url: data.crawl_url || ''
+    crawl_enabled: !!data.crawl_enabled
   })
   asrKeySet.value = !!data.asr_key_set
   snapshot = Object.fromEntries(DIFF_KEYS.map((k) => [k, form[k]]))
@@ -162,18 +160,12 @@ onMounted(load)
     </el-card>
 
     <el-card shadow="never" class="settings__card">
-      <h3 class="settings__title">就业网抓取</h3>
+      <h3 class="settings__title">信息采集</h3>
       <p class="settings__note">以下为系统级配置：任一账号修改后对全部账号生效。</p>
       <el-form label-width="120px">
         <el-form-item label="每日抓取">
           <el-switch v-model="form.crawl_enabled" />
-        </el-form-item>
-        <el-form-item label="目标地址">
-          <el-input
-            v-model="form.crawl_url"
-            :disabled="!form.crawl_enabled"
-            placeholder="留空则使用默认就业网地址"
-          />
+          <span class="settings__hint">多校信息源清单在「校招情报」页维护</span>
         </el-form-item>
       </el-form>
     </el-card>
