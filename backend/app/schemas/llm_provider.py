@@ -9,7 +9,7 @@ MODEL_MAX = 100  # 与 llm_provider_config.model 字段长度一致
 class ProviderItemDTO(BaseModel):
     """单个供应商的配置卡片（GET /llm-providers 列表项、PUT 保存响应）。"""
 
-    provider: str = Field(description="供应商标识（注册表 13 项之一）")
+    provider: str = Field(description="供应商标识（注册表 12 项之一）")
     name: str = Field(description="供应商展示名")
     group: str = Field(description="分组：国内 / 国外 / 聚合 / 本地 / 自定义")
     base_url: str = Field(description="生效端点（账号配置优先，空则回落到注册表默认值）")
@@ -17,9 +17,6 @@ class ProviderItemDTO(BaseModel):
     key_set: bool = Field(description="该账号是否已存 Key（**永不回显明文或片段**；needs_key=false 时恒为 false）")
     model: str = Field(description="该账号所选模型（空串 = 用注册表默认模型）")
     is_active: bool = Field(description="是否当前生效供应商（每账号至多一项为 true）")
-    use_shared: bool = Field(
-        description="是否使用平台共享 Key（免费模型：Key 取平台配置，模型仍用本行所选）"
-    )
 
 
 class ProviderListDTO(BaseModel):
@@ -27,34 +24,6 @@ class ProviderListDTO(BaseModel):
 
     active: str | None = Field(default=None, description="当前生效供应商标识，未配置任何供应商时为 null")
     providers: list[ProviderItemDTO] = Field(default_factory=list, description="注册表全部供应商")
-
-
-class FreeModelItemDTO(BaseModel):
-    """免费模型清单里的一个模型（GET /llm-providers/free-models）。"""
-
-    id: str = Field(description="模型 ID（选用时回传给「选用免费模型」接口）")
-    display_name: str = Field(description="展示名")
-
-
-class FreeProviderDTO(BaseModel):
-    """提供免费模型的供应商及其可选模型。"""
-
-    provider: str = Field(description="供应商标识")
-    name: str = Field(description="供应商展示名")
-    models: list[FreeModelItemDTO] = Field(default_factory=list, description="该家可选的免费模型")
-
-
-class FreeModelListDTO(BaseModel):
-    """免费模型清单响应（GET /llm-providers/free-models）：只含平台配了共享 Key 的供应商。"""
-
-    providers: list[FreeProviderDTO] = Field(default_factory=list, description="可用免费模型的供应商")
-
-
-class FreeModelSelectRequest(BaseModel):
-    """选用免费模型请求体（PUT /llm-providers/free-model）：保存 + 生效一步完成。"""
-
-    provider: str = Field(description="供应商标识（取值见免费模型清单）")
-    model: str = Field(max_length=MODEL_MAX, description="所选免费模型 ID（取值见免费模型清单）")
 
 
 class ProviderSaveRequest(BaseModel):
@@ -78,7 +47,6 @@ class ModelItemDTO(BaseModel):
 
     id: str = Field(description="模型 ID（调用时传给供应商的 model 参数）")
     display_name: str = Field(description="展示名（内置表有记载的用中文名，新模型以 ID 展示）")
-    is_free: bool = Field(description="是否免费额度模型（按内置表判定；新模型默认非免费）")
 
 
 class ModelListDTO(BaseModel):
@@ -92,7 +60,7 @@ class ModelListDTO(BaseModel):
 class ProviderTestRequest(BaseModel):
     """连通性测试请求体（POST /llm-providers/test）：**不落库、不保存配置**。"""
 
-    provider: str = Field(description="待测供应商标识（注册表 13 项之一）")
+    provider: str = Field(description="待测供应商标识（注册表 12 项之一）")
     api_key: str | None = Field(default=None, description="待测 Key；省略则用当前账号已存 Key")
     base_url: str | None = Field(default=None, max_length=BASE_URL_MAX, description="待测端点（custom 必填，其余可省略）")
     model: str | None = Field(default=None, max_length=MODEL_MAX, description="待测模型；省略用注册表默认模型")

@@ -12,15 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.clients import llm_provider as registry
 from app.clients.llm_provider import ModelMeta
-from app.database import SYSTEM_USER_ID
 from app.exceptions import BizException, ErrorCode
 from app.models import LlmProviderConfig
 from app.schemas.llm_provider import (
     ActiveProviderDTO,
-    FreeModelItemDTO,
-    FreeModelListDTO,
-    FreeModelSelectRequest,
-    FreeProviderDTO,
     ModelItemDTO,
     ModelListDTO,
     ProviderItemDTO,
@@ -36,7 +31,7 @@ CACHE_TTL_HOURS = 24  # 模型列表缓存有效期（系统设计 5.4）
 
 
 def list_providers(db: Session, user_id: int) -> ProviderListDTO:
-    """全部供应商卡片（GET /llm-providers）：注册表 13 项与当前账号配置合并，未配置的也返回。"""
+    """全部供应商卡片（GET /llm-providers）：注册表 12 项与当前账号配置合并，未配置的也返回。"""
     rows = {
         row.provider: row
         for row in db.scalars(
@@ -66,9 +61,8 @@ def save_provider(
     incoming_key = (payload.api_key or "").strip()
     if incoming_key:
         row.api_key = encrypt_text(incoming_key)
-        row.use_shared = 0  # 填了自己的 Key = 不再用平台共享 Key（免费档转自配档）
         row.models_cache = None  # Key 变更后旧模型缓存作废：否则换了错 Key 仍看到缓存、测不出 10013
-    elif is_new and meta.needs_key and not row.use_shared:
+    elif is_new and meta.needs_key:
         raise BizException(ErrorCode.PARAM_INVALID, "首次配置需填写 API Key")
 
     # base_url：省略 = 不修改；传空串 = 恢复注册表默认
@@ -108,7 +102,7 @@ def activate_provider(db: Session, user_id: int, provider: str) -> ActiveProvide
     """
     meta = _require_meta(provider)
     row = _get_row(db, user_id, provider)
-    if row is None or (meta.needs_key and not row.api_key and not row.use_shared):
+    if row is None or (meta.needs_key and not row.api_key):
         raise BizException(ErrorCode.PARAM_INVALID, "请先填写并保存 API Key，再设为当前使用")
     db.execute(
         update(LlmProviderConfig)
@@ -133,7 +127,9 @@ def get_models(
 
     传入 `api_key` / `base_url` = **临时探测**（与 /test 同口径，不落库）——供「配置已填、尚未保存」时先看模型：
     跳过缓存读写（结果属于未保存的配置，写进缓存会污染已存 Key 的模型列表）。
-    不传：Key 取当前账号已存配置；已存 Key 无效 → 10013（不回退），其余失败不报错、`source=builtin`。
+    不传：Key 取当前账号已存配置；**未配 Key 也照常返回**——供应商的 `GET /models` 需鉴权、无 Key 拿不到实时列表，
+    故直接给内置模型表（`source=builtin`），让账号选完供应商即可先看到可选模型、填 Key 后再刷新拉全量；
+    已存 Key 或传入 Key 无效 → 10013（鉴权类失败不回退，否则会掩盖 Key 配错），其余失败同样回退内置表。
     """
     meta = _require_meta(provider)
     row = _get_row(db, user_id, provider)
@@ -151,18 +147,16 @@ def get_models(
 
     probe_key = incoming_key or (decrypt_text(row.api_key) if row and row.api_key else None)
     if meta.needs_key and not probe_key:
-        raise BizException(ErrorCode.LLM_KEY_MISSING)
+        probe_key = _keyless_probe_key(meta, endpoint)
+        if not probe_key:
+            return _builtin_list(meta)  # 未配 Key：给内置清单，不报 10012（保存配置时仍强制填 Key）
 
     try:
         models = registry.list_models(provider, endpoint, probe_key)
     except registry.ProviderAuthError as exc:
         raise BizException(ErrorCode.LLM_TEST_FAILED, str(exc)) from exc
     except registry.ProviderProbeError:
-        return ModelListDTO(  # 拉取失败不报错：回退内置表，前端标注「内置列表（上次拉取失败）」
-            models=[ModelItemDTO(**asdict(item)) for item in meta.builtin_models],
-            source="builtin",
-            fetched_at=None,
-        )
+        return _builtin_list(meta)  # 拉取失败不报错：回退内置表，前端标注「内置列表（上次拉取失败）」
 
     fetched_at = datetime.now()
     if not ad_hoc:  # 临时探测不落库
@@ -180,105 +174,25 @@ def test_provider(db: Session, user_id: int, payload: ProviderTestRequest) -> Pr
     meta = _require_meta(payload.provider)
     row = _get_row(db, user_id, payload.provider)
 
+    base_url = registry.resolve_base_url(
+        meta, (payload.base_url or "").strip() or (row.base_url if row else None)
+    )
+    if not base_url:
+        raise BizException(ErrorCode.PARAM_INVALID, "自定义供应商需填写 API 端点")
+
     api_key = (payload.api_key or "").strip()
     if not api_key and row and row.api_key:
         api_key = decrypt_text(row.api_key)  # 省略则用当前账号已存 Key
     if meta.needs_key and not api_key:
-        raise BizException(ErrorCode.LLM_KEY_MISSING)
-
-    base_url = (
-        (payload.base_url or "").strip()
-        or (row.base_url if row else None)
-        or meta.base_url
-    )
-    if not base_url:
-        raise BizException(ErrorCode.PARAM_INVALID, "自定义供应商需填写 API 端点")
+        api_key = _keyless_probe_key(meta, base_url)
+        if not api_key:
+            raise BizException(ErrorCode.LLM_KEY_MISSING)  # 测试连通性必须有 Key，缺 Key 即 10012
 
     try:
         model = registry.test_connection(payload.provider, base_url, api_key, payload.model)
     except registry.ProviderProbeError as exc:
         raise BizException(ErrorCode.LLM_TEST_FAILED, str(exc)) from exc
     return ProviderTestDTO(message="ok", model=model)
-
-
-def list_free_models(db: Session) -> FreeModelListDTO:
-    """免费模型清单（GET /llm-providers/free-models）：两类来源合成（系统设计 5.4）。
-
-    ①**公开免 Key 服务**（注册表 `is_public`）：本就不需要任何 Key，**不看平台行**；
-    ②**平台共享 Key**：只含 `user_id=0` 平台行已配 Key 的供应商。
-    按注册表顺序输出（界面下拉顺序可预期）：模型取内置表里标了 `is_free` 的，
-    一家都没标则退化为该家默认模型单个；用内置表（静态）而非实时拉取——下拉框内容需可预期，
-    且不受服务当下是否可用影响（公开服务的可用性波动由调用时的自动降级兜住）。
-    """
-    rows = {
-        row.provider: row
-        for row in db.scalars(
-            select(LlmProviderConfig).where(LlmProviderConfig.user_id == SYSTEM_USER_ID)
-        ).all()
-    }
-    providers: list[FreeProviderDTO] = []
-    for key in registry.PROVIDER_KEYS:
-        meta = registry.get_provider(key)
-        if not meta.is_public:
-            row = rows.get(key)
-            if row is None or not row.api_key:  # 平台未配共享 Key 的家不入选
-                continue
-        candidates = [item for item in meta.builtin_models if item.is_free]
-        if not candidates and meta.default_model:
-            candidates = [ModelMeta(meta.default_model, meta.default_model)]
-        if not candidates:
-            continue
-        providers.append(
-            FreeProviderDTO(
-                provider=meta.key,
-                name=meta.name,
-                models=[
-                    FreeModelItemDTO(id=item.id, display_name=item.display_name)
-                    for item in candidates
-                ],
-            )
-        )
-    return FreeModelListDTO(providers=providers)
-
-
-def select_free_model(
-    db: Session, user_id: int, payload: FreeModelSelectRequest
-) -> ProviderItemDTO:
-    """选用免费模型（PUT /llm-providers/free-model）：保存并立即生效。
-
-    写入账号行 `use_shared=1` + 所选模型并置激活位；**不清空账号已存的 api_key**——那是
-    用户自己的数据，日后改回自配 Key 时还要用。所选模型按免费清单校验，不信任前端传值。
-    """
-    meta = _require_meta(payload.provider)
-    free_ids = {
-        item.id
-        for group in list_free_models(db).providers
-        if group.provider == meta.key
-        for item in group.models
-    }
-    if not free_ids:
-        raise BizException(ErrorCode.PARAM_INVALID, "该供应商未提供免费模型")
-    if payload.model not in free_ids:
-        raise BizException(ErrorCode.PARAM_INVALID, "所选模型不在免费模型清单内")
-
-    row = _get_row(db, user_id, meta.key)
-    if row is None:
-        row = LlmProviderConfig(user_id=user_id, provider=meta.key)
-        db.add(row)
-    row.use_shared = 1
-    row.base_url = None  # 端点固定用注册表默认值（免费模型不接受自定义端点）
-    row.model = payload.model
-    row.models_cache = None
-    db.execute(
-        update(LlmProviderConfig)
-        .where(LlmProviderConfig.user_id == user_id)
-        .values(is_active=0)
-    )
-    row.is_active = 1
-    row.updated_at = datetime.now()
-    db.commit()
-    db.refresh(row)
-    return _to_item(meta, row)
 
 
 # ---------- 内部工具 ----------
@@ -290,6 +204,27 @@ def _require_meta(provider: str) -> registry.ProviderMeta:
     if meta is None:
         raise BizException(ErrorCode.PARAM_INVALID, "供应商标识不存在")
     return meta
+
+
+def _keyless_probe_key(meta: registry.ProviderMeta, endpoint: str) -> str | None:
+    """免 Key 探测的占位 Key：**自定义供应商指向自建端点**（本地模型服务 / 内网网关）时，
+    端点是否需要 Key 取决于端点本身、注册表静态属性判不了，故用占位值满足 SDK 必填要求。
+
+    其余需 Key 的供应商返回 `None`，由调用方决定处置——模型列表给内置表，
+    连通性测试报 10012（不填 Key 也放行会让 401 掩盖「配置缺失」这个真问题）。
+    """
+    if meta.key == "custom" and endpoint:
+        return registry.KEYLESS_PLACEHOLDER
+    return None
+
+
+def _builtin_list(meta: registry.ProviderMeta) -> ModelListDTO:
+    """内置模型表响应（`source=builtin`）：未配 Key 的预览清单与拉取失败的回退共用一份。"""
+    return ModelListDTO(
+        models=[ModelItemDTO(**asdict(item)) for item in meta.builtin_models],
+        source="builtin",
+        fetched_at=None,
+    )
 
 
 def _get_row(db: Session, user_id: int, provider: str) -> LlmProviderConfig | None:
@@ -316,7 +251,10 @@ def _active_provider(db: Session, user_id: int) -> str | None:
 
 
 def _to_item(meta: registry.ProviderMeta, row: LlmProviderConfig | None) -> ProviderItemDTO:
-    """注册表条目 + 账号配置行 → 卡片 DTO（未配置的行按注册表默认值展示）。"""
+    """注册表条目 + 账号配置行 → 卡片 DTO（未配置的行按注册表默认值展示）。
+
+    端点回显与实际运行时取值同一函数（`resolve_base_url`）——展示与生效一致，不出现「界面显示 A、实际用 B」。
+    """
     return ProviderItemDTO(
         provider=meta.key,
         name=meta.name,
@@ -326,7 +264,6 @@ def _to_item(meta: registry.ProviderMeta, row: LlmProviderConfig | None) -> Prov
         key_set=bool(row and row.api_key),
         model=(row.model if row else None) or "",
         is_active=bool(row and row.is_active),
-        use_shared=bool(row and row.use_shared),
     )
 
 

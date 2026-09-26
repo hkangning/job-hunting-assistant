@@ -24,7 +24,6 @@ from sqlalchemy.orm import Session
 
 from app.clients import llm_provider as registry
 from app.config import settings
-from app.database import SYSTEM_USER_ID
 from app.exceptions import BizException, ErrorCode
 from app.models import LlmProviderConfig
 from app.utils.security import decrypt_text
@@ -49,9 +48,8 @@ class LLMConfig:
 
     provider: str  # 供应商标识（注册表键）
     base_url: str  # API 端点（账号配置优先，缺省用注册表内置值）
-    api_key: str  # 密钥明文（仅调用期间存在于内存；免 Key 服务为占位值）
+    api_key: str  # 密钥明文（仅调用期间存在于内存；免 Key 供应商为占位值）
     model: str  # 模型 ID
-    fallback: "LLMConfig | None" = None  # 兜底配置：公开免 Key 服务失败时改用它重试一次，无兜底为 None
 
 
 class LLMError(BizException):
@@ -66,7 +64,6 @@ def resolve_config(db: Session, user_id: int) -> LLMConfig:
 
     **生效行存在但不完整时不再走 .env 兜底**——否则会把环境变量的 Key 配到账号所选的端点上，
     Key 与端点错配比「未配置」更难排查。
-    生效行为公开免 Key 服务时，**兜底配置一并在本阶段解析好**（建流阶段拿不到数据库会话）。
     """
     row = db.scalar(
         select(LlmProviderConfig).where(
@@ -84,8 +81,6 @@ class LLMClient(ABC):
     测试以 `app.dependency_overrides[get_llm_client]` 替换为替身（测试计划 1.3），生产代码零改动。
     """
 
-    degraded_from: str | None = None  # 本次调用的降级来源（公开免 Key 服务标识）；未降级为 None
-
     @abstractmethod
     def stream_chat(
         self, config: LLMConfig, messages: list[dict], tools: list[dict] | None = None
@@ -98,15 +93,12 @@ class LLMClient(ABC):
 
 
 class OpenAICompatibleClient(LLMClient):
-    """生产实现：13 家供应商全走 OpenAI 兼容协议（系统设计 5.4）。"""
+    """生产实现：12 家供应商全走 OpenAI 兼容协议（系统设计 5.4）。"""
 
     def stream_chat(
         self, config: LLMConfig, messages: list[dict], tools: list[dict] | None = None
     ) -> Iterator[str]:
-        # 建流阶段允许降级；进入遍历后不再换源（已输出的内容无法回收，换源会导致内容重复）
-        stream = self._with_fallback(
-            config, lambda target: _create_stream(_build_client(target), target, messages, tools)
-        )
+        stream = _create_stream(_build_client(config), config, messages, tools)
         try:
             for chunk in stream:
                 if not chunk.choices:  # 末尾用量统计等无 choices 的块
@@ -121,59 +113,16 @@ class OpenAICompatibleClient(LLMClient):
             stream.close()
 
     def chat_json(self, config: LLMConfig, messages: list[dict]) -> dict:
-        response = self._with_fallback(
-            config, lambda target: _create_chat(_build_client(target), target, messages)
-        )
+        response = _create_chat(_build_client(config), config, messages)
         content = (response.choices[0].message.content or "") if response.choices else ""
         try:
             return _parse_json(content)
         except ValueError as exc:
             raise LLMError(ErrorCode.LLM_OUTPUT_INVALID, f"AI 输出格式异常：{exc}") from exc
 
-    def _with_fallback(self, config: LLMConfig, call: Callable[[LLMConfig], object]):
-        """执行调用；公开免 Key 服务失败时改用兜底配置重试一次（系统设计 5.4）。
-
-        只降一级、不递归——兜底配置自身不带 `fallback`；平台未配共享 Key 时无兜底目标，按原错误如实上报。
-        降级成功即置 `degraded_from`，由调用方（SSE 链路）写进 `done.extra` 供前端提示。
-        """
-        try:
-            return call(config)
-        except LLMError as exc:
-            if config.fallback is None:
-                raise _public_hint(config.provider, exc) from exc
-            logger.warning(
-                "公开免 Key 服务「%s」调用失败，改用平台共享 Key「%s」重试一次",
-                config.provider,
-                config.fallback.provider,
-            )
-            try:
-                result = call(config.fallback)
-            except LLMError as fallback_exc:  # 兜底也失败：按兜底的错误上报，并附公开服务的可操作提示
-                raise _public_hint(config.provider, fallback_exc) from fallback_exc
-            self.degraded_from = config.provider
-            return result
-
-
-def _public_hint(provider: str, exc: LLMError) -> LLMError:
-    """公开免 Key 服务失败且无可用兜底目标时，补一句可操作提示后原样抛出。
-
-    该服务是第三方公益端点，可用性不可控（实测遇到过服务端故障与匿名档限流）；
-    不提示的话使用者只会反复重试，而正确的解法是换一个免费来源或填自己的 Key。
-    """
-    meta = registry.get_provider(provider)
-    if meta is None or not meta.is_public:
-        return exc
-    return LLMError(
-        exc.code,
-        f"{exc.message}；公开免费服务可用性有限，可在 AI 配置页改用平台免费模型或填入自己的 Key",
-    )
-
 
 def get_llm_client() -> LLMClient:
-    """对话客户端注入点（FastAPI 依赖）：测试覆盖此依赖即可注入替身（测试计划 1.3）。
-
-    **每请求新建实例**：实例携带本次调用的降级状态（`degraded_from`），单例会被并发请求互相污染。
-    """
+    """对话客户端注入点（FastAPI 依赖）：测试覆盖此依赖即可注入替身（测试计划 1.3）。"""
     return OpenAICompatibleClient()
 
 
@@ -181,34 +130,12 @@ def get_llm_client() -> LLMClient:
 
 
 def _config_from_row(db: Session, row: LlmProviderConfig) -> LLMConfig:
-    """账号生效行 → 对话配置；任一项不完整即抛 10012 并指明缺什么。
-
-    免费模型档两类来源：**公开免 Key 服务**（`is_public`）不看平台行、不需要任何 Key，直接用注册表端点，
-    并挂上兜底配置；**平台共享 Key** 的行走 `use_shared = 1`，Key 取 `user_id=0` 同供应商的平台行、
-    模型仍用本行所选，平台行缺失（.env 里已撤下该供应商）即视为该免费模型已下线。
-    """
+    """账号生效行 → 对话配置；任一项不完整即抛 10012 并指明缺什么。"""
     meta = registry.get_provider(row.provider)
     if meta is None:  # 历史数据指向已下线的注册表条目
         raise LLMError(ErrorCode.LLM_KEY_MISSING, "当前 AI 供应商已不可用，请前往 AI 配置页重新选择")
-    fallback: LLMConfig | None = None
-    if meta.is_public:
-        api_key = registry.KEYLESS_PLACEHOLDER  # 公开服务不校验 Key
-        base_url = registry.resolve_base_url(meta, row.base_url)
-        fallback = _shared_fallback(db, exclude=meta.key)
-    elif row.use_shared:
-        shared = db.scalar(
-            select(LlmProviderConfig).where(
-                LlmProviderConfig.user_id == SYSTEM_USER_ID,
-                LlmProviderConfig.provider == row.provider,
-            )
-        )
-        if shared is None or not shared.api_key:
-            raise LLMError(ErrorCode.LLM_KEY_MISSING, "该免费模型已下线，请前往 AI 配置页重新选择")
-        api_key = decrypt_text(shared.api_key)
-        base_url = registry.resolve_base_url(meta, shared.base_url)  # 端点用平台的，不接受账号自填
-    else:
-        api_key = decrypt_text(row.api_key) if row.api_key else ""
-        base_url = registry.resolve_base_url(meta, row.base_url)
+    api_key = decrypt_text(row.api_key) if row.api_key else ""
+    base_url = registry.resolve_base_url(meta, row.base_url)
     if not base_url:
         raise LLMError(ErrorCode.LLM_KEY_MISSING, "该供应商缺少 API 端点，请前往 AI 配置页补全")
     if meta.needs_key and not api_key:
@@ -216,32 +143,7 @@ def _config_from_row(db: Session, row: LlmProviderConfig) -> LLMConfig:
     model = (row.model or "").strip() or meta.default_model or ""
     if not model:
         raise LLMError(ErrorCode.LLM_KEY_MISSING, "尚未选择模型，请前往 AI 配置页选择")
-    return LLMConfig(meta.key, base_url, api_key or registry.KEYLESS_PLACEHOLDER, model, fallback)
-
-
-def _shared_fallback(db: Session, exclude: str) -> LLMConfig | None:
-    """公开免 Key 服务的兜底配置：平台共享 Key 中按**注册表顺序取第一个**可用项（系统设计 5.4）。
-
-    无可用平台行时返回 None——调用方据此按原错误如实上报，不做二次兜底（只降一级、不递归）。
-    """
-    rows = {
-        row.provider: row
-        for row in db.scalars(
-            select(LlmProviderConfig).where(LlmProviderConfig.user_id == SYSTEM_USER_ID)
-        ).all()
-    }
-    for key in registry.PROVIDER_KEYS:
-        meta = registry.get_provider(key)
-        row = rows.get(key)
-        if key == exclude or meta is None or meta.is_public or row is None or not row.api_key:
-            continue
-        model = (row.model or "").strip() or meta.default_model or ""
-        if not model:
-            continue
-        return LLMConfig(
-            meta.key, registry.resolve_base_url(meta, row.base_url), decrypt_text(row.api_key), model
-        )
-    return None
+    return LLMConfig(meta.key, base_url, api_key or registry.KEYLESS_PLACEHOLDER, model)
 
 
 def _config_from_env() -> LLMConfig:

@@ -9,15 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
-# 平台共享 Key 的环境变量前缀（.env 里写 SHARED_KEY_<供应商标识>，见系统设计 5.4）
-SHARED_KEY_PREFIX = "shared_key_"
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
         env_file_encoding="utf-8",
-        extra="allow",  # 共享 Key 走未声明变量（SHARED_KEY_<供应商>），见 shared_provider_keys
+        extra="allow",  # 容忍 .env 中的历史残留变量（如已废弃的平台共享 Key），不影响启动
     )
 
     app_name: str = "个人求职助手"  # 应用名（OpenAPI 文档标题）
@@ -32,22 +28,6 @@ class Settings(BaseSettings):
     llm_api_key: str = ""  # 环境变量兜底 Key（设置页配置优先）
     llm_base_url: str = ""  # 仅 custom 供应商填写
     llm_trust_env: bool = False  # AI 出网是否沿用系统代理；默认 false = 直连（系统代理多为代理软件遗留，工具没开时会直接连不通）
-
-    def shared_provider_keys(self) -> dict[str, str]:
-        """平台共享 Key（免费模型的 Key 来源）：`SHARED_KEY_<供应商标识>` → Key 明文。
-
-        变量名大小写不敏感、值留空视为未配置（便于先占位后填值）；结果由启动同步写进
-        `user_id=0` 的平台配置行（见 database._sync_shared_providers）。
-        """
-        result: dict[str, str] = {}
-        for name, value in (self.model_extra or {}).items():
-            key = str(name).lower()
-            if not key.startswith(SHARED_KEY_PREFIX) or not isinstance(value, str):
-                continue
-            provider = key[len(SHARED_KEY_PREFIX) :]
-            if provider and value.strip():
-                result[provider] = value.strip()
-        return result
 
 
 def _ensure_secret_key(config: Settings) -> None:

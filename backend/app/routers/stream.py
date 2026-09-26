@@ -65,9 +65,6 @@ def demo_stream(
             "first_token_ms": first_token_ms,
             "elapsed_ms": _ms_since(started),
         }
-        degraded = _degraded_from(client)
-        if degraded:  # 公开免 Key 服务降级而来时额外携带（接口文档 3.1）
-            extra["degraded_from"] = degraded
         return {"extra": extra}
 
     return sse_response(_run, start_message="正在生成回复…")
@@ -75,11 +72,6 @@ def demo_stream(
 
 def _ms_since(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
-
-
-def _degraded_from(client: LLMClient) -> str | None:
-    """本次调用是否由公开免 Key 服务降级而来（测试替身可能不带该属性，用 getattr 兜底）。"""
-    return getattr(client, "degraded_from", None)
 
 
 @router.post("/stream/jd-analysis", summary="JD 匹配分析（流式）")
@@ -116,9 +108,7 @@ def jd_analysis_stream(
             record_id = jd_service.save_report(
                 stream_db, user_id, jd_text, application_id, "".join(pieces)
             )
-            degraded = _degraded_from(client)
-            # 平时为 null，仅在公开免 Key 服务降级时携带（接口文档 3.6）
-            return {"record_id": record_id, "extra": {"degraded_from": degraded} if degraded else None}
+            return {"record_id": record_id}
         except GeneratorExit:
             # 客户端断连：已生成内容落库并标记为未完成后原样抛出（协议层靠它终止上游，系统设计 5.1）
             _save_partial(stream_db, user_id, jd_text, application_id, pieces)

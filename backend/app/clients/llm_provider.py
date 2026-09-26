@@ -1,4 +1,4 @@
-"""供应商注册表与探测：13 家供应商的两级（供应商 → 模型）注册表、模型列表动态拉取、连通性测试。
+"""供应商注册表与探测：12 家供应商的两级（供应商 → 模型）注册表、模型列表动态拉取、连通性测试。
 
 全部走 OpenAI 兼容协议（系统设计 5.4）：选供应商 = 定 base_url 与 Key，选模型 = 定 model，调用代码零改动。
 
@@ -15,24 +15,22 @@ from openai import OpenAI
 from app.config import settings
 
 PROBE_TIMEOUT = 10.0  # 探测类请求超时（秒）；对话链路的超时策略在步骤 10 的 llm_client 单独定义
-# 免 Key 服务（本地 ollama、公开免 Key 端点）的占位值：这些服务不校验 Key，但 OpenAI SDK 要求该参数非空
+# 免 Key 供应商（本地 ollama）的占位值：该服务不校验 Key，但 OpenAI SDK 要求该参数非空
 KEYLESS_PLACEHOLDER = "keyless"
 
 GROUP_CN = "国内"
 GROUP_OVERSEAS = "国外"
 GROUP_AGGREGATE = "聚合"
 GROUP_LOCAL = "本地"
-GROUP_PUBLIC = "公开免费"
 GROUP_CUSTOM = "自定义"
 
 
 @dataclass(frozen=True)
 class ModelMeta:
-    """一个可选模型：`display_name` 用于界面展示，`is_free` 标记免费额度模型（内置表维护）。"""
+    """一个可选模型：`display_name` 用于界面展示，内置表维护。"""
 
     id: str
     display_name: str
-    is_free: bool = False
 
 
 @dataclass(frozen=True)
@@ -41,12 +39,11 @@ class ProviderMeta:
 
     key: str  # 标识（入库 llm_provider_config.provider）
     name: str  # 界面展示名
-    group: str  # 分组：国内 / 国外 / 聚合 / 本地 / 公开免费 / 自定义
+    group: str  # 分组：国内 / 国外 / 聚合 / 本地 / 自定义
     base_url: str  # 内置默认端点（账号配置有值则优先生效，应对端点变更）
     default_model: str | None  # 默认模型（空 = 由用户选择，如本地与自定义）
-    builtin_models: tuple[ModelMeta, ...] = ()  # 内置模型表（**仅离线回退用**，运行时以动态拉取为准）
-    needs_key: bool = True  # 是否需要 API Key（ollama 本地与公开免 Key 服务无需）
-    is_public: bool = False  # 公开免 Key 的第三方公益服务：驱动免费清单入选与调用失败自动降级
+    builtin_models: tuple[ModelMeta, ...] = ()  # 内置模型表（离线回退 + 未配 Key 时的预览清单；运行时以动态拉取为准）
+    needs_key: bool = True  # 是否需要 API Key（ollama 本地无需）
 
 
 # 供应商注册表（系统设计 5.4）：新增供应商只加配置，不改业务代码
@@ -58,8 +55,8 @@ PROVIDERS: dict[str, ProviderMeta] = {
         base_url="https://api.deepseek.com",
         default_model="deepseek-flash",
         builtin_models=(
-            ModelMeta("deepseek-flash", "DeepSeek V4.1 Flash", is_free=False),
-            ModelMeta("deepseek-v4-pro", "DeepSeek V4 Pro（退役路由中）", is_free=False),
+            ModelMeta("deepseek-flash", "DeepSeek V4.1 Flash"),
+            ModelMeta("deepseek-v4-pro", "DeepSeek V4 Pro（退役路由中）"),
         ),
     ),
     "zhipu": ProviderMeta(
@@ -69,8 +66,8 @@ PROVIDERS: dict[str, ProviderMeta] = {
         base_url="https://open.bigmodel.cn/api/paas/v4",
         default_model="glm-4.7-flash",
         builtin_models=(
-            ModelMeta("glm-4.7-flash", "GLM-4.7 Flash（免费）", is_free=True),
-            ModelMeta("glm-4-flash", "GLM-4 Flash（免费）", is_free=True),
+            ModelMeta("glm-4.7-flash", "GLM-4.7 Flash"),
+            ModelMeta("glm-4-flash", "GLM-4 Flash"),
         ),
     ),
     "kimi": ProviderMeta(
@@ -160,7 +157,12 @@ PROVIDERS: dict[str, ProviderMeta] = {
         group=GROUP_AGGREGATE,
         base_url="https://openrouter.ai/api/v1",
         default_model=None,  # 聚合中转，模型由用户从拉取结果中选择
-        builtin_models=(),
+        # 聚合家模型池极大（随账号额度变化），内置表只列最常见的三家主流，实际以动态拉取为准
+        builtin_models=(
+            ModelMeta("openai/gpt-5", "GPT-5"),
+            ModelMeta("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
+            ModelMeta("google/gemini-2.5-pro", "Gemini 2.5 Pro"),
+        ),
     ),
     "ollama": ProviderMeta(
         key="ollama",
@@ -170,18 +172,6 @@ PROVIDERS: dict[str, ProviderMeta] = {
         default_model=None,  # 本地已拉取的模型各不相同，以实时拉取为准
         builtin_models=(),
         needs_key=False,
-    ),
-    "pollinations": ProviderMeta(
-        key="pollinations",
-        name="Pollinations（公开免费）",
-        group=GROUP_PUBLIC,
-        base_url="https://text.pollinations.ai/openai",
-        default_model="openai-fast",
-        builtin_models=(
-            ModelMeta("openai-fast", "GPT-OSS 20B（公开免费）", is_free=True),
-        ),
-        needs_key=False,
-        is_public=True,
     ),
     "custom": ProviderMeta(
         key="custom",
@@ -193,9 +183,9 @@ PROVIDERS: dict[str, ProviderMeta] = {
     ),
 }
 
-PROVIDER_KEYS = tuple(PROVIDERS)  # 注册表全部标识（顺序即界面展示顺序：供应商下拉、免费模型清单）
+PROVIDER_KEYS = tuple(PROVIDERS)  # 注册表全部标识（顺序即界面展示顺序：供应商下拉）
 
-# 内置模型表全局索引（模型 ID → 元数据）：远程拉取的模型据此补展示名与免费标记，见 enrich_remote_model
+# 内置模型表全局索引（模型 ID → 元数据）：远程拉取的模型据此补展示名，见 enrich_remote_model
 _BUILTIN_INDEX: dict[str, ModelMeta] = {
     item.id: item for meta in PROVIDERS.values() for item in meta.builtin_models
 }
@@ -223,14 +213,14 @@ def enrich_remote_model(model_id: str) -> ModelMeta:
     """把远程拉取到的模型 ID 补齐展示信息。
 
     模型 ID 全局唯一，故**跨供应商**查内置表——聚合 / 自定义 / 本地供应商自身内置表为空，
-    但拉回来的可能正是某家已记载的模型（如经代理调用 glm-4.7-flash），展示名与免费标记仍应准确。
-    内置表未记载的新模型以 ID 展示、默认非免费。
+    但拉回来的可能正是某家已记载的模型（如经代理调用 glm-4.7-flash），展示名仍应准确。
+    内置表未记载的新模型以 ID 原样展示。
     """
-    return _BUILTIN_INDEX.get(model_id, ModelMeta(id=model_id, display_name=model_id, is_free=False))
+    return _BUILTIN_INDEX.get(model_id, ModelMeta(id=model_id, display_name=model_id))
 
 
 def _build_client(meta: ProviderMeta, base_url: str, api_key: str | None) -> OpenAI:
-    """构造 OpenAI 兼容客户端；免 Key 服务（ollama / 公开端点）用占位值满足 SDK 必填要求。
+    """构造 OpenAI 兼容客户端；免 Key 供应商（本地 ollama）用占位值满足 SDK 必填要求。
 
     代理行为与对话链路同口径（见 llm_client._http_client）：默认直连、不走系统代理。
     """
