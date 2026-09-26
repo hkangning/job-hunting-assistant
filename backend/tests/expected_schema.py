@@ -296,15 +296,12 @@ TABLES: dict[str, dict] = {
             ("model", "VARCHAR(100)", True, False),
             ("models_cache", "TEXT", True, False),
             ("is_active", "INTEGER", False, False),
-            ("use_shared", "INTEGER", False, False),
             ("created_at", "DATETIME", False, False),
             ("updated_at", "DATETIME", False, False),
         ],
         "indexes": {"idx_llm_cfg_user": ["user_id"]},
         "uniques": [["user_id", "provider"]],
-        # user_id 不建外键：0 为系统级平台行（免费模型的 Key 来源），建外键则插不进去，
-        # 与 config 表同口径（数据库设计 §3.17）
-        "foreign_keys": [],
+        "foreign_keys": [("user_id", "user", "id")],
     },
 }
 

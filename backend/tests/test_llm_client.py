@@ -429,8 +429,8 @@ def test_is_retryable_matrix(exc: Exception, expected: bool):
 
 
 def test_get_llm_client_returns_new_instance():
-    """TC-50：注入点**每请求新建**实例——实例携带本次调用的降级状态（`degraded_from`），
-    做成单例会被并发请求互相污染（系统设计 §5.4）。"""
+    """TC-50：注入点**每请求新建**实例（非单例）——不做成单例，避免并发请求共享同一个实例
+    的状态（系统设计 §5.4）。"""
     first, second = get_llm_client(), get_llm_client()
 
     assert isinstance(first, OpenAICompatibleClient)
@@ -459,110 +459,3 @@ def test_fake_llm_client_records_and_plays(fake_llm_client):
     assert fake_llm_client.chat_json(CONFIG, MSG) == {"score": 8}
     assert fake_llm_client.stream_calls == [(CONFIG, MSG, tools)]
     assert fake_llm_client.json_calls == [(CONFIG, MSG)]
-
-
-# ---------- TC-106：公开免 Key 服务与自动降级 ----------
-
-
-def _public_config(*, fallback: LLMConfig | None) -> LLMConfig:
-    """公开免 Key 服务的调用配置（`is_public` 的供应商，Key 为占位值）。"""
-    return LLMConfig(
-        provider="pollinations",
-        base_url="https://mock.local/v1",
-        api_key="placeholder",
-        model="openai-fast",
-        fallback=fallback,
-    )
-
-
-def _fallback_config() -> LLMConfig:
-    return LLMConfig(
-        provider="zhipu", base_url="https://mock.local/v1", api_key="sk-platform", model="glm-4.7-flash"
-    )
-
-
-def test_public_service_degrades_on_failure(monkeypatch):
-    """TC-106：公开免 Key 服务失败 → 自动改用平台共享 Key 重试一次，并记录 `degraded_from`。
-
-    公开服务是第三方公益端点、可用性不可控；不降级的话使用者只会反复重试。
-    """
-    seen = _install(monkeypatch, _error(500), _error(500), _sse("退而求其次"))
-    client = OpenAICompatibleClient()
-
-    assert "".join(client.stream_chat(_public_config(fallback=_fallback_config()), MSG)) == "退而求其次"
-    assert client.degraded_from == "pollinations"
-    assert len(seen) == 3  # 公开服务 500 重试 1 次（共 2）→ 换源成功（第 3 次）
-
-
-def test_degrade_happens_once_only(monkeypatch):
-    """TC-106：**只降一级、不递归**——兜底也失败时不再找下一个，且不计降级（`degraded_from` 为 None）。"""
-    seen = _install(monkeypatch, _error(401), _error(401))  # 401 鉴权错不重试：公开 1 次 + 兜底 1 次
-    client = OpenAICompatibleClient()
-
-    with pytest.raises(LLMError):
-        list(client.stream_chat(_public_config(fallback=_fallback_config()), MSG))
-
-    assert client.degraded_from is None
-    assert len(seen) == 2
-
-
-def test_no_fallback_target_attaches_hint(monkeypatch):
-    """TC-106：无兜底目标时按原错误上报，**并补一句可操作提示**（引导换来源或填自己的 Key）。"""
-    _install(monkeypatch, _error(500), _error(500))
-
-    with pytest.raises(LLMError) as exc:
-        list(OpenAICompatibleClient().stream_chat(_public_config(fallback=None), MSG))
-
-    assert "公开免费服务可用性有限" in str(exc.value)
-    assert "AI 配置页" in str(exc.value)
-    assert exc.value.code == ErrorCode.LLM_CALL_FAILED
-
-
-def test_hint_only_for_public_service(monkeypatch):
-    """TC-106：那句提示**只针对公开免 Key 服务**——普通供应商失败时消息保持原样。"""
-    _install(monkeypatch, _error(401))
-
-    with pytest.raises(LLMError) as exc:
-        list(OpenAICompatibleClient().stream_chat(CONFIG, MSG))
-
-    assert "公开免费服务" not in str(exc.value)
-
-
-def test_resolve_config_public_row_needs_no_key(db_session: Session, account_id: int):
-    """TC-106：公开免 Key 服务行**不需要账号自备 Key**（用占位值），且解析出平台共享兜底配置。"""
-    # 平台行：免费档的兜底来源（按注册表顺序取第一个有 Key 的家）
-    _row(db_session, 0, provider="zhipu", model="glm-4.7-flash", api_key=encrypt_text("sk-platform"))
-    # 账号行：选用公开免 Key 服务（use_shared=1、无 api_key）
-    _row(db_session, account_id, provider="pollinations", model="openai-fast", api_key=None, use_shared=1)
-
-    config = resolve_config(db_session, account_id)
-
-    assert config.provider == "pollinations"
-    assert config.api_key  # 非空（占位值，SDK 必填）
-    assert config.model == "openai-fast"
-    assert config.fallback is not None
-    assert config.fallback.provider == "zhipu"
-
-
-def test_resolve_config_shared_row_reads_platform_key(db_session: Session, account_id: int):
-    """TC-106：平台共享档从 `user_id=0` 平台行取 Key（账号行自己没有 Key 也能用）。"""
-    _row(db_session, 0, provider="zhipu", model="glm-4.7-flash", api_key=encrypt_text("sk-platform"))
-    _row(db_session, account_id, provider="zhipu", model="glm-4-flash", api_key=None, use_shared=1)
-
-    config = resolve_config(db_session, account_id)
-
-    assert config.provider == "zhipu"
-    assert config.api_key == "sk-platform"  # 取自平台行
-    assert config.model == "glm-4-flash"  # 模型仍用账号本行所选
-    assert config.fallback is None  # 平台共享档自身不是公开服务，无兜底
-
-
-def test_resolve_config_shared_row_without_platform_key(db_session: Session, account_id: int):
-    """TC-106：平台行被撤下（该家免费模型已下线）→ **10012 且提示去 AI 配置页重选**，不回退 .env。"""
-    _row(db_session, account_id, provider="zhipu", model="glm-4-flash", api_key=None, use_shared=1)
-
-    with pytest.raises(LLMError) as exc:
-        resolve_config(db_session, account_id)
-
-    assert exc.value.code == ErrorCode.LLM_KEY_MISSING
-    assert "免费模型已下线" in str(exc.value)

@@ -35,6 +35,10 @@ const models = ref([])
 const modelsLoading = ref(false)
 const modelsError = ref('')
 
+/** 内置模型表的来源标记（接口文档 v1.24 §3.3）：`preview` = 未配 Key 时的预览清单，
+ *  `fallback` = 配了 Key 但拉取失败的回退；空串表示当前列表是远程实时结果。 */
+const builtinSource = ref('')
+
 /** 当前选中的注册表项。 */
 const meta = computed(() => props.providers.find((p) => p.provider === form.provider))
 /** 该家是否需要 Key——取接口下发的 `needs_key`（注册表静态属性），不再按 provider 硬编码。 */
@@ -44,7 +48,7 @@ const needsKey = computed(() => meta.value?.needs_key !== false)
 const modelOptions = computed(() => {
   const options = models.value.map((m) => ({
     value: m.id,
-    label: m.is_free ? `${m.display_name}（免费）` : m.display_name
+    label: m.display_name
   }))
   const current = form.model
   if (current && !options.some((o) => o.value === current)) {
@@ -85,17 +89,20 @@ async function loadModels(refresh = false) {
   // 临时探测参数（接口 v1.13）：只在**尚未保存**该供应商配置时携带——已存配置传了会绕过 24h 缓存
   const tempKey = props.item?.key_set ? '' : form.api_key
   const tempBase = form.base_url && form.base_url !== props.item?.base_url ? form.base_url : ''
-  if (needsKey.value && !tempKey && !props.item?.key_set) {
-    modelsError.value = '填写 API Key 后可拉取模型列表，也可直接输入模型 ID'
-    return
-  }
+  // 未配 Key 也是合法路径（接口 v1.24）：后端回内置模型表供预览，故不再前置拦截。
+  // 注意放宽的只是「看列表」——保存配置、连通性测试、激活仍强制填 Key。
   modelsLoading.value = true
   modelsError.value = ''
   try {
     const data = await listModelsApi(form.provider, { refresh, apiKey: tempKey, baseUrl: tempBase }, { silent: true })
     models.value = data.models || []
+    // 内置表的两种来源要分文案（接口 v1.24 §3.3）：手里有 Key 说明是拉取失败的回退，
+    // 没有 Key 则是主动预览。
+    const hasKey = Boolean(props.item?.key_set || tempKey)
+    builtinSource.value = data.source === 'builtin' ? (hasKey ? 'fallback' : 'preview') : ''
   } catch (err) {
     modelsError.value = err.message || '模型列表拉取失败'
+    builtinSource.value = ''
   } finally {
     modelsLoading.value = false
   }
@@ -197,6 +204,18 @@ async function onSave() {
       </el-form-item>
 
       <el-alert v-if="modelsError" class="pf__hint" :title="modelsError" type="info" :closable="false" />
+      <!-- 内置模型表的两种来源分文案（接口文档 v1.24 §3.3）：用户据此知道该怎么拿到完整列表 -->
+      <el-alert
+        v-else-if="builtinSource"
+        class="pf__hint"
+        :title="
+          builtinSource === 'preview'
+            ? '内置清单（填写 Key 后拉取完整列表）'
+            : '内置列表（上次拉取失败）'
+        "
+        type="info"
+        :closable="false"
+      />
       <el-alert
         v-if="testResult"
         class="pf__hint"

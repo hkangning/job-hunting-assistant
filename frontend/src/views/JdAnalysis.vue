@@ -35,7 +35,6 @@ const startMessage = ref('')
 const currentSection = ref('')
 const errorMsg = ref('')
 const slowHint = ref(false) // 首字迟迟不来时的安抚提示（IS-31：实测 2.4~8s）
-const degradedFrom = ref('') // 公开免 Key 服务失败、后端自动降级时的标记（done.extra.degraded_from）
 
 const reports = ref([])
 const total = ref(0)
@@ -77,7 +76,6 @@ async function openDetail(id) {
   startMessage.value = ''
   currentSection.value = ''
   errorMsg.value = ''
-  degradedFrom.value = ''
 }
 
 function backToInput() {
@@ -91,7 +89,6 @@ function start() {
     return
   }
   clearSlowHint()
-  degradedFrom.value = ''
   streaming.value = true
   detail.value = null
   reportText.value = ''
@@ -121,8 +118,6 @@ function start() {
         streaming.value = false
         startMessage.value = ''
         currentSection.value = ''
-        // 公开免 Key 服务失败时后端自动改用平台共享 Key 完成本次调用，结果里带降级标记
-        degradedFrom.value = d.extra?.degraded_from || ''
         loadReports() // 已落库，刷新列表
       },
       onError: (e) => {
@@ -252,13 +247,6 @@ onUnmounted(() => {
           <span v-if="slowHint" class="jd__progress-hint">正在分析，请耐心等待…</span>
           <span v-if="sectionLabel" class="jd__progress-section">正在生成：{{ sectionLabel }}</span>
         </div>
-        <el-alert
-          v-if="degradedFrom"
-          class="jd__degraded"
-          type="warning"
-          :closable="false"
-          title="已临时切换到平台共享模型（公开免费服务暂不可用）"
-        />
         <el-alert v-if="errorMsg" :title="errorMsg" type="error" :closable="false" />
         <div v-if="reportText || streaming" class="jd__report-body">
           <StreamText :text="reportText" :streaming="streaming" />
@@ -417,9 +405,6 @@ onUnmounted(() => {
   margin-bottom: 10px;
   font-size: var(--fs-body);
   color: var(--c-text-2);
-}
-.jd__degraded {
-  margin-bottom: 10px;
 }
 .jd__progress-hint {
   color: var(--c-text-3);
