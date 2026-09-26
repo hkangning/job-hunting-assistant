@@ -1,6 +1,9 @@
 """建表冒烟（TC-51）：17 表存在、字段/索引/约束与设计文档一致、默认值正确、注册预置数据、种子题库就位。
 
-期望值来源：《数据库设计文档》v1.5 §3~§4，固化在 tests/expected_schema.py。
+**数据库 2026-09-26 由 SQLite 换为 MySQL 8.0**（数据库设计 v1.9）：表数与结构断言不变，
+原 SQLite 专有的 WAL / 外键 PRAGMA 断言改为 MySQL 口径（InnoDB 引擎 + utf8mb4 字符集）。
+
+期望值来源：《数据库设计文档》v1.9 §3~§4，固化在 tests/expected_schema.py。
 设计依据：docs/superpowers/specs/2026-09-24-步骤2建表冒烟测试-design.md
 
 约定：写数据的用例一律 flush + rollback，**不 commit**——保证用例之间互不残留，
@@ -40,7 +43,9 @@ from tests.expected_schema import (
     ENUM_MEMBERS,
     SEED_DIRECTIONS,
     SEED_MIN_PER_DIRECTION,
+    SEED_MIN_PER_STACK,
     SEED_MIN_TOTAL,
+    SEED_STACKS,
     SYSTEM_CONFIG,
     TABLES,
 )
@@ -92,13 +97,19 @@ def test_table_columns_match_doc(client: TestClient):
 
 
 def test_table_indexes_match_doc(client: TestClient):
-    """用例 3：核对显式索引名与列；SQLite 自动索引由用例 4/11 的约束断言覆盖。"""
+    """用例 3：核对**显式索引**名与列；由约束自动产生的索引不在此列（其约束由用例 4/11 断言）。
+
+    过滤规则随 2026-09-26 换 MySQL 调整：原为排除 SQLite 的 `sqlite_autoindex_*`，现改为
+    **只保留 `idx_` 前缀**——MySQL 下唯一约束与外键会自动产生索引（名分别为约束名与列名，
+    实测 7 张表共 8 个），它们在 SQLite 下不出现在 `get_indexes` 里，属**实现细节**而非设计要求；
+    设计要求一律以 `idx_` 命名，故以该前缀界定比对范围。
+    """
     insp = inspect(engine)
     for table, spec in TABLES.items():
         actual = {
-            idx["name"]: idx["column_names"]
+            idx["name"]: list(idx["column_names"])
             for idx in insp.get_indexes(table)
-            if not idx["name"].startswith("sqlite_autoindex")
+            if idx["name"].startswith("idx_")
         }
         assert actual == spec["indexes"], (
             f"{table} 索引不符：期望 {spec['indexes']}，实际 {actual}"
@@ -132,11 +143,21 @@ def test_foreign_keys_match_doc(client: TestClient):
         assert actual == expected, f"{table} 外键不符：期望 {expected}，实际 {actual}"
 
 
-def test_sqlite_pragmas(client: TestClient):
-    """用例 6：设计文档 §1 要求——WAL 模式与外键开关均开启。"""
+def test_mysql_engine_and_charset(client: TestClient):
+    """用例 6：数据库设计要求——InnoDB 引擎 + utf8mb4 字符集（数据库设计 §1）。
+
+    原为 SQLite 口径的「WAL 模式 + `foreign_keys` PRAGMA」，随 2026-09-26 换 MySQL 撤除：
+    WAL 是 SQLite 专有概念，MySQL 下不存在；外键约束由 InnoDB 强制，其真生效由用例 7 覆盖。
+    """
     with engine.connect() as conn:
-        assert conn.execute(text("PRAGMA journal_mode")).scalar() == "wal"
-        assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1
+        engine_name, collation = conn.execute(
+            text(
+                "SELECT ENGINE, TABLE_COLLATION FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'question'"
+            )
+        ).one()
+        assert engine_name == "InnoDB", f"存储引擎应为 InnoDB，实际 {engine_name}"
+        assert collation.startswith("utf8mb4"), f"字符集应为 utf8mb4，实际 {collation}"
 
 
 def test_foreign_key_enforced(client: TestClient):
@@ -343,10 +364,20 @@ def test_unique_constraints_enforced(client: TestClient, account, make_account):
 
 
 def test_seed_questions_count(client: TestClient):
-    """用例 12：种子题库总量 ≥120，Java/MySQL/网络/OS 四方向各 ≥30（题库为公共表，全账号共享）。"""
+    """用例 12：种子题库总量 ≥585，5 个技术栈与 18 个领域均有覆盖（题库为公共表，全账号共享）。
+
+    题库于 2026-09-26 升级（128 → 585 题）：两层分类 = stack（决定服务哪些岗位）
+    × direction（知识领域）；断言的每个维度都取下限而非精确值，题库继续扩充时无需改用例。
+    """
     with SessionLocal() as db:
         total = db.scalar(select(func.count()).select_from(Question))
         assert total >= SEED_MIN_TOTAL, f"种子题总数 {total} < {SEED_MIN_TOTAL}"
+
+        for stack in SEED_STACKS:
+            count = db.scalar(
+                select(func.count()).select_from(Question).where(Question.stack == stack)
+            )
+            assert count >= SEED_MIN_PER_STACK, f"{stack} 技术栈 {count} 题 < {SEED_MIN_PER_STACK}"
 
         for direction in SEED_DIRECTIONS:
             count = db.scalar(
@@ -355,8 +386,35 @@ def test_seed_questions_count(client: TestClient):
                 .where(Question.direction == direction)
             )
             assert count >= SEED_MIN_PER_DIRECTION, (
-                f"{direction} 方向 {count} 题 < {SEED_MIN_PER_DIRECTION}"
+                f"{direction} 领域 {count} 题 < {SEED_MIN_PER_DIRECTION}"
             )
+
+
+def test_seed_scenario_questions_have_rubric(client: TestClient):
+    """用例 12b：场景题的 `rubric` 评分标尺必须齐备，且非场景题不得带 rubric（题库升级新增）。
+
+    场景题按四维度（解题框架 / 量化估算 / 取舍权衡 / 兜底降级）评分，rubric 是该分制的唯一依据；
+    缺失会让点评退化成普通主观题口径，故单列一条断言。
+    """
+    with SessionLocal() as db:
+        scenario_missing = db.scalar(
+            select(func.count())
+            .select_from(Question)
+            .where(Question.qtype == "SCENARIO", Question.rubric.is_(None))
+        )
+        assert scenario_missing == 0, f"有 {scenario_missing} 道场景题缺 rubric"
+
+        scenario_total = db.scalar(
+            select(func.count()).select_from(Question).where(Question.qtype == "SCENARIO")
+        )
+        assert scenario_total > 0, "题库中没有任何场景题"
+
+        non_scenario_with_rubric = db.scalar(
+            select(func.count())
+            .select_from(Question)
+            .where(Question.qtype != "SCENARIO", Question.rubric.is_not(None))
+        )
+        assert non_scenario_with_rubric == 0, f"有 {non_scenario_with_rubric} 道非场景题带了 rubric"
 
 
 def test_seed_questions_fields(client: TestClient):
@@ -397,7 +455,10 @@ def test_init_db_idempotent(client: TestClient):
 
 
 def test_enum_members_match_doc():
-    """用例 15：12 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。"""
+    """用例 15：13 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。
+
+    枚举类由 `ENUM_MEMBERS` 的键经 `getattr` 取，新增枚举只改期望镜像即可，本用例无需改动。
+    """
     for enum_name, expected in ENUM_MEMBERS.items():
         enum_cls = getattr(enums, enum_name)
         actual = {member.value for member in enum_cls}

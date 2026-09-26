@@ -474,5 +474,7 @@ def test_settings_no_longer_exposes_llm_fields(client: TestClient):
     """
     data = client.get(f"{API}/settings").json()["data"]
 
+    # 字段闭包不含任何 LLM 键；`crawl_url` 亦已移除（SRS v1.11 / 数据库设计 v1.5：抓取目标
+    # 改由信息源清单承载，后端三处代码于 2026-09-26 删除）
     assert set(data) == {"tts_enabled", "voice_enabled", "default_question_count", "asr_provider",
-                         "tts_voice", "asr_key_set", "guide_done", "crawl_enabled", "crawl_url"}
+                         "tts_voice", "asr_key_set", "guide_done", "crawl_enabled"}

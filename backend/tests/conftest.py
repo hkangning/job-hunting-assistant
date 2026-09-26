@@ -1,8 +1,12 @@
-"""pytest 公共 fixture：独立测试库隔离 + 鉴权账号（测试计划 v1.6 §1.1）。
+"""pytest 公共 fixture：独立测试库隔离 + 鉴权账号（测试计划 §1.1）。
 
-隔离方式为**模块级环境变量**：在导入任何 `app.*` 之前，把 `DATABASE_URL` 指向临时目录下的独立
-SQLite 文件——`app/config.py` 的 `Settings` 在模块导入时即读取环境变量，晚一行就固定成开发库。
-因此 `app.database` 的 `engine` / `SessionLocal` 整场指向测试库，用例可直接引用，无需替换全局对象。
+隔离方式为**模块级环境变量**：在导入任何 `app.*` 之前，把 `DATABASE_URL` 指向**独立的测试库**
+（MySQL `job_hunter_test`，与开发库 `job_hunter` 物理隔离）——`app/config.py` 的 `Settings`
+在模块导入时即读取环境变量，晚一行就固定成开发库。因此 `app.database` 的 `engine` /
+`SessionLocal` 整场指向测试库，用例可直接引用，无需替换全局对象。
+
+连接串**从 `backend/.env` 的 `DATABASE_URL` 派生**（只换库名、凭据沿用）：密码是环境相关的、
+不入库——写死在这里既会泄露，也会与 `.env` 脱节（换密码要改两处）。
 
 步骤 5（账号与鉴权）后**全部业务接口需 Token**，故取账号的入口分四类：
 
@@ -13,18 +17,37 @@ SQLite 文件——`app/config.py` 的 `Settings` 在模块导入时即读取环
 """
 
 import os
-import shutil
-import tempfile
-import time
+import re
 from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-# —— 测试库隔离：临时目录下的独立 SQLite 文件，不碰开发库（backend/app.db）——
-_TEST_TMP_DIR = Path(tempfile.mkdtemp(prefix="jobpilot-test-"))
-os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_TMP_DIR.as_posix()}/test.db"
+_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+
+# 逐例清空时**保留**的表：题库种子内容固定（585 题），清掉再重导纯属浪费
+_PRESERVED_TABLES = frozenset({"question"})
+
+
+def _derive_test_database_url() -> str:
+    """从 backend/.env 的 DATABASE_URL 派生测试库连接串：只换库名，凭据沿用。"""
+    content = _ENV_FILE.read_text(encoding="utf-8") if _ENV_FILE.exists() else ""
+    match = re.search(r"^DATABASE_URL=(.+)$", content, re.MULTILINE)
+    if match is None:
+        raise RuntimeError(
+            f"{_ENV_FILE} 中缺少 DATABASE_URL——测试跑在 MySQL 上，"
+            "请先按《数据库设计文档》§7 建库并在 .env 配好连接串"
+        )
+    url = make_url(match.group(1).strip())
+    if url.database != "job_hunter":
+        raise RuntimeError(f"开发库名应为 job_hunter，实际为 {url.database}——测试库由它派生")
+    return url.set(database="job_hunter_test").render_as_string(hide_password=False)
+
+
+os.environ["DATABASE_URL"] = _derive_test_database_url()
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -40,11 +63,31 @@ PASSWORD = "test123456"
 
 Account = dict[str, object]
 
+# 题库种子是否已导入（会话级）：见 client fixture 里的说明
+_seed_loaded = False
+
 
 def _reset_database() -> None:
-    """清空并重建全部表：保证用例之间互不干扰（否则前一个用例的数据会污染后一个的计数断言）。"""
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    """清空全部业务表的数据（保留表结构与题库种子），保证用例之间互不干扰。
+
+    换 MySQL 后不再逐例 `DROP` + `CREATE`：MySQL 的 DDL 是重量级操作（隐式提交 + 重建表空间），
+    17 张表 × 150+ 用例的代价远超收益。改为 TRUNCATE 清数据——隔离效果相同，且会重置
+    AUTO_INCREMENT（id 从 1 开始，对计数断言友好）。
+
+    `question` 表**不清**（题库种子内容固定）；`config` 表中 `user_id = 0` 的系统级行同样保留
+    （建表时插入的初始行，清掉会让后续用例缺系统配置），只清账号级行。
+    """
+    Base.metadata.create_all(bind=engine)  # 幂等：首次调用即建表，之后跳过
+    with engine.begin() as conn:
+        conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))  # TRUNCATE 不能用于被外键引用的表
+        for table in reversed(Base.metadata.sorted_tables):
+            if table.name in _PRESERVED_TABLES:
+                continue
+            if table.name == "config":
+                conn.execute(text("DELETE FROM config WHERE user_id != 0"))
+                continue
+            conn.execute(text(f"TRUNCATE TABLE `{table.name}`"))
+        conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
 
 
 def _register(client: TestClient, username: str, password: str = PASSWORD) -> Account:
@@ -80,14 +123,23 @@ def account_id(db_session: Session) -> int:
 
 
 @pytest.fixture()
-def client() -> Generator[TestClient, None, None]:
+def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
     """API 集成测试客户端：清库 → 走真实启动路径（lifespan 建表 + 导种子）→ 注册默认账号。
 
     Token 直接写进客户端默认请求头，因此**存量业务用例无需逐个传 `headers`**；
     账号信息用 `account` fixture 取得。要验证未登录行为请改用 `anon_client`。
     """
+    global _seed_loaded
+
     _reset_database()
+    if _seed_loaded:
+        # 题库已在会话首个用例导入、并被 _reset_database 保留在库里，跳过其后的重复导入：
+        # 585 题的 upsert 每例跑一遍是整套测试最大的一笔开销（换 MySQL 后还要叠加网络往返）。
+        # 断言题库内容的用例（如 test_seed_questions_*）读的是库中已有的种子，不受影响。
+        monkeypatch.setattr("app.database._load_seed_questions", lambda db: 0)
+
     with TestClient(app, raise_server_exceptions=False) as c:
+        _seed_loaded = True
         default = _register(c, "tester")
         c.auth_account = default  # 具名属性，供 account fixture 取用（与请求头同源）
         c.headers["Authorization"] = default["headers"]["Authorization"]
@@ -118,16 +170,9 @@ def make_account(client: TestClient) -> Callable[..., Account]:
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:
-    """会话收尾：先释放连接再删临时目录。
+    """会话收尾：释放连接池。
 
-    Windows 下句柄释放有延迟（杀软扫描、文件系统回收），一次 rmtree 可能只删掉文件而留下
-    空目录，故重试三次；仍失败则留给系统临时目录机制清理，不阻断测试结果。
+    换 MySQL 后不再有临时目录要清理；但仍要 dispose——否则连接悬着直到服务端 `wait_timeout`，
+    反复跑测试会攒下一批只读空闲连接。
     """
     engine.dispose()
-    for _ in range(3):
-        try:
-            shutil.rmtree(_TEST_TMP_DIR)
-            return
-        except OSError:
-            time.sleep(0.2)
-    shutil.rmtree(_TEST_TMP_DIR, ignore_errors=True)

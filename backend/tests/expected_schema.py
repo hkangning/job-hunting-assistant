@@ -116,14 +116,19 @@ TABLES: dict[str, dict] = {
     "question": {
         "columns": [
             ("id", "INTEGER", False, True),
+            ("stack", "VARCHAR(20)", False, False),
             ("direction", "VARCHAR(20)", False, False),
             ("content", "TEXT", False, False),
             ("answer", "TEXT", False, False),
+            ("rubric", "TEXT", True, False),
             ("qtype", "VARCHAR(20)", False, False),
             ("source", "VARCHAR(20)", False, False),
             ("created_at", "DATETIME", False, False),
         ],
-        "indexes": {"idx_question_direction": ["direction"]},
+        "indexes": {
+            "idx_question_direction": ["direction"],
+            "idx_question_stack": ["stack"],
+        },
         "uniques": [],
         "foreign_keys": [],
     },
@@ -303,10 +308,20 @@ TABLES: dict[str, dict] = {
 ENUM_MEMBERS: dict[str, set[str]] = {
     "ApplicationStatus": {"APPLIED", "WRITTEN", "INTERVIEW", "OFFER", "CLOSED"},
     "CloseReason": {"FAILED", "DECLINED", "EXPIRED"},
-    "Direction": {"JAVA", "MYSQL", "NETWORK", "OS", "GENERAL"},
+    # 题库升级（2026-09-26）：Direction 5 → 19（18 个领域 + GENERAL，GENERAL 不参与题库分类）
+    "Direction": {
+        "JAVA", "JVM", "CONCURRENCY", "SPRING",
+        "MYSQL", "REDIS", "MQ",
+        "ALGO", "DESIGN", "NETWORK", "OS",
+        "PY_BASIC", "PY_ASYNC", "PY_WEB",
+        "LLM_BASIC", "PROMPT", "RAG", "AGENT",
+        "GENERAL",
+    },
+    # 技术栈（题目所属，决定一道题服务哪些岗位）
+    "Stack": {"JAVA_BACKEND", "PYTHON", "AI_AGENT", "BACKEND_COMMON", "COMMON"},
     "SessionStatus": {"ACTIVE", "FINISHED"},
     "ExperienceItemSource": {"LLM_EXTRACT", "MANUAL"},
-    "QuestionType": {"SUBJECTIVE", "CHOICE"},
+    "QuestionType": {"SUBJECTIVE", "CHOICE", "SCENARIO"},
     "QuestionSource": {"BUILTIN", "AI_GENERATED"},
     "WrongSourceType": {"PRACTICE", "INTERVIEW", "MANUAL"},
     "ReminderType": {"FOLLOW_UP", "WRONG_QUESTION", "INTERVIEW"},
@@ -316,15 +331,24 @@ ENUM_MEMBERS: dict[str, set[str]] = {
     "UserPlan": {"FREE", "PRO"},
 }
 
-# 《数据库设计文档》§4 种子题库要求 + 开发计划步骤 2 验收标准
-SEED_MIN_TOTAL = 120
-SEED_MIN_PER_DIRECTION = 30
-SEED_DIRECTIONS = ("JAVA", "MYSQL", "NETWORK", "OS")
+# 《数据库设计文档》§4 种子题库要求（2026-09-26 题库升级：128 → 585 题）
+# 两层分类 = 5 个技术栈 × 18 个领域，题型含 152 道场景题（全部带 rubric 评分标尺）
+SEED_MIN_TOTAL = 585
+SEED_MIN_PER_STACK = 60  # 实测最小为 AI_AGENT 70
+SEED_STACKS = ("JAVA_BACKEND", "PYTHON", "AI_AGENT", "BACKEND_COMMON", "COMMON")
+SEED_MIN_PER_DIRECTION = 10  # 实测最小为 15（AGENT / PROMPT / RAG）
+SEED_DIRECTIONS = (
+    "JAVA", "JVM", "CONCURRENCY", "SPRING",
+    "MYSQL", "REDIS", "MQ",
+    "ALGO", "DESIGN", "NETWORK", "OS",
+    "PY_BASIC", "PY_ASYNC", "PY_WEB",
+    "LLM_BASIC", "PROMPT", "RAG", "AGENT",
+)
 
 # app/database.py 的 SYSTEM_CONFIG（user_id=0，建表时插入）
+# crawl_url 已废弃（SRS v1.11 / 数据库设计 v1.5：抓取目标改由信息源清单承载），后端三处已删
 SYSTEM_CONFIG = {
     "crawl_enabled": "false",
-    "crawl_url": "",
 }
 
 # app/database.py 的 ACCOUNT_CONFIG（注册时按账号插入，键与接口文档 GET /settings 字段对应）
