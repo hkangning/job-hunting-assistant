@@ -7,6 +7,7 @@ import { Upload } from '@element-plus/icons-vue'
 import { changeStatus, deleteApplication, getTrend, listApplications } from '../api/applications'
 import { STATUS_LABELS } from '../constants/application'
 import { CITY_OPTIONS } from '../constants/regions'
+import { useOverviewStore } from '../stores/overview'
 import ApplicationStats from '../components/ApplicationStats.vue'
 import StatusKanban from '../components/StatusKanban.vue'
 import ApplicationFormDialog from '../components/ApplicationFormDialog.vue'
@@ -19,6 +20,8 @@ const MAX_PAGES = 10 // 一次拉全的封顶：50 × 10 = 500 条
 
 const route = useRoute()
 const router = useRouter()
+// 侧栏「今日待办」与底部状态条读的就是这份数据（系统设计 §4.4），投递变更后需同步
+const overviewStore = useOverviewStore()
 
 const loading = ref(false)
 const items = ref([])
@@ -72,6 +75,17 @@ async function load() {
   }
 }
 
+/**
+ * 投递数据变更后，同步刷新概览数据（侧栏「今日待办」+ 底部状态条）。
+ * 不刷新它们就会停在旧值——用户反馈「新增一条记录后侧栏没变、刷新整页才变」即此。
+ * silent：侧栏是辅助信息，刷新时不该闪 loading。
+ * **凡改变投递数据的写操作，成功后都要调它**——包括不经过 load() 的那两条
+ * （状态流转、标记结束，它们成功后只做本地乐观更新）。
+ */
+function syncOverview() {
+  overviewStore.fetch(true)
+}
+
 /** 筛选输入防抖 300ms（设计文档 §4.6） */
 function onFilterInput() {
   clearTimeout(filterTimer)
@@ -102,6 +116,7 @@ async function onDelete(item) {
   await deleteApplication(item.id)
   ElMessage.success('已删除')
   load()
+  syncOverview()
   return true
 }
 
@@ -140,6 +155,7 @@ async function onTransit({ item, status }) {
     const target = items.value.find((it) => it.id === item.id)
     if (target) target.status = status
     ElMessage.success(`已流转至「${STATUS_LABELS[status]}」`)
+    syncOverview()
   } catch {
     load()
   }
@@ -158,6 +174,7 @@ async function onCloseConfirmed(reason) {
       target.close_reason = reason
     }
     ElMessage.success('已标记为结束')
+    syncOverview()
   } catch {
     load()
   }
@@ -165,10 +182,12 @@ async function onCloseConfirmed(reason) {
 
 function onSaved() {
   load()
+  syncOverview()
 }
 
 function onImported() {
   load()
+  syncOverview()
 }
 
 async function loadTrend(days = trendDays.value) {
