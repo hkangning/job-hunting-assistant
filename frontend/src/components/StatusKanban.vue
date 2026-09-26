@@ -11,6 +11,7 @@ import {
   STATUS_COLORS,
   canTransit
 } from '../constants/application'
+import { shortDateTime } from '../utils/datetime'
 
 const props = defineProps({
   items: { type: Array, default: () => [] }
@@ -91,11 +92,6 @@ function daysSince(appliedAt) {
 }
 
 /** 下次笔试/面试时间：2026-09-26 14:00:00 → 09-26 14:00 */
-function shortTime(value) {
-  if (!value || value.length < 16) return value || ''
-  return `${value.slice(5, 10)} ${value.slice(11, 16)}`
-}
-
 /** 距今天 ≤3 天的排期：琥珀加粗提示（设计文档 §4.5.4：强调须稀缺，故不铺底色） */
 function isUrgent(value) {
   if (!value) return false
@@ -164,7 +160,7 @@ function isUrgent(value) {
                 :class="{ 'kanban-card__event--urgent': isUrgent(element.next_event_at) }"
                 :title="`下次${eventLabel(element.status)}：${element.next_event_at}`"
               >
-                {{ eventLabel(element.status) }} {{ shortTime(element.next_event_at) }}
+                {{ eventLabel(element.status) }} {{ shortDateTime(element.next_event_at) }}
               </span>
             </div>
           </div>
