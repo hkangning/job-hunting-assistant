@@ -78,17 +78,28 @@ function toggle() {
 
 // ---------- 只读探测：模型列表 ----------
 
-// force=true：跳过「Key 是否已存」的前置检查——保存成功后的自动拉取用它。
-// 那一刻 Key 刚落库、但 props 还没随页面重拉刷新，照常检查会被误拦。
+// force=true：保存成功后的自动拉取用——此刻配置刚落库、但 props 还没随页面重拉刷新，
+// 照常检查「Key 是否已存」会被误拦；同时也不该再带临时探测参数（配置已存）。
 async function loadModels(refresh = false, force = false) {
-  if (!force && needsKey.value && !props.item.key_set) {
-    modelsError.value = '该供应商的模型列表需凭 Key 查询——填写 Key 后会自动拉取，也可直接输入模型 ID'
+  // 临时探测参数（接口 v1.13）：只在**尚未保存**该供应商配置时携带。
+  // 已存配置不传参——传了会绕过 24h 缓存、每次都实时拉取。
+  const tempKey = !force && !props.item.key_set ? form.api_key : ''
+  const tempBase =
+    !force && form.base_url && form.base_url !== props.item.base_url ? form.base_url : ''
+
+  // 需要 Key 却既没存、也没填 → 后端必返 10012，不必发这一趟
+  if (!force && needsKey.value && !tempKey) {
+    modelsError.value = '填写 API Key 后可拉取模型列表，也可直接输入模型 ID'
     return
   }
   modelsLoading.value = true
   modelsError.value = ''
   try {
-    const data = await listModelsApi(props.item.provider, refresh, { silent: true })
+    const data = await listModelsApi(
+      props.item.provider,
+      { refresh, apiKey: tempKey, baseUrl: tempBase },
+      { silent: true }
+    )
     models.value = data.models || []
     modelsSource.value = data.source
     modelsLoaded.value = true
@@ -97,6 +108,11 @@ async function loadModels(refresh = false, force = false) {
   } finally {
     modelsLoading.value = false
   }
+}
+
+// 粘贴 Key 后失焦即拉列表——「填了就能拉」的入口（接口 v1.13 的临时探测）
+function onKeyBlur() {
+  if (form.api_key && !props.item.key_set && !modelsLoaded.value) loadModels()
 }
 
 // ---------- 只读探测：连通性测试 ----------
@@ -220,6 +236,7 @@ async function onDelete() {
           type="password"
           show-password
           :placeholder="item.key_set ? '已配置，留空则不修改' : '粘贴 API Key'"
+          @blur="onKeyBlur"
         />
       </div>
 
