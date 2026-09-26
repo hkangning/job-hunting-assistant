@@ -36,7 +36,7 @@ const configured = computed(() =>
 /** 当前生效项的文字描述，置顶展示。
  *
  * 「现在用的是什么」应该有唯一一处明确的答案——列表圆点不够显眼。
- * 顺带解决一个真实困惑：重复点同一个「设为当前」时界面毫无反应，
+ * 顺带解决一个真实困惑：重复点同一个**已激活的行**时界面毫无反应，
  * 有了这行就能看出「它本来就已经是当前项」。
  */
 const activeLabel = computed(() => {
@@ -63,6 +63,13 @@ async function onActivate(item) {
   await activateProviderApi(item.provider)
   ElMessage.success(`已切换到 ${item.name}`)
   await load()
+}
+
+/** 点击整行 = 设为当前（仅非激活行可点，激活行点击无意义）。
+ *  行内「修改 / 删除」按钮所在的容器已 stopPropagation，不会误触发本函数。 */
+function onRowClick(item) {
+  if (item.is_active) return
+  onActivate(item)
 }
 
 async function onRemove(item) {
@@ -100,26 +107,32 @@ onMounted(load)
   <div class="ai" v-loading="loading">
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="ai__error" />
 
-    <div class="ai__current">
-      当前使用中：<strong>{{ activeLabel }}</strong>
-    </div>
-
-    <!-- 我的配置 -->
+    <!-- 我的配置：当前使用中作为卡片首条，与列表同属一个容器 -->
     <section class="ai__card">
       <div class="ai__head">
         <h3 class="ai__card-title">我的配置</h3>
         <el-button type="primary" size="small" @click="openAdd">+ 添加自定义模型</el-button>
       </div>
 
+      <div class="ai__current">
+        <span class="ai__dot" :class="{ 'ai__dot--on': Boolean(active) }" />
+        当前使用中：<strong>{{ activeLabel }}</strong>
+      </div>
+
       <el-empty v-if="!configured.length" description="还没有自己的配置" :image-size="60" />
       <ul v-else class="ai__list">
-        <li v-for="item in configured" :key="item.provider" class="ai__row">
+        <li
+          v-for="item in configured"
+          :key="item.provider"
+          class="ai__row"
+          :class="{ 'ai__row--clickable': !item.is_active }"
+          @click="onRowClick(item)"
+        >
           <span class="ai__dot" :class="{ 'ai__dot--on': item.is_active }" />
           <span class="ai__name">{{ item.name }}</span>
           <span class="ai__model">{{ item.model || '默认模型' }}</span>
-          <span class="ai__group">{{ item.group }}</span>
-          <div class="ai__ops">
-            <el-button v-if="!item.is_active" size="small" @click="onActivate(item)">设为当前</el-button>
+          <!-- 行内操作区 stopPropagation：否则点「修改 / 删除」会连带触发整行的「设为当前」 -->
+          <div class="ai__ops" @click.stop>
             <el-button size="small" @click="openEdit(item)">修改</el-button>
             <el-button size="small" type="danger" plain @click="onRemove(item)">删除</el-button>
           </div>
@@ -136,14 +149,19 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 820px;
+  max-width: 1100px;
 }
 .ai__error {
   margin-bottom: 4px;
 }
+/* 卡片内的首条：与列表同属一个容器，「现在用哪个」不再浮在卡片外 */
 .ai__current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
   padding: 9px 14px;
-  border-radius: var(--r-card);
+  border-radius: var(--r-control);
   background: var(--c-bg);
   font-size: var(--fs-body);
   color: var(--c-text-2);
@@ -187,6 +205,13 @@ onMounted(load)
 .ai__row:last-child {
   border-bottom: none;
 }
+/* 非激活行可整行点击设为当前；激活行无此交互，故不加指针与悬停反馈 */
+.ai__row--clickable {
+  cursor: pointer;
+}
+.ai__row--clickable:hover {
+  background: var(--c-bg);
+}
 .ai__dot {
   width: 8px;
   height: 8px;
@@ -209,10 +234,6 @@ onMounted(load)
   color: var(--c-text-2);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.ai__group {
-  font-size: var(--fs-sm);
-  color: var(--c-text-3);
 }
 .ai__ops {
   display: flex;

@@ -68,11 +68,15 @@ watch(
     form.model = item?.model || ''
     models.value = []
     modelsError.value = ''
+    builtinSource.value = ''
     testResult.value = null
+    // 打开即预拉：不填 Key 也能看到内置模型表（接口 v1.24 已放开预览），
+    // 免得用户对着空下拉无从下手
+    if (form.provider) loadModels()
   }
 )
 
-/** 新增态切换供应商时清掉上一家的端点与模型（编辑态锁定，不触发）。 */
+/** 新增态切换供应商：清掉上一家的端点与模型（编辑态锁定，不触发），随即预拉该家清单。 */
 watch(
   () => form.provider,
   () => {
@@ -81,6 +85,9 @@ watch(
     form.model = ''
     models.value = []
     modelsError.value = ''
+    builtinSource.value = ''
+    // 选中即拉：未填 Key 时后端回内置模型表（接口 v1.24），用户据此先看看有哪些可选
+    if (form.provider) loadModels()
   }
 )
 
@@ -113,15 +120,21 @@ function onKeyBlur() {
   if (form.api_key && !props.item?.key_set && !models.value.length) loadModels()
 }
 
-async function onTest() {
-  testing.value = true
-  testResult.value = null
+/** 组装连通性测试的载荷：一律用**表单当前值**（未保存的 Key / 端点 / 模型），
+ *  后端按临时参数测、不读已存配置——这样「改了 Key 想换一家」也能先被验证。 */
+function buildTestPayload() {
   const payload = { provider: form.provider }
   if (form.api_key) payload.api_key = form.api_key
   if (form.base_url) payload.base_url = form.base_url
   if (form.model) payload.model = form.model
+  return payload
+}
+
+async function onTest() {
+  testing.value = true
+  testResult.value = null
   try {
-    const data = await testProviderApi(payload, { silent: true })
+    const data = await testProviderApi(buildTestPayload(), { silent: true })
     testResult.value = { ok: true, text: `连通正常（模型：${data.model}）` }
   } catch (err) {
     testResult.value = { ok: false, text: err.message || '连通性测试失败' }
@@ -148,12 +161,26 @@ async function onSave() {
     ElMessage.info('没有需要保存的变更')
     return
   }
+  // 先测连通再落库：连不通就不该存下来。
+  // 测试与保存是两个独立接口、非原子——极端情况下会出现「测试通过但保存失败」，
+  // 此时如实报错即可，不额外补偿。
   saving.value = true
+  testResult.value = null
   try {
-    await saveProviderApi(form.provider, payload)
-    ElMessage.success('已保存')
-    visible.value = false
-    emit('saved')
+    try {
+      await testProviderApi(buildTestPayload(), { silent: true })
+    } catch (err) {
+      testResult.value = { ok: false, text: `连接失败，未保存：${err.message || '连通性测试未通过'}` }
+      return
+    }
+    try {
+      await saveProviderApi(form.provider, payload)
+      ElMessage.success('已保存')
+      visible.value = false
+      emit('saved')
+    } catch (err) {
+      testResult.value = { ok: false, text: err.message || '保存失败' }
+    }
   } finally {
     saving.value = false
   }
@@ -227,7 +254,9 @@ async function onSave() {
 
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="onSave">保存</el-button>
+      <el-button type="primary" :loading="saving" @click="onSave">
+        {{ saving ? '验证并保存中…' : '保存' }}
+      </el-button>
     </template>
   </el-dialog>
 </template>
