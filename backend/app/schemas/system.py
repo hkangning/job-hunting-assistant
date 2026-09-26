@@ -1,8 +1,9 @@
-"""画像传输模型（接口文档 3.12；表结构见数据库设计 3.15）。"""
+"""画像与设置传输模型（接口文档 3.12；表结构见数据库设计 3.14 / 3.15）。"""
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, StrictBool, field_serializer
 
 from app.utils.datetime_utils import format_datetime
 
@@ -45,3 +46,32 @@ class ProfileUpdateRequest(BaseModel):
     skills: str | None = Field(default=None, description="技能栈标签，逗号分隔")
     weaknesses: str | None = Field(default=None, description="弱项标签，逗号分隔")
     note: str | None = Field(default=None, description="备注，不限长度")
+
+
+class SettingsDTO(BaseModel):
+    """设置响应（GET /settings）：账号级偏好 + 系统级抓取配置；**LLM 相关字段已全部迁至 `/llm-providers`**。"""
+
+    tts_enabled: bool = Field(description="TTS 播报开关（账号级，默认 false）")
+    voice_enabled: bool = Field(description="语音作答开关（账号级，默认 false）")
+    default_question_count: int = Field(description="模拟面试默认题量（账号级，默认 8）")
+    asr_provider: str = Field(description="ASR 供应商（账号级）：funasr = 本地模型（默认）/ xunfei = 云端备选")
+    tts_voice: str = Field(description="TTS 音色名（账号级，默认 zh-CN-XiaoxiaoNeural 晓晓）")
+    asr_key_set: bool = Field(description="是否已配置讯飞语音 Key（**不回显明文**；funasr 下恒为 false）")
+    guide_done: bool = Field(description="新手指引是否已读（账号级，默认 false）")
+    crawl_enabled: bool = Field(description="就业网抓取开关（**系统级**，任一账号修改全局生效）")
+    crawl_url: str = Field(description="就业网抓取目标地址（系统级）")
+
+
+class SettingsUpdateRequest(BaseModel):
+    """设置更新请求体（PUT /settings）：只提交需要变更的字段，未提交的保持原值。"""
+
+    tts_enabled: StrictBool | None = Field(default=None, description="TTS 播报开关（非布尔值 → 10001）")
+    voice_enabled: StrictBool | None = Field(default=None, description="语音作答开关（非布尔值 → 10001）")
+    default_question_count: int | None = Field(default=None, ge=1, le=50, description="模拟面试默认题量，1~50")
+    asr_provider: Literal["funasr", "xunfei"] | None = Field(default=None, description="ASR 供应商，仅 funasr / xunfei")
+    tts_voice: str | None = Field(default=None, description="TTS 音色名（可选值见 GET /tts/voices）")
+    guide_done: StrictBool | None = Field(default=None, description="新手指引已读标记（非布尔值 → 10001）")
+    crawl_enabled: StrictBool | None = Field(default=None, description="就业网抓取开关（系统级，非布尔值 → 10001）")
+    crawl_url: str | None = Field(default=None, description="就业网抓取目标地址（系统级）")
+    asr_app_id: str | None = Field(default=None, description="讯飞语音 AppID；传值则加密覆盖，传空串不修改")
+    asr_api_key: str | None = Field(default=None, description="讯飞语音 Key；传值则加密覆盖，传空串不修改")
