@@ -14,6 +14,7 @@ from app.routers import (
     applications,
     auth,
     health,
+    jd_analysis,
     llm_providers,
     overview,
     profile,
@@ -58,6 +59,7 @@ app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(profile.router, prefix=settings.api_prefix)
 app.include_router(applications.router, prefix=settings.api_prefix)
+app.include_router(jd_analysis.router, prefix=settings.api_prefix)
 app.include_router(overview.router, prefix=settings.api_prefix)
 app.include_router(llm_providers.router, prefix=settings.api_prefix)
 app.include_router(settings_router.router, prefix=settings.api_prefix)
