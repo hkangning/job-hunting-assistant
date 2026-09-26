@@ -63,7 +63,9 @@ export async function overview(req) {
     d.setDate(d.getDate() + offset)
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
   }
-  const at = (offset, hour) => `${day(offset)} ${p(hour)}:00:00`
+  // 时间用 **ISO 格式**（`T` 分隔），与真后端一致——曾用空格分隔，掩盖了
+  // 「换 MySQL 后 Pydantic 序列化变 ISO」这一问题，直到真联调才暴露
+  const at = (offset, hour) => `${day(offset)}T${p(hour)}:00:00`
 
   return [ok({
     application_stats: { APPLIED: 5, WRITTEN: 2, INTERVIEW: 3, OFFER: 1, CLOSED: 4 },

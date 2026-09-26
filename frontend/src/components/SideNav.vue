@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useOverviewStore } from '../stores/overview'
+import { shortDateTime } from '../utils/datetime'
 
 defineProps({
   collapse: { type: Boolean, default: false }
@@ -67,7 +68,7 @@ onMounted(() => {
     <div v-if="!collapse && todos.length" class="side-nav__todo">
       <div class="side-nav__todo-title">今日待办</div>
       <div v-for="(t, i) in todos" :key="i" class="side-nav__todo-item">
-        <span class="side-nav__todo-time">{{ t.event_at }}</span>
+        <span class="side-nav__todo-time">{{ shortDateTime(t.event_at) }}</span>
         <span class="side-nav__todo-text">{{ t.company }}</span>
       </div>
     </div>

@@ -49,6 +49,13 @@ const routes = [
     meta: { title: '今日概览', group: '求职流程', color: 'var(--brand)' }
   },
   {
+    // 位置依系统设计 §4.4 的菜单分组：求职流程组、概览之后、投递之前（找机会 → 记录进度）
+    path: '/campus',
+    name: 'Campus',
+    component: () => import('../views/Campus.vue'),
+    meta: { title: '校招情报', group: '求职流程', color: 'var(--m-campus)' }
+  },
+  {
     path: '/applications',
     name: 'Applications',
     component: () => import('../views/Applications.vue'),
