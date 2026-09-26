@@ -109,6 +109,13 @@ const routes = [
     name: 'Settings',
     component: () => import('../views/Settings.vue'),
     meta: { title: '系统设置', hidden: true }
+  },
+  {
+    // 流式协议调试页：不进侧边导航，只能手输 URL 访问（步骤 11）
+    path: '/dev/stream',
+    name: 'DevStream',
+    component: () => import('../views/DevStream.vue'),
+    meta: { title: '流式调试', hidden: true }
   }
 ]
 
