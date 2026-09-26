@@ -1,8 +1,16 @@
 /** AI 供应商配置接口封装（接口文档 §3.3）。 */
 import request from './request'
 
-// 列表：注册表全部 12 项 + 当前激活标识
+// 列表：注册表全部 13 项 + 当前激活标识
 export const listProvidersApi = (config) => request.get('/llm-providers', config)
+
+// 免费模型清单（接口文档 §3.3）：两类来源并列——公开免 Key 服务（不受平台配置影响）
+// + 平台共享 Key（只含已配的家）。选中即生效、无需账号自备 Key。
+export const listFreeModelsApi = (config) => request.get('/llm-providers/free-models', config)
+
+// 选用免费模型：保存与生效一步完成（服务端置 use_shared=1 + 激活位），不清账号已存的 Key
+export const selectFreeModelApi = (payload, config) =>
+  request.put('/llm-providers/free-model', payload, config)
 
 // 保存（部分更新：只传需要变更的字段）
 export const saveProviderApi = (provider, payload) =>

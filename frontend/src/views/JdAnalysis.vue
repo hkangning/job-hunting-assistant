@@ -35,6 +35,7 @@ const startMessage = ref('')
 const currentSection = ref('')
 const errorMsg = ref('')
 const slowHint = ref(false) // 首字迟迟不来时的安抚提示（IS-31：实测 2.4~8s）
+const degradedFrom = ref('') // 公开免 Key 服务失败、后端自动降级时的标记（done.extra.degraded_from）
 
 const reports = ref([])
 const total = ref(0)
@@ -76,6 +77,7 @@ async function openDetail(id) {
   startMessage.value = ''
   currentSection.value = ''
   errorMsg.value = ''
+  degradedFrom.value = ''
 }
 
 function backToInput() {
@@ -89,6 +91,7 @@ function start() {
     return
   }
   clearSlowHint()
+  degradedFrom.value = ''
   streaming.value = true
   detail.value = null
   reportText.value = ''
@@ -113,11 +116,13 @@ function start() {
         reportText.value += d.text
         if (d.section) currentSection.value = d.section
       },
-      onDone: () => {
+      onDone: (d) => {
         clearSlowHint()
         streaming.value = false
         startMessage.value = ''
         currentSection.value = ''
+        // 公开免 Key 服务失败时后端自动改用平台共享 Key 完成本次调用，结果里带降级标记
+        degradedFrom.value = d.extra?.degraded_from || ''
         loadReports() // 已落库，刷新列表
       },
       onError: (e) => {
@@ -205,7 +210,7 @@ onUnmounted(() => {
           >
             <div class="jd__list-main">
               <span class="jd__list-company">{{ item.company || '未关联投递' }}</span>
-              <span v-if="item.score === null || item.score === undefined" class="jd__tag">未完成</span>
+              <span v-if="item.is_finished === false" class="jd__tag">未完成</span>
               <span v-else class="jd__list-score">{{ item.score }} 分</span>
             </div>
             <span class="jd__list-time">{{ shortDateTime(item.created_at) }}</span>
@@ -247,6 +252,13 @@ onUnmounted(() => {
           <span v-if="slowHint" class="jd__progress-hint">正在分析，请耐心等待…</span>
           <span v-if="sectionLabel" class="jd__progress-section">正在生成：{{ sectionLabel }}</span>
         </div>
+        <el-alert
+          v-if="degradedFrom"
+          class="jd__degraded"
+          type="warning"
+          :closable="false"
+          title="已临时切换到平台共享模型（公开免费服务暂不可用）"
+        />
         <el-alert v-if="errorMsg" :title="errorMsg" type="error" :closable="false" />
         <div v-if="reportText || streaming" class="jd__report-body">
           <StreamText :text="reportText" :streaming="streaming" />
@@ -405,6 +417,9 @@ onUnmounted(() => {
   margin-bottom: 10px;
   font-size: 13px;
   color: var(--c-text-2);
+}
+.jd__degraded {
+  margin-bottom: 10px;
 }
 .jd__progress-hint {
   color: var(--c-text-3);

@@ -1,7 +1,7 @@
 """TC-47~49、TC-55、TC-56、TC-61：AI 供应商配置（步骤 6，FR-018 / 接口文档 v1.10 §3.3）。
 
 **打桩方式**：`list_models` / `test_connection` 是 `app/clients/llm_provider.py` 的**模块级函数**
-——该模块是步骤 6 交付的「12 家注册表 + 探测函数」，**无抽象基类**（抽象 `LLMProvider` 与
+——该模块是步骤 6 交付的「13 家注册表 + 探测函数」，**无抽象基类**（抽象 `LLMProvider` 与
 `get_llm_provider` 注入点属步骤 10 的 `llm_client`），故用 monkeypatch 替换这两个函数本身，
 用例全程不触网（测试计划 §1.3）。
 
@@ -191,7 +191,7 @@ def test_list_returns_all_registry_providers(client: TestClient):
     client.put(f"{API}/llm-providers/{NEEDS_KEY}", json={"api_key": PLAINTEXT_KEY})
     data = client.get(f"{API}/llm-providers").json()["data"]
 
-    assert len(data["providers"]) == len(registry.PROVIDERS) == 12
+    assert len(data["providers"]) == len(registry.PROVIDERS) == 13
     by_key = {item["provider"]: item for item in data["providers"]}
     assert by_key[NEEDS_KEY]["key_set"] is True
     assert by_key["zhipu"]["key_set"] is False  # 未配置
@@ -478,3 +478,107 @@ def test_settings_no_longer_exposes_llm_fields(client: TestClient):
     # 改由信息源清单承载，后端三处代码于 2026-09-26 删除）
     assert set(data) == {"tts_enabled", "voice_enabled", "default_question_count", "asr_provider",
                          "tts_voice", "asr_key_set", "guide_done", "crawl_enabled"}
+
+
+# ---------- TC-105：免费模型档（两类来源 + 选用 + 档位互转） ----------
+
+
+def _seed_platform_row(provider: str, key: str = "sk-platform-shared") -> None:
+    """造一行 `user_id=0` 平台共享行（免费模型的 Key 来源）。
+
+    自开会话、每例各造一次：`client` fixture 的逐例清库会 TRUNCATE 本表
+    （`_reset_database` 只保留 `config` 表的 user_id=0 行）。
+    """
+    from app.database import SYSTEM_USER_ID, SessionLocal
+    from app.utils.security import encrypt_text
+
+    with SessionLocal() as session:
+        session.add(
+            LlmProviderConfig(
+                user_id=SYSTEM_USER_ID,
+                provider=provider,
+                api_key=encrypt_text(key),
+                model=meta_default_model(provider),
+            )
+        )
+        session.commit()
+
+
+def meta_default_model(provider: str) -> str | None:
+    meta = registry.get_provider(provider)
+    return meta.default_model if meta else None
+
+
+def test_free_models_two_sources(client: TestClient):
+    """TC-105：免费清单**两类来源并列**——公开免 Key 服务不看平台行，平台共享型只含已配 Key 的家。"""
+    _seed_platform_row("zhipu")
+
+    groups = client.get(f"{API}/llm-providers/free-models").json()["data"]["providers"]
+    keys = [g["provider"] for g in groups]
+
+    assert "pollinations" in keys  # 公开免 Key 服务：一行平台行都没配也在
+    assert "zhipu" in keys  # 平台共享型：配了共享 Key 才入选
+    assert keys == [k for k in registry.PROVIDER_KEYS if k in keys]  # 输出顺序即注册表顺序
+
+    zhipu = next(g for g in groups if g["provider"] == "zhipu")
+    assert {m["id"] for m in zhipu["models"]} == {"glm-4.7-flash", "glm-4-flash"}
+
+    public = next(g for g in groups if g["provider"] == "pollinations")
+    assert public["models"][0]["id"] == "openai-fast"
+
+
+def test_free_models_without_platform_row(client: TestClient):
+    """TC-105：平台未配任何共享 Key 时，清单**只剩公开免 Key 服务**（不是空数组）。"""
+    groups = client.get(f"{API}/llm-providers/free-models").json()["data"]["providers"]
+
+    assert [g["provider"] for g in groups] == ["pollinations"]
+
+
+def test_select_free_model_saves_and_activates(client: TestClient):
+    """TC-105：选用免费模型**保存与生效一步完成**，且**不清账号已存的 Key**（那是用户自己的数据）。"""
+    from app.database import SessionLocal
+    from app.utils.security import encrypt_text
+
+    uid = client.auth_account["id"]
+    _seed_platform_row("zhipu")
+    with SessionLocal() as session:  # 先存一把账号自己的 Key，模拟此前的自配档
+        session.add(
+            LlmProviderConfig(user_id=uid, provider="zhipu", api_key=encrypt_text("sk-mine"), model="glm-4.7-flash")
+        )
+        session.commit()
+
+    data = client.put(
+        f"{API}/llm-providers/free-model", json={"provider": "zhipu", "model": "glm-4-flash"}
+    ).json()["data"]
+
+    assert data["use_shared"] is True
+    assert data["is_active"] is True
+    assert data["model"] == "glm-4-flash"
+    assert data["key_set"] is True  # 账号那把 Key 仍在（免费档不清它）
+    assert data["base_url"] == registry.get_provider("zhipu").base_url  # 端点固定取注册表值
+    assert client.get(f"{API}/llm-providers").json()["data"]["active"] == "zhipu"
+
+
+def test_select_free_model_validation(client: TestClient):
+    """TC-105：`provider` 非法 / 该家不在免费清单 / `model` 不在该家清单 → **10001**（按清单校验，不信任前端传值）。"""
+    bad_provider = client.put(f"{API}/llm-providers/free-model", json={"provider": "nope", "model": "x"})
+    not_free = client.put(f"{API}/llm-providers/free-model", json={"provider": "deepseek", "model": "x"})
+    bad_model = client.put(
+        f"{API}/llm-providers/free-model", json={"provider": "pollinations", "model": "not-a-model"}
+    )
+
+    assert bad_provider.json()["code"] == 10001
+    assert not_free.json()["code"] == 10001
+    assert bad_model.json()["code"] == 10001
+    assert client.get(f"{API}/llm-providers").json()["data"]["active"] is None  # 一律未生效
+
+
+def test_own_key_switches_back_to_self_hosted(client: TestClient):
+    """TC-105：免费档 → 自配档——`PUT /{provider}` 提交**非空 `api_key`** 即自动置 `use_shared=0`。"""
+    _seed_platform_row("zhipu")
+    client.put(f"{API}/llm-providers/free-model", json={"provider": "zhipu", "model": "glm-4.7-flash"})
+
+    data = client.put(f"{API}/llm-providers/zhipu", json={"api_key": "sk-my-own"}).json()["data"]
+
+    assert data["use_shared"] is False
+    assert data["key_set"] is True

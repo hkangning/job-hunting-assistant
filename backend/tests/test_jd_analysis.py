@@ -341,3 +341,44 @@ def test_llm_failure_does_not_save(jd_client: TestClient, fake_llm_client):
 
     listed = jd_client.get(f"{API}/jd-reports").json()["data"]
     assert listed["total"] == 0
+
+
+# ---------- TC-107：半成品标记 is_finished ----------
+
+
+def test_finished_report_flag(jd_client: TestClient, fake_llm_client):
+    """TC-107：正常完成的报告 `is_finished=true`，**列表与详情均返回**该字段。"""
+    _, events = _run_analysis(jd_client, fake_llm_client, SAMPLE_REPORT)
+    record_id = events[-1][1]["record_id"]
+
+    listed = jd_client.get(f"{API}/jd-reports").json()["data"]["items"][0]
+    detail = jd_client.get(f"{API}/jd-reports/{record_id}").json()["data"]
+
+    assert listed["is_finished"] is True
+    assert detail["is_finished"] is True
+
+
+def test_partial_report_marked_unfinished(jd_client: TestClient):
+    """TC-107：断连落库的半成品 `is_finished=false`——前端据此标「未完成」，不再依赖 `score`。
+
+    这条正是旧判据的漏判场景：断点落在评分行**之后**时 `score` 已有值，只有 `is_finished`
+    能区分（步骤 12 冒烟实测过的形态，问题记录 IS-32）。
+    """
+    from app.database import SessionLocal
+
+    with SessionLocal() as session:
+        report_id = jd_service.save_report(
+            session,
+            jd_client.auth_account["id"],
+            "某 JD",
+            None,
+            "## 1. 综合匹配度评分\n综合匹配度：89 分\n（断在这里）",
+            is_finished=False,
+        )
+
+    listed = jd_client.get(f"{API}/jd-reports").json()["data"]["items"][0]
+    detail = jd_client.get(f"{API}/jd-reports/{report_id}").json()["data"]
+
+    assert listed["is_finished"] is False
+    assert detail["is_finished"] is False
+    assert detail["score"] == 89  # 分数已有值——旧判据（score 为空）在这里会漏判
