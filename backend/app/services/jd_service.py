@@ -49,9 +49,15 @@ def extract_score(report_text: str) -> int | None:
 
 
 def save_report(
-    db: Session, user_id: int, jd_text: str, application_id: int | None, report_text: str
+    db: Session,
+    user_id: int,
+    jd_text: str,
+    application_id: int | None,
+    report_text: str,
+    *,
+    is_finished: bool = True,
 ) -> int | None:
-    """落库一份报告（正常完成与断连半成品同用，接口文档 3.6）；全空文本不落库、返回 null。"""
+    """落库一份报告（正常完成 is_finished=True / 断连半成品 False，接口文档 3.6）；全空文本不落库、返回 null。"""
     if not report_text.strip():
         logger.warning("JD 分析未产生任何内容，跳过落库（账号 %s）", user_id)
         return None
@@ -61,6 +67,7 @@ def save_report(
         jd_text=jd_text,
         report_text=report_text,
         score=extract_score(report_text),
+        is_finished=1 if is_finished else 0,
     )
     db.add(report)
     db.commit()
@@ -114,6 +121,7 @@ def _to_dto(report: JdAnalysisReport) -> JdReportDTO:
         jd_text=report.jd_text,
         report_text=report.report_text,
         score=report.score,
+        is_finished=bool(report.is_finished),
         created_at=report.created_at,
     )
 
@@ -124,5 +132,6 @@ def _to_list_item(report: JdAnalysisReport, company: str | None) -> JdReportList
         application_id=report.application_id,
         company=company,
         score=report.score,
+        is_finished=bool(report.is_finished),
         created_at=report.created_at,
     )

@@ -121,6 +121,7 @@ class JdReportListItem(BaseModel):
     application_id: int | None = Field(description="关联的投递记录 id，未关联为 null")
     company: str | None = Field(description="关联投递的公司名（联表展示），未关联为 null")
     score: int | None = Field(description="综合匹配度 0~100，未从报告提取到为 null")
+    is_finished: bool = Field(description="是否完整生成：true 正常完成 / false 客户端断连的半成品（内容不全）")
     created_at: datetime = Field(description="生成时间 YYYY-MM-DD HH:mm:ss")
 
     @field_serializer("created_at")
@@ -137,6 +138,7 @@ class JdReportDTO(BaseModel):
     jd_text: str = Field(description="JD 原文快照")
     report_text: str = Field(description="报告全文（五段结构，与流式 delta 拼接一致）")
     score: int | None = Field(description="综合匹配度 0~100，未从报告提取到为 null")
+    is_finished: bool = Field(description="是否完整生成：true 正常完成 / false 客户端断连的半成品（内容不全）")
     created_at: datetime = Field(description="生成时间 YYYY-MM-DD HH:mm:ss")
 
     @field_serializer("created_at")

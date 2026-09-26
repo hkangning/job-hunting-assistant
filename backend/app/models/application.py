@@ -54,4 +54,5 @@ class JdAnalysisReport(Base):
     jd_text: Mapped[str] = mapped_column(Text)  # JD 原文快照
     report_text: Mapped[str] = mapped_column(Text)  # 报告全文（五段结构）
     score: Mapped[int | None] = mapped_column(Integer)  # 综合匹配度 0~100（LLM 可解析时提取）
+    is_finished: Mapped[int] = mapped_column(Integer, default=1)  # 是否完整生成（1 正常完成 / 0 客户端断连的半成品）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 生成时间

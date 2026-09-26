@@ -81,7 +81,7 @@ def jd_analysis_stream(
     """画像 + JD 原文交给 AI 流式产出五段匹配报告：start → delta×N（逐段带 section）→ done(record_id)。
 
     报告全文随流自动落库（`report_text` 即所有 delta 的拼接，前端可据此渲染历史回看）。
-    客户端中途断开时，已生成的内容同样落库（接口文档 3.6），前端重新发起即可再次分析。
+    客户端中途断开时，已生成的内容同样落库并标记为未完成（接口文档 3.6），前端重新发起即可再次分析。
     """
     user_id = current_user.id
     jd_text = payload.jd_text
@@ -107,7 +107,7 @@ def jd_analysis_stream(
             )
             return {"record_id": record_id}
         except GeneratorExit:
-            # 客户端断连：已生成内容落库后再原样抛出（协议层靠它终止上游，系统设计 5.1）
+            # 客户端断连：已生成内容落库并标记为未完成后原样抛出（协议层靠它终止上游，系统设计 5.1）
             _save_partial(stream_db, user_id, jd_text, application_id, pieces)
             raise
 
@@ -117,10 +117,12 @@ def jd_analysis_stream(
 def _save_partial(
     db: Session, user_id: int, jd_text: str, application_id: int | None, pieces: list[str]
 ) -> None:
-    """断连兜底落库：报告不完整即"半成品标记"（库表无 interrupted 字段，数据库设计 3.2）。"""
+    """断连兜底落库：以 is_finished=False 标记半成品（数据库设计 3.2）。"""
     if not pieces:
         return
     try:
-        jd_service.save_report(db, user_id, jd_text, application_id, "".join(pieces))
+        jd_service.save_report(
+            db, user_id, jd_text, application_id, "".join(pieces), is_finished=False
+        )
     except Exception:
         logger.exception("JD 分析半成品落库失败（账号 %s）", user_id)
