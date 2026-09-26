@@ -108,6 +108,9 @@ class OpenAICompatibleClient(LLMClient):
                     yield delta.content
         except Exception as exc:  # 流中途失败（超时 / 连接中断 / 服务端错误）：已输出的内容由上层保留
             raise _translate(exc) from exc
+        finally:
+            # 主动断开与供应商的连接（幂等）：SSE 断连时上层抛出 GeneratorExit，不关就只靠 GC 回收
+            stream.close()
 
     def chat_json(self, config: LLMConfig, messages: list[dict]) -> dict:
         response = _create_chat(_build_client(config), config, messages)
