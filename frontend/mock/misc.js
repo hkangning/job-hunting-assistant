@@ -50,13 +50,35 @@ export async function putSettings(req) {
   return [ok(config), 200]
 }
 
-/** 概览：统计返回 0 值结构（个人中心数据概览卡片取用；步骤 9 扩充真实聚合）。 */
+/** 概览：样例数据供界面走查（步骤 9 前端先行，真后端就绪后走 VITE_USE_MOCK=false）。
+ *  刻意造出的形态：明日那条**排在后面**、days 4 排在 6 前面——用来验证前端的置顶与降序真的在起作用，
+ *  而不是照搬后端顺序；CLOSED 有值而 wrong_question_count 为 0，以便同时看到计数与空态。 */
 export async function overview(req) {
   const { error } = verifyToken(bearer(req), findById)
   if (error) return [error, 401]
+
+  const p = (n) => String(n).padStart(2, '0')
+  const day = (offset) => {
+    const d = new Date()
+    d.setDate(d.getDate() + offset)
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+  const at = (offset, hour) => `${day(offset)} ${p(hour)}:00:00`
+
   return [ok({
-    stats: { application_count: 0, interview_count: 0, wrong_question_count: 0 },
-    follow_ups: [], upcoming_events: [], wrong_question_reminders: [], campus_events: []
+    application_stats: { APPLIED: 5, WRITTEN: 2, INTERVIEW: 3, OFFER: 1, CLOSED: 4 },
+    upcoming_events: [
+      { application_id: 2, company: '某某科技', position: '前端开发', event_at: at(3, 10), status: 'WRITTEN' },
+      { application_id: 1, company: '浩鲸科技', position: 'Java 后端开发', event_at: at(1, 14), status: 'INTERVIEW' }
+    ],
+    follow_ups: [
+      { application_id: 3, company: '云启信息', position: '后端开发', applied_at: at(-4, 10), days: 4 },
+      { application_id: 4, company: '星环数据', position: '数据开发', applied_at: at(-6, 10), days: 6 }
+    ],
+    wrong_question_count: 0,
+    campus_events: [],
+    last_crawl_at: null,
+    stats: { application_count: 15, wrong_question_count: 0, interview_count: 3 }
   }), 200]
 }
 

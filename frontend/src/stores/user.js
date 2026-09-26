@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useAppStore } from './app'
+import { useOverviewStore } from './overview'
 import {
   loginApi, registerApi, meApi, updateAccountApi,
   uploadAvatarApi, resetAvatarApi
@@ -70,6 +71,7 @@ export const useUserStore = defineStore('user', () => {
   function logout() {
     reset()
     useAppStore().$reset()
+    useOverviewStore().reset() // 概览数据同样按账号隔离，不得残留上一账号的统计
   }
 
   return {

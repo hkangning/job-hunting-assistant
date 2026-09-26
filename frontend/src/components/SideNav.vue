@@ -1,7 +1,7 @@
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import request from '../api/request'
+import { useOverviewStore } from '../stores/overview'
 
 defineProps({
   collapse: { type: Boolean, default: false }
@@ -31,20 +31,15 @@ const groups = computed(() => {
 // 详情页高亮回其所属菜单项
 const activeMenu = computed(() => route.meta.activeMenu || route.path)
 
-// ---------- 今日待办（数据源 GET /overview，属开发计划步骤 5）----------
-const todos = ref([])
+// ---------- 今日待办（数据源 GET /overview，系统设计 §4.4）----------
+// 与概览页共享 useOverviewStore：两处各调一次会在同一屏发两个相同请求，且数值可能不一致
+const overviewStore = useOverviewStore()
+const todos = computed(() => (overviewStore.data?.upcoming_events || []).slice(0, 3))
 
-async function loadTodos() {
-  try {
-    const data = await request.get('/overview', { silent: true })
-    todos.value = (data && data.upcoming_events ? data.upcoming_events : []).slice(0, 3)
-  } catch {
-    // 设计文档 4.4：加载失败整块隐藏，不在侧栏常驻显示错误
-    todos.value = []
-  }
-}
-
-onMounted(loadTodos)
+onMounted(() => {
+  // 侧栏是全局的：用户直接落在投递页等非概览页时，也要有待办数据
+  if (!overviewStore.data) overviewStore.fetch()
+})
 </script>
 
 <template>

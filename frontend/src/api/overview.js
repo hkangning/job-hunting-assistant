@@ -1,4 +1,4 @@
-/** 概览接口封装（本步个人中心数据概览卡片取统计，步骤 9 扩充）。 */
+/** 概览接口封装（接口文档 §3.4）：概览页与侧栏「今日待办」共用。 */
 import request from './request'
 
-export const getOverviewApi = () => request.get('/overview')
+export const getOverviewApi = (config) => request.get('/overview', config)
