@@ -4,7 +4,6 @@
 原 SQLite 专有的 WAL / 外键 PRAGMA 断言改为 MySQL 口径（InnoDB 引擎 + utf8mb4 字符集）。
 
 期望值来源：《数据库设计文档》v1.9 §3~§4，固化在 tests/expected_schema.py。
-设计依据：docs/superpowers/specs/2026-09-24-步骤2建表冒烟测试-design.md
 
 约定：写数据的用例一律 flush + rollback，**不 commit**——保证用例之间互不残留，
 否则种子题库类断言（题数、题干唯一）会被前面用例插入的临时数据干扰。

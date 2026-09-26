@@ -18,6 +18,7 @@
 
 import os
 import re
+import time
 from collections.abc import Callable, Generator
 from pathlib import Path
 
@@ -54,6 +55,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.schemas.auth import RegisterRequest  # noqa: E402
+from app.clients.llm_client import LLMClient, get_llm_client  # noqa: E402
 from app.services import auth_service  # noqa: E402
 
 API = "/api/v1"
@@ -167,6 +169,57 @@ def make_account(client: TestClient) -> Callable[..., Account]:
         return _register(client, username, password)
 
     return _make
+
+
+# ---------- LLM 对话替身（步骤 10，测试计划 §1.3） ----------
+
+
+class FakeLLMClient(LLMClient):
+    """LLM 对话出口的内存替身：不触网，按预设吐块 / 返回 dict（台账 #39）。
+
+    步骤 11 起的 SSE 与四条 AI 链路（JD / 陪练 / 面试 / 面经）都经 `get_llm_client` 出网，
+    统一用本替身挡在网外，用例据此断言落库内容。
+
+    `stream_chat` 写成生成器函数：调用时**不**抛 `error`，迭代到第一次 `next` 才抛——与
+    生产实现（`OpenAICompatibleClient.stream_chat` 同为生成器）行为一致。
+    """
+
+    def __init__(self, chunks: list[str] | None = None, json_result: dict | None = None) -> None:
+        self.chunks = ["假", "回答"] if chunks is None else chunks
+        self.json_result = {} if json_result is None else json_result
+        self.error: Exception | None = None  # 非空则抛，模拟失败路径
+        self.delay = 0.0  # 每块间隔，步骤 11 验 SSE 事件顺序用
+        self.stream_calls: list[tuple] = []  # 记录 (config, messages, tools)
+        self.json_calls: list[tuple] = []  # 记录 (config, messages)
+
+    def stream_chat(self, config, messages, tools=None):
+        self.stream_calls.append((config, messages, tools))
+        if self.error is not None:
+            raise self.error
+        for chunk in self.chunks:
+            if self.delay:
+                time.sleep(self.delay)
+            yield chunk
+
+    def chat_json(self, config, messages) -> dict:
+        self.json_calls.append((config, messages))
+        if self.error is not None:
+            raise self.error
+        return dict(self.json_result)
+
+
+@pytest.fixture()
+def fake_llm_client() -> Generator[FakeLLMClient, None, None]:
+    """把 LLM 对话出口换成替身（测试计划 §1.3），用例结束后恢复原实现。
+
+    `dependency_overrides` 是 app 级全局字典，**必须清理**——漏掉会静默污染其后所有用例。
+    """
+    fake = FakeLLMClient()
+    app.dependency_overrides[get_llm_client] = lambda: fake
+    try:
+        yield fake
+    finally:
+        app.dependency_overrides.pop(get_llm_client, None)
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:

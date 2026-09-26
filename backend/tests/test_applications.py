@@ -5,7 +5,7 @@ from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -190,7 +190,7 @@ def test_import_csv_partial_rows(db_session: Session, account_id: int):
     assert [(item.row, item.reason) for item in result.errors] == [
         (3, "岗位名称不能为空"),
         (5, "投递日期格式应为 YYYY-MM-DD"),
-        (6, "状态值非法（可选：APPLIED/WRITTEN/INTERVIEW/OFFER/CLOSED）"),
+        (6, "状态值非法（可选：已投递、待笔试、面试中、已获 offer、已结束，或对应英文枚举）"),
     ]
 
 
@@ -211,12 +211,12 @@ def test_import_all_rows_invalid_raises_20002(db_session: Session, account_id: i
 
 
 def test_import_missing_required_header(db_session: Session, account_id: int):
-    """TC-04：表头缺少必填列（position）→ 20001。"""
+    """TC-04：表头缺少必填列（岗位）→ 20001。"""
     with pytest.raises(BizException) as exc_info:
         application_service.import_from_file(db_session, account_id, "import.csv", b"company,city\nA,\xe5\x8d\x97\xe4\xba\xac\n")
 
     assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
-    assert "position" in exc_info.value.message
+    assert "岗位" in exc_info.value.message
 
 
 def test_import_empty_header(db_session: Session, account_id: int):
@@ -397,7 +397,7 @@ def test_trend_zero_filled_and_bounds(client: TestClient):
 # ---------- TC-01~04 补强：实现分支覆盖 ----------
 #
 # 现有用例已覆盖各 TC 的验收点直系路径；本段落补齐 application_service.py 中
-# 未被走到的容错与边界分支（设计依据：docs/superpowers/specs/2026-09-24-步骤3投递服务层测试-design.md）。
+# 未被走到的容错与边界分支。
 # 分组：A=TC-01 / B=TC-02 / C=TC-04 / D=TC-03 / E=TC-03·TC-04。
 
 
@@ -792,13 +792,13 @@ def test_import_applied_at_with_time(db_session: Session, account_id: int):
 
 
 def test_import_missing_multiple_required_headers(db_session: Session, account_id: int):
-    """TC-04：表头同时缺 company 与 position 时，提示一次报全两列名。"""
+    """TC-04：表头同时缺「公司」与「岗位」时，提示一次报全两列名。"""
     with pytest.raises(BizException) as exc_info:
         application_service.import_from_file(db_session, account_id, "import.csv", "city,channel\n南京,官网\n".encode("utf-8"))
 
     assert exc_info.value.code == ErrorCode.IMPORT_FILE_INVALID
-    assert "company" in exc_info.value.message
-    assert "position" in exc_info.value.message
+    assert "公司" in exc_info.value.message
+    assert "岗位" in exc_info.value.message
 
 
 @pytest.mark.parametrize(
@@ -859,3 +859,64 @@ def test_import_blank_optional_fields_to_none(db_session: Session, account_id: i
     assert result.success_count == 1
     row = db_session.scalar(select(Application).where(Application.company == "哈啰出行"))
     assert (row.city, row.channel, row.remark) == (None, None, None)
+
+
+# ---------- TC-95~97：导入模板中文表头（步骤 4 遗留，台账 #37） ----------
+
+TEMPLATE_HEADER = "公司,岗位,城市,投递日期,渠道,状态,备注"
+
+
+def test_import_chinese_header_succeeds(db_session: Session, account_id: int):
+    """TC-95：模板口径的中文表头可正常导入，字段逐一映射正确。"""
+    content = (
+        f"{TEMPLATE_HEADER}\n"
+        "满帮,Java 开发,南京,2026-09-01,官网,已投递,内推\n"
+    ).encode("utf-8")
+
+    result = application_service.import_from_file(db_session, account_id, "import.csv", content)
+
+    assert (result.success_count, result.errors) == (1, [])
+    row = db_session.scalar(select(Application).where(Application.company == "满帮"))
+    assert (row.company, row.position, row.city, row.channel) == ("满帮", "Java 开发", "南京", "官网")
+    assert row.status == ApplicationStatus.APPLIED
+    assert row.applied_at.date() == date(2026, 9, 1)  # 字段为 DateTime，比日期部分
+    assert row.remark == "内推"
+
+
+def test_import_skips_template_sample_row(db_session: Session, account_id: int):
+    """TC-96：上传**未改动**的模板 → 示例行按首列标记跳过，0 条成功且 0 条错误。
+
+    示例行若被当记录导入，会凭空多出一条「【示例】某某科技」——这正是标记要防的。
+    """
+    content = application_service.build_import_template()
+
+    result = application_service.import_from_file(db_session, account_id, "template.xlsx", content)
+
+    assert (result.success_count, result.errors) == (0, [])
+    assert db_session.query(Application).count() == 0
+
+
+def test_import_chinese_status_label(db_session: Session, account_id: int):
+    """TC-97：状态列填中文标签与填英文枚举等效（模板里给的就是中文标签）。"""
+    content = (
+        f"{TEMPLATE_HEADER}\n"
+        "亚信安全,后端开发,南京,2026-09-02,官网,面试中,\n"
+        "浩鲸科技,Java 开发,南京,2026-09-03,官网,INTERVIEW,\n"
+    ).encode("utf-8")
+
+    result = application_service.import_from_file(db_session, account_id, "import.csv", content)
+
+    assert (result.success_count, result.errors) == (2, [])
+    rows = list(db_session.scalars(select(Application).order_by(Application.id)))
+    assert [row.status for row in rows] == [ApplicationStatus.INTERVIEW] * 2
+
+
+def test_download_template_has_chinese_header_and_sample(client: TestClient):
+    """TC-98：下载模板 → xlsx 内容，表头为中文且含一行示例（首列带标记）。"""
+    resp = client.get(f"{API}/template")
+
+    assert resp.status_code == 200
+    sheet = load_workbook(BytesIO(resp.content)).active
+    header = [cell.value for cell in sheet[1]]
+    assert header[:4] == ["公司", "岗位", "城市", "投递日期"]
+    assert sheet.cell(row=2, column=1).value.startswith("【示例】")
