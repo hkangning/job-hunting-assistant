@@ -13,6 +13,8 @@ from app.schemas.common import ApiResponse
 from app.schemas.llm_provider import (
     BASE_URL_MAX,
     ActiveProviderDTO,
+    FreeModelListDTO,
+    FreeModelSelectRequest,
     ModelListDTO,
     ProviderItemDTO,
     ProviderListDTO,
@@ -29,8 +31,32 @@ router = APIRouter(prefix="/llm-providers", tags=["AI 供应商配置"])
 def list_providers(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> ApiResponse[ProviderListDTO]:
-    """返回注册表全部 12 项（未配置的也在列表中）与当前账号的配置状态。"""
+    """返回注册表全部 13 项（未配置的也在列表中）与当前账号的配置状态。"""
     return ApiResponse[ProviderListDTO](data=llm_provider_service.list_providers(db, current_user.id))
+
+
+@router.get("/free-models", response_model=ApiResponse[FreeModelListDTO], summary="免费模型清单")
+def list_free_models(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> ApiResponse[FreeModelListDTO]:
+    """平台预置的免费模型（配了共享 Key 的供应商）：账号选用即生效，无需自备 Key。"""
+    return ApiResponse[FreeModelListDTO](data=llm_provider_service.list_free_models(db))
+
+
+@router.put("/free-model", response_model=ApiResponse[ProviderItemDTO], summary="选用免费模型")
+def select_free_model(
+    payload: FreeModelSelectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApiResponse[ProviderItemDTO]:
+    """保存所选免费模型并**立即生效**（与自配档共用一个激活位）。
+
+    端点须声明在 `PUT /{provider}` **之前**：FastAPI 按声明顺序匹配，否则 `free-model`
+    会被当作供应商标识走保存逻辑。
+    """
+    return ApiResponse[ProviderItemDTO](
+        data=llm_provider_service.select_free_model(db, current_user.id, payload)
+    )
 
 
 @router.put("/{provider}", response_model=ApiResponse[ProviderItemDTO], summary="保存供应商配置")

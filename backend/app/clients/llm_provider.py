@@ -1,4 +1,4 @@
-"""供应商注册表与探测：12 家供应商的两级（供应商 → 模型）注册表、模型列表动态拉取、连通性测试。
+"""供应商注册表与探测：13 家供应商的两级（供应商 → 模型）注册表、模型列表动态拉取、连通性测试。
 
 全部走 OpenAI 兼容协议（系统设计 5.4）：选供应商 = 定 base_url 与 Key，选模型 = 定 model，调用代码零改动。
 
@@ -8,16 +8,21 @@
 
 from dataclasses import dataclass
 
+import httpx
 import openai
 from openai import OpenAI
 
+from app.config import settings
+
 PROBE_TIMEOUT = 10.0  # 探测类请求超时（秒）；对话链路的超时策略在步骤 10 的 llm_client 单独定义
-OLLAMA_API_KEY_PLACEHOLDER = "ollama"  # ollama 本地服务不校验 Key，但 OpenAI SDK 要求该参数非空
+# 免 Key 服务（本地 ollama、公开免 Key 端点）的占位值：这些服务不校验 Key，但 OpenAI SDK 要求该参数非空
+KEYLESS_PLACEHOLDER = "keyless"
 
 GROUP_CN = "国内"
 GROUP_OVERSEAS = "国外"
 GROUP_AGGREGATE = "聚合"
 GROUP_LOCAL = "本地"
+GROUP_PUBLIC = "公开免费"
 GROUP_CUSTOM = "自定义"
 
 
@@ -36,11 +41,12 @@ class ProviderMeta:
 
     key: str  # 标识（入库 llm_provider_config.provider）
     name: str  # 界面展示名
-    group: str  # 分组：国内 / 国外 / 聚合 / 本地 / 自定义
+    group: str  # 分组：国内 / 国外 / 聚合 / 本地 / 公开免费 / 自定义
     base_url: str  # 内置默认端点（账号配置有值则优先生效，应对端点变更）
     default_model: str | None  # 默认模型（空 = 由用户选择，如本地与自定义）
     builtin_models: tuple[ModelMeta, ...] = ()  # 内置模型表（**仅离线回退用**，运行时以动态拉取为准）
-    needs_key: bool = True  # 是否需要 API Key（ollama 本地无需）
+    needs_key: bool = True  # 是否需要 API Key（ollama 本地与公开免 Key 服务无需）
+    is_public: bool = False  # 公开免 Key 的第三方公益服务：驱动免费清单入选与调用失败自动降级
 
 
 # 供应商注册表（系统设计 5.4）：新增供应商只加配置，不改业务代码
@@ -165,6 +171,18 @@ PROVIDERS: dict[str, ProviderMeta] = {
         builtin_models=(),
         needs_key=False,
     ),
+    "pollinations": ProviderMeta(
+        key="pollinations",
+        name="Pollinations（公开免费）",
+        group=GROUP_PUBLIC,
+        base_url="https://text.pollinations.ai/openai",
+        default_model="openai-fast",
+        builtin_models=(
+            ModelMeta("openai-fast", "GPT-OSS 20B（公开免费）", is_free=True),
+        ),
+        needs_key=False,
+        is_public=True,
+    ),
     "custom": ProviderMeta(
         key="custom",
         name="自定义",
@@ -175,7 +193,7 @@ PROVIDERS: dict[str, ProviderMeta] = {
     ),
 }
 
-PROVIDER_KEYS = tuple(PROVIDERS)  # 注册表全部标识（顺序即界面卡片顺序）
+PROVIDER_KEYS = tuple(PROVIDERS)  # 注册表全部标识（顺序即界面展示顺序：供应商下拉、免费模型清单）
 
 # 内置模型表全局索引（模型 ID → 元数据）：远程拉取的模型据此补展示名与免费标记，见 enrich_remote_model
 _BUILTIN_INDEX: dict[str, ModelMeta] = {
@@ -212,9 +230,18 @@ def enrich_remote_model(model_id: str) -> ModelMeta:
 
 
 def _build_client(meta: ProviderMeta, base_url: str, api_key: str | None) -> OpenAI:
-    """构造 OpenAI 兼容客户端；ollama 本地不校验 Key，用占位值满足 SDK 必填要求。"""
-    key = (api_key or "").strip() or (OLLAMA_API_KEY_PLACEHOLDER if not meta.needs_key else "")
-    return OpenAI(api_key=key, base_url=base_url, timeout=PROBE_TIMEOUT, max_retries=0)
+    """构造 OpenAI 兼容客户端；免 Key 服务（ollama / 公开端点）用占位值满足 SDK 必填要求。
+
+    代理行为与对话链路同口径（见 llm_client._http_client）：默认直连、不走系统代理。
+    """
+    key = (api_key or "").strip() or (KEYLESS_PLACEHOLDER if not meta.needs_key else "")
+    return OpenAI(
+        api_key=key,
+        base_url=base_url,
+        timeout=PROBE_TIMEOUT,
+        max_retries=0,
+        http_client=httpx.Client(timeout=PROBE_TIMEOUT, trust_env=settings.llm_trust_env),
+    )
 
 
 def _translate(exc: Exception) -> ProviderProbeError:

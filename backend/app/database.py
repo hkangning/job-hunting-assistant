@@ -1,6 +1,7 @@
 """数据库引擎与会话：MySQL 8.0（InnoDB，连接池探活/回收，数据库设计文档 §1），并提供一键初始化。"""
 
 import json
+import logging
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +13,10 @@ from app.config import settings
 
 SEED_FILE = Path(__file__).resolve().parent.parent / "seed" / "questions.json"
 
-# config 表系统级配置的账号标识（数据库设计 §3.14）：不建外键，全站共用
+logger = logging.getLogger(__name__)
+
+# 系统级数据的账号标识（数据库设计 §3.14）：不建外键，全站共用。
+# `config` 的系统默认项与 `llm_provider_config` 的平台共享配置（免费模型 Key）都用它。
 SYSTEM_USER_ID = 0
 
 # config 表默认配置项：键名与接口文档 GET /settings 响应字段一一对应，值统一以文本存储
@@ -75,6 +79,7 @@ def init_db() -> int:
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         _init_default_rows(db)
+        _sync_shared_providers(db)
         added = _load_seed_questions(db)
         db.commit()
     return added
@@ -89,6 +94,40 @@ def _init_default_rows(db: Session) -> None:
             db.add(
                 Config(user_id=SYSTEM_USER_ID, key=key, value=value, updated_at=datetime.now())
             )
+
+
+def _sync_shared_providers(db: Session) -> None:
+    """把 .env 的平台共享 Key（`SHARED_KEY_<供应商标识>`）同步进 `user_id=0` 的平台配置行。
+
+    **以 .env 为准**：配了的 upsert（Key 重新加密、模型取注册表默认值），没配的删除平台行。
+    标识不在注册表内的跳过并记警告，不中断启动。
+    """
+    from app.clients import llm_provider as registry
+    from app.models import LlmProviderConfig
+    from app.utils.security import encrypt_text
+
+    shared = settings.shared_provider_keys()
+    existing = {
+        row.provider: row
+        for row in db.scalars(
+            select(LlmProviderConfig).where(LlmProviderConfig.user_id == SYSTEM_USER_ID)
+        ).all()
+    }
+    for provider, api_key in shared.items():
+        meta = registry.get_provider(provider)
+        if meta is None:
+            logger.warning("SHARED_KEY_%s 的供应商不在注册表中，已跳过", provider.upper())
+            continue
+        row = existing.pop(provider, None)
+        if row is None:
+            row = LlmProviderConfig(user_id=SYSTEM_USER_ID, provider=provider)
+            db.add(row)
+        row.api_key = encrypt_text(api_key)
+        row.base_url = None  # 端点用注册表默认值
+        row.model = meta.default_model
+        row.updated_at = datetime.now()
+    for row in existing.values():  # .env 里已移除的供应商：对应平台行一并删除
+        db.delete(row)
 
 
 def init_account_data(db: Session, user_id: int) -> None:

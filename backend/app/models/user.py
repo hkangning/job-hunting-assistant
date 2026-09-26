@@ -35,7 +35,9 @@ class User(Base):
 class LlmProviderConfig(Base):
     """AI 供应商配置：每账号 × 每供应商一行，Key 以 Fernet 密文存储（FR-018，步骤 6 使用）。
 
-    本表在步骤 5 随账号体系一并建好（`/auth/me` 的 `llm_configured` 需读它），配置接口在步骤 6 落地。
+    `user_id = 0` 为**系统级平台共享配置**（免费模型的 Key 来源，由启动时从 .env 同步），
+    不建外键——与 `config` 表同口径（数据库设计 3.17）；账号行 `use_shared = 1` 表示调用时
+    取平台 Key、模型仍用本行所选。
     """
 
     __tablename__ = "llm_provider_config"
@@ -45,15 +47,14 @@ class LlmProviderConfig(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE")
-    )  # 所属账号（配置按账号隔离）
-    provider: Mapped[str] = mapped_column(String(30))  # 供应商标识（注册表 12 项之一）
+    user_id: Mapped[int] = mapped_column(Integer)  # 所属账号；0=系统级平台共享配置（免费模型 Key）
+    provider: Mapped[str] = mapped_column(String(30))  # 供应商标识（注册表 13 项之一）
     base_url: Mapped[str | None] = mapped_column(String(200))  # API 端点（空=用注册表默认值）
     api_key: Mapped[str | None] = mapped_column(Text)  # 密钥（Fernet 密文；ollama 本地无需 Key）
     model: Mapped[str | None] = mapped_column(String(100))  # 该供应商下所选模型（空=注册表默认）
     models_cache: Mapped[str | None] = mapped_column(Text)  # 模型列表缓存 JSON（含 fetched_at，24h 过期）
     is_active: Mapped[int] = mapped_column(Integer, default=0)  # 是否当前激活（每账号至多一行 =1）
+    use_shared: Mapped[int] = mapped_column(Integer, default=0)  # 是否用平台共享 Key（1=免费模型，Key 取 user_id=0 同供应商行）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 创建时间
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.now, onupdate=datetime.now
