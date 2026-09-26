@@ -222,6 +222,7 @@ def _to_item(meta: registry.ProviderMeta, row: LlmProviderConfig | None) -> Prov
         name=meta.name,
         group=meta.group,
         base_url=registry.resolve_base_url(meta, row.base_url if row else None),
+        needs_key=meta.needs_key,
         key_set=bool(row and row.api_key),
         model=(row.model if row else None) or "",
         is_active=bool(row and row.is_active),

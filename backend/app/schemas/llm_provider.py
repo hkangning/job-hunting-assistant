@@ -13,7 +13,8 @@ class ProviderItemDTO(BaseModel):
     name: str = Field(description="供应商展示名")
     group: str = Field(description="分组：国内 / 国外 / 聚合 / 本地 / 自定义")
     base_url: str = Field(description="生效端点（账号配置优先，空则回落到注册表默认值）")
-    key_set: bool = Field(description="该账号是否已存 Key（**永不回显明文或片段**；ollama 恒为 false）")
+    needs_key: bool = Field(description="该供应商是否需要 API Key（注册表静态属性；ollama 本地部署为 false）")
+    key_set: bool = Field(description="该账号是否已存 Key（**永不回显明文或片段**；needs_key=false 时恒为 false）")
     model: str = Field(description="该账号所选模型（空串 = 用注册表默认模型）")
     is_active: bool = Field(description="是否当前生效供应商（每账号至多一项为 true）")
 
