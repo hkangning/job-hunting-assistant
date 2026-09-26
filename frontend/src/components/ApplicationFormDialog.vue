@@ -277,12 +277,12 @@ async function submit() {
   margin-right: 6px;
 }
 .form-status__text {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
 }
 .form-status__hint {
   margin-left: 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 .form-city {

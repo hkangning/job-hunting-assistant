@@ -142,7 +142,7 @@ watch(() => props.items, render)
   margin-bottom: 8px;
 }
 .trend__title {
-  font-size: 13px;
+  font-size: var(--fs-title);
   font-weight: 700;
   color: var(--c-text);
 }
@@ -155,7 +155,7 @@ watch(() => props.items, render)
 }
 .trend__empty {
   margin-top: 4px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 </style>

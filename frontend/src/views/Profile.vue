@@ -295,18 +295,18 @@ async function saveProfile() {
 }
 .profile__title {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: var(--fs-title);
   font-weight: 700;
   color: var(--c-text);
 }
 .profile__error {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--el-color-danger);
 }
 .profile__hint {
   margin-left: 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 .profile__form-grid {
@@ -363,14 +363,14 @@ async function saveProfile() {
 .account__label {
   width: 44px;
   flex-shrink: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
 .account__meta {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .account__meta b {
@@ -398,7 +398,7 @@ async function saveProfile() {
   color: var(--brand);
 }
 .stats__label {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-2);
 }
 </style>

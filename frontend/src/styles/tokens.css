@@ -35,6 +35,16 @@
   --c-text-2: #7A7590;
   --c-text-3: #A5A0BC;
 
+  /* ---------- 字号阶梯（设计文档 4.5.2）----------
+     中文界面按汉字可读性定档：13px 对拉丁字母尚可，但汉字笔画密度高得多，
+     同字号下辨识成本明显更高。本次由 11/11.5/12/12.5/13/14/15/15.5 八种
+     散乱取值收敛为五档；17px 以上为图标与展示型大标题，不属该阶梯。 */
+  --fs-xs: 12.5px;
+  --fs-sm: 13.5px;
+  --fs-body: 14.5px;
+  --fs-title: 15px;
+  --fs-h1: 17px;
+
   /* ---------- 间距 ---------- */
   --content-padding: 20px 22px;
   --card-padding: 16px 18px;
@@ -48,9 +58,14 @@
   --r-bar: 2px;
 
   /* ---------- 布局 ---------- */
-  --sidebar-w: 230px;
+  /* 展开态随字号放宽：字号涨 11% 后，侧栏「今日待办」的「时间 + 公司名」一行
+     需要更多横向空间，否则省略号截断更早。 */
+  --sidebar-w: 248px;
+  /* 折叠态**保持 64px 不动**：折叠后只显示模块色点（9px）、不承载文字，
+     字号提档对它无影响；且 .el-menu--collapse 的宽度是计算值
+     calc(24px + 20px * 2) = 64px，改容器宽会让菜单比容器窄、色点偏心。 */
   --sidebar-w-collapsed: 64px;
-  --header-h: 56px;
+  --header-h: 62px;
 }
 
 /* ---------- Element Plus 主题覆盖：只改视觉变量，不改组件行为 ----------
@@ -72,6 +87,17 @@
   --el-border-color-light: var(--c-border);
   --el-fill-color-lighter: var(--c-bg);
 
+  /* 尺寸：该组变量**只作用于输入框类**——全库仅 .el-input / .el-date-editor /
+     .el-input-tag 三个选择器引用它。按钮高度不由它们驱动，见文件末尾的按钮覆盖。 */
+  --el-component-size: 36px;
+  --el-component-size-small: 30px;
+  --el-component-size-large: 44px;
+
+  /* 字号：引用 --fs-body 而非写死值，使 Element 组件文字（菜单、下拉、表格、按钮）
+     与自有文字共用同一出处。库默认是 14px，比本项目自有的 13px 正文还大 1px——
+     同一块区域内两套字号体系并存，正是「今日待办显得格外小」的成因之一。 */
+  --el-font-size-base: var(--fs-body);
+
   --el-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Microsoft YaHei", "PingFang SC", sans-serif;
 }
@@ -79,4 +105,48 @@
 /* 数字纵向对齐（设计文档 4.5.2） */
 body {
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Element Plus 按钮尺寸：库变量管不到，必须单独覆盖 ----------
+   .el-button 的规则里没有 height，32px 的"默认高度"是 padding 8px×2 + 行高凑出来的；
+   .el-button--small / --large 的 --el-button-size 又是**规则内硬编码**的 24px / 40px。
+   两者都不读 --el-component-size（该变量只被 .el-input 等三个选择器引用），
+   故三档分别覆盖——只改尺寸变量会得到"输入框变大、按钮纹丝不动"的结果。 */
+.el-button {
+  --el-button-size: 36px;
+  /* 用 min-height 而非 height：长文案按钮可自动撑高，不会被裁切 */
+  min-height: var(--el-button-size);
+}
+.el-button--large {
+  --el-button-size: 44px;
+}
+.el-button--small {
+  --el-button-size: 30px;
+  font-size: var(--fs-sm); /* 库内硬编码 12px，与阶梯的弱化-次要档对齐 */
+}
+
+/* ---------- Element Plus 按钮 loading：图标不占布局 ----------
+   .el-button 在 loading 时会**真实插入**一个图标节点（button 组件的渲染分支），
+   它参与布局并把按钮撑宽——实测「保存画像」由 90px 变 110.5px（图标 1em = 14.5px
+   加上库内 [class*=el-icon]+span 的 6px 外边距，恰好 20.5px），图标移除后缩回，
+   表现为点击保存时按钮宽度一跳。库内只有 :before 遮罩是绝对定位的，图标不是。
+   改为绝对定位居中 + 隐藏文字：按钮宽度恒定，loading 时中央转圈。 */
+.el-button.is-loading > .el-icon.is-loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  z-index: 2; /* 盖过库内 :before 遮罩（z-index: 1） */
+}
+.el-button.is-loading > span {
+  /* 必须用 visibility 而非 display/width：前者保留占位，按钮宽度才不会变回去 */
+  visibility: hidden;
+  /* 光让图标不占位还不够——它仍在 DOM 里当着 span 的前一个兄弟，
+     库内 `.el-button [class*=el-icon]+span { margin-left: 6px }` 照样命中，
+     仍会把按钮撑宽 6px（实测残留值）。故一并归零。
+     边界：此规则假定该按钮正常态不含图标；若某按钮平时就是「图标 + 文字」，
+     它的 span 在正常态本有 6px 且图标占位，loading 时会少掉这部分宽度——
+     当前项目中无此类按钮，将来引入时需改用其他处理方式。 */
+  margin-left: 0;
 }

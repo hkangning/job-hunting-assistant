@@ -74,13 +74,13 @@ function onConfirm() {
 
 <style scoped>
 .close-reason__target {
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--c-text);
   margin-bottom: 14px;
 }
 .close-reason__label {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
   margin-bottom: 8px;
 }
@@ -103,12 +103,12 @@ function onConfirm() {
   background: var(--el-color-primary-light-9);
 }
 .close-reason__option-label {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
 }
 .close-reason__option-hint {
   display: block;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
   line-height: 1.5;
 }

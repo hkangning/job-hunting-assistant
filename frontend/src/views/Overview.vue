@@ -212,7 +212,7 @@ onUnmounted(() => clearInterval(timer))
   background: var(--c-card);
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
 }
 
@@ -241,7 +241,7 @@ onUnmounted(() => clearInterval(timer))
 .starter__desc {
   max-width: 460px;
   margin: 0 auto 30px;
-  font-size: 14px;
+  font-size: var(--fs-title);
   line-height: 1.8;
   color: var(--c-text-2);
 }
@@ -254,7 +254,7 @@ onUnmounted(() => clearInterval(timer))
 }
 .starter__hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 
@@ -264,7 +264,7 @@ onUnmounted(() => clearInterval(timer))
   margin-bottom: var(--card-gap);
 }
 .overview__title {
-  font-size: 13px;
+  font-size: var(--fs-title);
   font-weight: 700;
   color: var(--c-text);
   margin: 0 0 12px;
@@ -272,13 +272,13 @@ onUnmounted(() => clearInterval(timer))
 /* 「今天无事可做」的一句说明（各区块按「有内容才显示」收起后的兜底文案） */
 .overview__quiet {
   margin: 0 0 var(--card-gap);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text-2);
 }
 /* 校招情报无数据时的说明（该区块始终显示，无数据时它承担「讲清这是什么」的职责） */
 .overview__hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   color: var(--c-text-2);
 }
@@ -292,7 +292,8 @@ onUnmounted(() => clearInterval(timer))
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 6px;
+  /* 字号提档后原 9px 6px 显紧：行高变大，纵向留白需同步放宽 */
+  padding: 10px 8px;
   border-bottom: 1px solid var(--c-divider);
   cursor: pointer;
 }
@@ -312,13 +313,13 @@ onUnmounted(() => clearInterval(timer))
   flex: none;
 }
 .evlist__time {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
   white-space: nowrap;
   flex: none;
 }
 .evlist__main {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
   flex: 1;
   overflow: hidden;
@@ -327,7 +328,7 @@ onUnmounted(() => clearInterval(timer))
 }
 .evlist__status,
 .evlist__days {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
   white-space: nowrap;
   flex: none;
@@ -347,7 +348,7 @@ onUnmounted(() => clearInterval(timer))
   background: var(--c-card);
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
   cursor: pointer;
   transition: border-color 0.15s;
@@ -372,7 +373,7 @@ onUnmounted(() => clearInterval(timer))
   flex: none;
 }
 .strip-item b {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text);
 }
 .strip-item__link {

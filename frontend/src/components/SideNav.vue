@@ -93,12 +93,12 @@ onMounted(() => {
   padding: 0 16px;
 }
 .side-nav__mark {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--r-control);
   background: var(--brand);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--fs-title);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -151,15 +151,16 @@ onMounted(() => {
 }
 
 .side-nav__todo {
-  margin: 12px;
-  padding: 11px;
+  margin: 14px;
+  padding: 14px;
   border-radius: var(--r-card);
   background: #fbf6ee;
   border: 1px solid #f0e3ce;
   flex-shrink: 0;
 }
+/* 标题是这块的"标签"（配一个色点），内容才是条目——故标题取弱化档、条目取次要用 */
 .side-nav__todo-title {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: #8f6220;
   margin-bottom: 7px;
@@ -177,10 +178,10 @@ onMounted(() => {
 .side-nav__todo-item {
   display: flex;
   gap: 7px;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
-  padding: 3px 0;
-  line-height: 1.5;
+  padding: 4px 0;
+  line-height: 1.55;
 }
 .side-nav__todo-time {
   color: var(--m-interview);

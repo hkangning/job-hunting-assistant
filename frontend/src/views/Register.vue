@@ -149,11 +149,11 @@ async function submit() {
 }
 .reg__strength-text {
   margin-left: 4px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 .reg__error {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--el-color-danger);
   line-height: 1.5;
 }
@@ -163,7 +163,7 @@ async function submit() {
 .reg__switch {
   margin: 18px 0 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
 .reg__switch a {

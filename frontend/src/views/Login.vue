@@ -80,7 +80,7 @@ async function submit() {
 }
 .login__error {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--el-color-danger);
   line-height: 1.5;
 }
@@ -90,7 +90,7 @@ async function submit() {
 .login__switch {
   margin: 18px 0 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
 .login__switch a {

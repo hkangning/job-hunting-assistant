@@ -226,7 +226,7 @@ async function onSave() {
   margin-top: 4px;
 }
 .pf__keyless {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text-3);
 }
 </style>

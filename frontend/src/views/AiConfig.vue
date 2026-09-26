@@ -51,6 +51,19 @@ const currentFree = computed(() => {
   return row && row.use_shared ? `${row.provider}::${row.model}` : ''
 })
 
+/** 当前生效项的文字描述，置顶展示。
+ *
+ * 两条路径（免费下拉 / 我的配置列表）共用同一个激活位，但下拉框只显示模型名、
+ * 列表圆点又不够显眼——**「现在用的是什么」应该有唯一一处明确的答案**。
+ * 顺带解决一个真实困惑：重复选同一个免费模型时 `change` 不触发、界面毫无反应，
+ * 有了这行就能看出「它本来就已经是当前项」。
+ */
+const activeLabel = computed(() => {
+  const row = providers.value.find((p) => p.provider === active.value)
+  if (!row) return '未配置（AI 功能不可用）'
+  return `${row.name} · ${row.model || '默认模型'}${row.use_shared ? '（免费档）' : ''}`
+})
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -124,6 +137,10 @@ onMounted(load)
   <div class="ai" v-loading="loading">
     <el-alert v-if="error" :title="error" type="error" :closable="false" class="ai__error" />
 
+    <div class="ai__current">
+      当前使用中：<strong>{{ activeLabel }}</strong>
+    </div>
+
     <!-- 免费模型：选中即生效 -->
     <section v-if="freeOptions.length" class="ai__card">
       <h3 class="ai__card-title">免费模型</h3>
@@ -178,6 +195,16 @@ onMounted(load)
 .ai__error {
   margin-bottom: 4px;
 }
+.ai__current {
+  padding: 9px 14px;
+  border-radius: var(--r-card);
+  background: var(--c-bg);
+  font-size: var(--fs-body);
+  color: var(--c-text-2);
+}
+.ai__current strong {
+  color: var(--c-text);
+}
 .ai__card {
   padding: 16px 18px;
   border: 1px solid var(--c-border);
@@ -186,7 +213,7 @@ onMounted(load)
 }
 .ai__card-title {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--c-text);
 }
@@ -204,7 +231,7 @@ onMounted(load)
 }
 .ai__hint {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .ai__list {
@@ -234,13 +261,13 @@ onMounted(load)
 }
 .ai__name {
   min-width: 120px;
-  font-size: 14px;
+  font-size: var(--fs-title);
   color: var(--c-text);
 }
 .ai__model {
   flex: 1;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--c-text-2);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -249,11 +276,11 @@ onMounted(load)
   padding: 0 6px;
   border-radius: var(--r-mark);
   background: var(--c-bg);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--m-jd);
 }
 .ai__group {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--c-text-3);
 }
 .ai__ops {
