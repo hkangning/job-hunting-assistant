@@ -59,7 +59,6 @@ class SettingsDTO(BaseModel):
     asr_key_set: bool = Field(description="是否已配置讯飞语音 Key（**不回显明文**；funasr 下恒为 false）")
     guide_done: bool = Field(description="新手指引是否已读（账号级，默认 false）")
     crawl_enabled: bool = Field(description="就业网抓取开关（**系统级**，任一账号修改全局生效）")
-    crawl_url: str = Field(description="就业网抓取目标地址（系统级）")
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -72,6 +71,5 @@ class SettingsUpdateRequest(BaseModel):
     tts_voice: str | None = Field(default=None, description="TTS 音色名（可选值见 GET /tts/voices）")
     guide_done: StrictBool | None = Field(default=None, description="新手指引已读标记（非布尔值 → 10001）")
     crawl_enabled: StrictBool | None = Field(default=None, description="就业网抓取开关（系统级，非布尔值 → 10001）")
-    crawl_url: str | None = Field(default=None, description="就业网抓取目标地址（系统级）")
     asr_app_id: str | None = Field(default=None, description="讯飞语音 AppID；传值则加密覆盖，传空串不修改")
     asr_api_key: str | None = Field(default=None, description="讯飞语音 Key；传值则加密覆盖，传空串不修改")

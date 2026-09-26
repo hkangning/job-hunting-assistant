@@ -1,4 +1,4 @@
-"""数据库引擎与会话：SQLite 单文件 + WAL 模式 + 外键开启（数据库设计文档 §1），并提供一键初始化。"""
+"""数据库引擎与会话：MySQL 8.0（InnoDB，连接池探活/回收，数据库设计文档 §1），并提供一键初始化。"""
 
 import json
 from collections.abc import Generator
@@ -19,7 +19,6 @@ SYSTEM_USER_ID = 0
 # 系统级（user_id=0）在建表时插入；账号级在注册时按账号插入（见 init_account_data）
 SYSTEM_CONFIG: dict[str, str] = {
     "crawl_enabled": "false",
-    "crawl_url": "",
 }
 
 ACCOUNT_CONFIG: dict[str, str] = {
@@ -38,7 +37,8 @@ class Base(DeclarativeBase):
 
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False},  # SQLite 连接跨线程使用（FastAPI 线程池）
+    pool_pre_ping=True,  # 取连接前探活，防 MySQL 空闲断连（wait_timeout）
+    pool_recycle=3600,  # 连接最长复用 1 小时，早于 MySQL 默认 wait_timeout
 )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -46,7 +46,13 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
-    """每个新连接都开启外键（SQLite 默认关闭，连接级设置）。"""
+    """SQLite 专用：每个新连接开启 WAL 与外键（SQLite 外键默认关闭，且为连接级设置）。
+
+    MySQL/InnoDB 原生支持事务与外键，无需此步。保留该分支是为了让测试库迁移与代码
+    换库解耦——测试侧迁移完成前，SQLite 测试库仍有外键强制保护（数据库切换设计 3.1）。
+    """
+    if engine.dialect.name != "sqlite":
+        return
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
@@ -62,15 +68,16 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def init_db() -> None:
-    """一键初始化：建表 + 初始行 + 种子题库幂等导入（由 main.lifespan 调用）。"""
+def init_db() -> int:
+    """一键初始化：建表 + 初始行 + 种子题库幂等导入（由 main.lifespan 调用）；返回种子新增题数。"""
     from app import models  # noqa: F401  导入以注册全部模型到 Base.metadata
 
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         _init_default_rows(db)
-        _load_seed_questions(db)
+        added = _load_seed_questions(db)
         db.commit()
+    return added
 
 
 def _init_default_rows(db: Session) -> None:
@@ -97,28 +104,45 @@ def init_account_data(db: Session, user_id: int) -> None:
 
 
 def _load_seed_questions(db: Session) -> int:
-    """幂等导入种子题库：按题干 content 去重，返回新增题数（数据库设计 §4）。"""
-    from app.models import Direction, Question, QuestionSource, QuestionType
+    """种子题库 upsert（以题干 content 为匹配键），返回新增题数（数据库设计 §4）。
+
+    内置题的五项分类字段（stack / direction / answer / qtype / rubric）以种子文件为准原地
+    回填；AI 生成题不归种子文件管，题干撞车也不覆盖。不做物理删除——wrong_question 与
+    practice_record 的外键指向 question.id，删题会破坏用户错题本与陪练历史。
+    """
+    from app.models import Direction, Question, QuestionSource, QuestionType, Stack
 
     if not SEED_FILE.exists():
         return 0
 
     items = json.loads(SEED_FILE.read_text(encoding="utf-8"))
-    existing = set(db.scalars(select(Question.content)).all())
+    existing = {q.content: q for q in db.scalars(select(Question)).all()}
     added = 0
     for item in items:
-        if item["content"] in existing:
-            continue
-        db.add(
-            Question(
-                direction=Direction(item["direction"]),
+        stack = Stack(item.get("stack", Stack.COMMON))
+        direction = Direction(item["direction"])
+        qtype = QuestionType(item.get("qtype", QuestionType.SUBJECTIVE))
+        rubric_obj = item.get("rubric")  # 种子文件里是嵌套对象，入库转 JSON 字符串
+        rubric = json.dumps(rubric_obj, ensure_ascii=False) if rubric_obj else None
+        question = existing.get(item["content"])
+        if question is None:
+            question = Question(
+                stack=stack,
+                direction=direction,
                 content=item["content"],
                 answer=item["answer"],
-                qtype=QuestionType(item.get("qtype", QuestionType.SUBJECTIVE)),
+                rubric=rubric,
+                qtype=qtype,
                 source=QuestionSource.BUILTIN,
                 created_at=datetime.now(),
             )
-        )
-        existing.add(item["content"])
-        added += 1
+            db.add(question)
+            existing[item["content"]] = question
+            added += 1
+        elif question.source == QuestionSource.BUILTIN:
+            question.stack = stack
+            question.direction = direction
+            question.answer = item["answer"]
+            question.qtype = qtype
+            question.rubric = rubric
     return added

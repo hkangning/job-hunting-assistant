@@ -6,19 +6,26 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, Uniqu
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
-from app.models.enums import QuestionSource, QuestionType, WrongSourceType
+from app.models.enums import QuestionSource, QuestionType, Stack, WrongSourceType
 
 
 class Question(Base):
     """八股题库：被陪练与错题本复用（FR-009、FR-010）。"""
 
     __tablename__ = "question"
-    __table_args__ = (Index("idx_question_direction", "direction"),)
+    __table_args__ = (
+        Index("idx_question_direction", "direction"),
+        Index("idx_question_stack", "stack"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
-    direction: Mapped[str] = mapped_column(String(20))  # 题目方向，枚举 Direction
+    stack: Mapped[str] = mapped_column(
+        String(20), default=Stack.COMMON
+    )  # 技术栈，枚举 Stack（决定服务哪些岗位）
+    direction: Mapped[str] = mapped_column(String(20))  # 知识领域，枚举 Direction
     content: Mapped[str] = mapped_column(Text)  # 题干（种子导入按此去重）
-    answer: Mapped[str] = mapped_column(Text)  # 标准答案（点评/判定依据）
+    answer: Mapped[str] = mapped_column(Text)  # 标准答案（点评/判定依据；场景题为分层框架）
+    rubric: Mapped[str | None] = mapped_column(Text)  # 四维度评分标尺（JSON 字符串，仅场景题有值）
     qtype: Mapped[str] = mapped_column(
         String(20), default=QuestionType.SUBJECTIVE
     )  # 题型，枚举 QuestionType（CHOICE 走规则判定）

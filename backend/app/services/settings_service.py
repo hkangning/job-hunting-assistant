@@ -33,7 +33,6 @@ def get_settings(db: Session, user_id: int) -> SettingsDTO:
         asr_key_set=bool(account.get("asr_api_key")),
         guide_done=_as_bool(account.get("guide_done", ACCOUNT_CONFIG["guide_done"])),
         crawl_enabled=_as_bool(system.get("crawl_enabled", SYSTEM_CONFIG["crawl_enabled"])),
-        crawl_url=system.get("crawl_url", SYSTEM_CONFIG["crawl_url"]),
     )
 
 
@@ -56,8 +55,6 @@ def update_settings(db: Session, user_id: int, payload: SettingsUpdateRequest) -
 
     if values.get("crawl_enabled") is not None:  # 系统级：任一账号修改全局生效
         _set(db, SYSTEM_USER_ID, "crawl_enabled", "true" if values["crawl_enabled"] else "false")
-    if values.get("crawl_url") is not None:
-        _set(db, SYSTEM_USER_ID, "crawl_url", values["crawl_url"])
 
     for key in ASR_CREDENTIAL_KEYS:
         raw = (values.get(key) or "").strip()
