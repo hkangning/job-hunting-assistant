@@ -63,9 +63,23 @@ CLOSE_REASON_LABELS: dict[CloseReason, str] = {
     CloseReason.EXPIRED: "无消息",
 }
 
-# 导入模板表头（接口文档 3.3）与必填列
-IMPORT_HEADERS = ("company", "position", "city", "applied_at", "channel", "status", "remark")
+# 导入模板表头（接口文档 3.3）：模板用中文表头，解析时映射回内部字段键；未知列名（含英文表头）原样透传，
+# 故旧版英文模板仍可导入
+IMPORT_HEADER_LABELS: dict[str, str] = {
+    "公司": "company",
+    "岗位": "position",
+    "城市": "city",
+    "投递日期": "applied_at",
+    "渠道": "channel",
+    "状态": "status",
+    "备注": "remark",
+}
+# 状态列可填中文标签（如「已投递」），与英文枚举值等效
+STATUS_BY_LABEL: dict[str, ApplicationStatus] = {label: status for status, label in STATUS_LABELS.items()}
 REQUIRED_HEADERS = ("company", "position")
+# 模板示例行：首列带标记，导入时按标记跳过，避免示例数据被误当记录导入
+TEMPLATE_SAMPLE_FLAG = "【示例】"
+TEMPLATE_SAMPLE_ROW = ("【示例】某某科技", "Java 后端开发", "南京", "2026-09-01", "官网", "已投递", "示例行，导入时自动跳过")
 IMPORTABLE_SUFFIXES = (".xlsx", ".csv")
 MAX_IMPORT_BYTES = 2 * 1024 * 1024  # 上传文件上限 2MB（接口文档 3.3）
 
@@ -242,6 +256,8 @@ def import_from_file(db: Session, user_id: int, filename: str, content: bytes) -
     errors: list[ImportErrorItem] = []
     success_count = 0
     for row_no, raw in rows:
+        if raw.get("company", "").strip().startswith(TEMPLATE_SAMPLE_FLAG):
+            continue  # 模板示例行：按首列标记跳过，不计入成功也不计为错误
         if not any(value.strip() for value in raw.values()):
             continue  # 整行空白：跳过，不计入成功也不计为错误
         reason = _validate_row(raw)
@@ -264,13 +280,18 @@ def import_from_file(db: Session, user_id: int, filename: str, content: bytes) -
 
 
 def build_import_template() -> bytes:
-    """生成导入模板 xlsx：仅表头行（不预置示例行，避免示例数据被误当记录导入）。"""
+    """生成导入模板 xlsx：中文表头 + 一行示例（首列带「【示例】」标记，导入时自动跳过）。"""
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "投递清单"
-    sheet.append(list(IMPORT_HEADERS))
-    for index, name in enumerate(IMPORT_HEADERS, start=1):
-        sheet.column_dimensions[get_column_letter(index)].width = max(14, len(name) + 6)
+    labels = list(IMPORT_HEADER_LABELS)
+    sheet.append(labels)
+    sheet.append(list(TEMPLATE_SAMPLE_ROW))
+    for index, name in enumerate(labels, start=1):
+        # 列宽按「表头 / 示例内容」中较宽者，示例行才不会显示不全
+        sheet.column_dimensions[get_column_letter(index)].width = max(
+            14, len(name) + 6, len(TEMPLATE_SAMPLE_ROW[index - 1]) + 2
+        )
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
@@ -304,7 +325,7 @@ def _parse_xlsx(content: bytes) -> tuple[list[str], list[tuple[int, dict[str, st
     workbook.close()
     if not sheets:
         raise BizException(ErrorCode.IMPORT_FILE_INVALID, "文件为空，缺少表头行")
-    header = [_cell_text(cell) for cell in sheets[0]]
+    header = _normalize_header([_cell_text(cell) for cell in sheets[0]])
     rows = [(row_no, _row_dict(header, values)) for row_no, values in enumerate(sheets[1:], start=2)]
     return header, rows
 
@@ -315,7 +336,7 @@ def _parse_csv(content: bytes) -> tuple[list[str], list[tuple[int, dict[str, str
     sheets = list(reader)
     if not sheets:
         raise BizException(ErrorCode.IMPORT_FILE_INVALID, "文件为空，缺少表头行")
-    header = [cell.strip() for cell in sheets[0]]
+    header = _normalize_header(sheets[0])
     rows = [(row_no, _row_dict(header, values)) for row_no, values in enumerate(sheets[1:], start=2)]
     return header, rows
 
@@ -330,8 +351,13 @@ def _decode_csv(content: bytes) -> str:
     raise BizException(ErrorCode.IMPORT_FILE_INVALID, "CSV 文件编码无法识别，请另存为 UTF-8 后重试")
 
 
+def _normalize_header(header: Sequence[str]) -> list[str]:
+    """表头归一化：中文列名映射为内部字段键；未知列名（含旧版英文表头）原样保留，故旧模板仍可导入。"""
+    return [IMPORT_HEADER_LABELS.get(name.strip(), name.strip()) for name in header]
+
+
 def _row_dict(header: Sequence[str], values: Sequence) -> dict[str, str]:
-    """按表头把一行单元格映射为 {列名: 文本}；表头之外的多余列忽略，缺列按空串。"""
+    """按（已归一化的）表头把一行单元格映射为 {字段键: 文本}；表头之外的多余列忽略，缺列按空串。"""
     return {
         name: _cell_text(values[index]) if index < len(values) else ""
         for index, name in enumerate(header)
@@ -352,12 +378,19 @@ def _cell_text(value) -> str:
 
 def _check_header(header: Sequence[str]) -> None:
     """表头校验：缺少必填列返回 20001（TC-04）。"""
-    missing = [name for name in REQUIRED_HEADERS if name not in header]
+    missing = [label for label, key in IMPORT_HEADER_LABELS.items() if key in REQUIRED_HEADERS and key not in header]
     if missing:
         raise BizException(
             ErrorCode.IMPORT_FILE_INVALID,
-            f"表头缺少必填列：{'、'.join(missing)}，请使用模板（{','.join(IMPORT_HEADERS)}）",
+            f"表头缺少必填列：{'、'.join(missing)}，请使用模板（{','.join(IMPORT_HEADER_LABELS)}）",
         )
+
+
+def _parse_import_status(text: str) -> ApplicationStatus:
+    """状态列解析：先按中文标签（模板口径，如「已投递」）匹配，再按英文枚举值；均不匹配抛 ValueError。"""
+    if text in STATUS_BY_LABEL:
+        return STATUS_BY_LABEL[text]
+    return ApplicationStatus(text.upper())
 
 
 def _validate_row(raw: dict[str, str]) -> str | None:
@@ -388,9 +421,10 @@ def _validate_row(raw: dict[str, str]) -> str | None:
     status = raw.get("status", "").strip()
     if status:
         try:
-            ApplicationStatus(status.upper())
+            _parse_import_status(status)
         except ValueError:
-            return f"状态值非法（可选：{'/'.join(item.value for item in ApplicationStatus)}）"
+            options = "、".join(STATUS_LABELS[item] for item in ApplicationStatus)
+            return f"状态值非法（可选：{options}，或对应英文枚举）"
     return None
 
 
@@ -406,7 +440,7 @@ def _build_import_record(user_id: int, raw: dict[str, str]) -> Application:
         city=raw.get("city", "").strip() or None,
         applied_at=to_datetime(_parse_import_date(applied_at)) if applied_at else to_datetime(date.today()),
         channel=raw.get("channel", "").strip() or None,
-        status=ApplicationStatus(status.upper()) if status else ApplicationStatus.APPLIED,
+        status=_parse_import_status(status) if status else ApplicationStatus.APPLIED,
         remark=raw.get("remark", "").strip() or None,
         created_at=now,
         updated_at=now,
