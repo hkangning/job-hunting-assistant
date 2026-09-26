@@ -112,3 +112,34 @@ class TrendData(BaseModel):
     """投递趋势响应数据（GET /applications/trend 响应 data）。"""
 
     items: list[TrendItem] = Field(default_factory=list, description="按日期升序的计数序列，无投递的日期 count=0")
+
+
+class JdReportListItem(BaseModel):
+    """JD 分析报告列表项（GET /jd-reports 的 items 元素，接口文档 3.6）。"""
+
+    id: int = Field(description="报告 id")
+    application_id: int | None = Field(description="关联的投递记录 id，未关联为 null")
+    company: str | None = Field(description="关联投递的公司名（联表展示），未关联为 null")
+    score: int | None = Field(description="综合匹配度 0~100，未从报告提取到为 null")
+    created_at: datetime = Field(description="生成时间 YYYY-MM-DD HH:mm:ss")
+
+    @field_serializer("created_at")
+    def _serialize_datetime(self, value: datetime) -> str | None:
+        """时间字段按接口口径输出 `YYYY-MM-DD HH:mm:ss`（Pydantic 默认 ISO 带 T，不符合约定）。"""
+        return format_datetime(value)
+
+
+class JdReportDTO(BaseModel):
+    """JD 分析报告详情（GET /jd-reports/{id} 响应 data）。"""
+
+    id: int = Field(description="报告 id")
+    application_id: int | None = Field(description="关联的投递记录 id，未关联为 null")
+    jd_text: str = Field(description="JD 原文快照")
+    report_text: str = Field(description="报告全文（五段结构，与流式 delta 拼接一致）")
+    score: int | None = Field(description="综合匹配度 0~100，未从报告提取到为 null")
+    created_at: datetime = Field(description="生成时间 YYYY-MM-DD HH:mm:ss")
+
+    @field_serializer("created_at")
+    def _serialize_datetime(self, value: datetime) -> str | None:
+        """时间字段按接口口径输出 `YYYY-MM-DD HH:mm:ss`（Pydantic 默认 ISO 带 T，不符合约定）。"""
+        return format_datetime(value)

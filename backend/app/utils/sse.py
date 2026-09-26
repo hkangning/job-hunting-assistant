@@ -80,7 +80,37 @@ def sse_response(
     `work` 接收本请求独占的 DB session，逐条 `yield` 事件文本；其 `return` 值（可选，
     形如 `{"record_id": int | None, "extra": dict | None}`）作为 `done` 载荷。
     """
-    return StreamingResponse(_drive(work, start_message), media_type=SSE_MEDIA_TYPE, headers=SSE_HEADERS)
+    return SSEStreamingResponse(
+        _drive(work, start_message), media_type=SSE_MEDIA_TYPE, headers=SSE_HEADERS
+    )
+
+
+class SSEStreamingResponse(StreamingResponse):
+    """SSE 响应：保证客户端断连时**显式关闭**业务生成器（步骤 12 修复）。
+
+    Starlette 对同步生成器用 `iterate_in_threadpool` 包装，该包装在连接断开时只停止拉取、
+    **不关闭**底层生成器——生成器会挂在 `yield` 处直到被 GC，`GeneratorExit` 迟迟不到，
+    业务侧 `finally`（半成品落库、上游连接释放）随之失效（步骤 12 自测实测：断连后半个字都没落库）。
+    这里在响应结束时补一次 `close()`（幂等，正常跑完的生成器再关无副作用），
+    让 `GeneratorExit` 沿 `yield from` 链如期传到业务生成器。
+    """
+
+    def __init__(self, source: Iterator[str], **kwargs) -> None:
+        self._source = source
+        super().__init__(source, **kwargs)
+
+    async def stream_response(self, send) -> None:
+        try:
+            await super().stream_response(send)
+        finally:
+            try:
+                # 必须同步调用：断连在 spec_version 2.3 下走 cancel scope，此时 finally 里任何 await
+                # 都会被立刻取消（close 就白写了）；同步代码打不断，才能真正执行到。代价是落库会让
+                # 事件循环阻塞几十毫秒——只在断连路径发生，换取"兜底一定生效"。
+                self._source.close()
+            except Exception:
+                # 客户端已断，这里再抛也没处报错，记日志即可（勿顶掉原始断连信号）
+                logger.exception("SSE 业务生成器关闭失败")
 
 
 def _drive(work: Callable[[Session], Iterator[str]], start_message: str) -> Iterator[str]:
