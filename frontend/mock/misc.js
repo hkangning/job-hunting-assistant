@@ -28,13 +28,12 @@ export async function getSettings(req) {
   const { user, error } = verifyToken(bearer(req), findById)
   if (error) return [error, 401]
   // 账号级偏好 + 系统级抓取配置（结构对齐接口文档 §3.12）
-  // mock 未实现讯飞凭据存储，asr_key_set 恒为未配置
+  // mock 未实现讯飞凭据存储，asr_key_set 恒为未配置；crawl_url 已废弃（改由信息源清单承载）
   return [
     ok({
       ...db.configs.get(user.id),
       asr_key_set: false,
-      crawl_enabled: 'false',
-      crawl_url: ''
+      crawl_enabled: 'false'
     }),
     200
   ]
