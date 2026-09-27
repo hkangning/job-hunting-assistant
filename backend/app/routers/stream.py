@@ -91,24 +91,38 @@ def jd_analysis_stream(
     application_id = payload.application_id
     # 关联投递的归属校验必须在流式响应建立之前完成（系统设计 5.1：入参校验先于流式建立）
     jd_service.ensure_application(db, user_id, application_id)
+    started = time.perf_counter()
 
     def _run(stream_db: Session) -> Iterator[str]:
         config = resolve_config(stream_db, user_id)
         messages = jd_service.build_messages(stream_db, user_id, jd_text)
         splitter = SectionSplitter(JD_ANALYSIS_SECTION_RULES)
         pieces: list[str] = []
+        first_token_ms: int | None = None
         try:
             for chunk in client.stream_chat(config, messages):
                 for text, section in splitter.feed(chunk):
+                    if first_token_ms is None:
+                        # 首字口径 = 第一个 delta 下发（用户感知的出字时刻）
+                        first_token_ms = _ms_since(started)
                     pieces.append(text)
                     yield SSE.delta(text, section)
             for text, section in splitter.flush():  # 收尾：吐出仍在缓冲的尾巴
+                if first_token_ms is None:
+                    first_token_ms = _ms_since(started)
                 pieces.append(text)
                 yield SSE.delta(text, section)
+            report_text = "".join(pieces)
             record_id = jd_service.save_report(
-                stream_db, user_id, jd_text, application_id, "".join(pieces)
+                stream_db, user_id, jd_text, application_id, report_text
             )
-            return {"record_id": record_id}
+            # 与 /stream/demo 同口径：回报首字与总耗时，供前端展示耗时、核对 NFR-001
+            extra = {
+                "chars": len(report_text),
+                "first_token_ms": first_token_ms,
+                "elapsed_ms": _ms_since(started),
+            }
+            return {"record_id": record_id, "extra": extra}
         except GeneratorExit:
             # 客户端断连：已生成内容落库并标记为未完成后原样抛出（协议层靠它终止上游，系统设计 5.1）
             _save_partial(stream_db, user_id, jd_text, application_id, pieces)

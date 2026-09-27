@@ -243,8 +243,16 @@ def _translate(exc: Exception) -> LLMError:
         if "model" in text.lower():
             return LLMError(ErrorCode.LLM_TEST_FAILED, "模型不存在或不可用，请前往 AI 配置页重新选择模型")
         return LLMError(ErrorCode.LLM_CALL_FAILED, f"请求被供应商拒绝：{text[:120]}")
-    if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
-        return LLMError(ErrorCode.LLM_CALL_FAILED, "AI 服务网络不通或响应超时，请重试")
+    # 超时须先于连接错误判断：APITimeoutError 是 APIConnectionError 的子类，倒过来会被吞掉
+    if isinstance(exc, openai.APITimeoutError):
+        return LLMError(
+            ErrorCode.LLM_CALL_FAILED,
+            "AI 模型长时间无响应（超时），可重试，或前往 AI 配置页更换更快的模型",
+        )
+    if isinstance(exc, openai.APIConnectionError):
+        return LLMError(
+            ErrorCode.LLM_CALL_FAILED, "无法连接 AI 服务，请检查网络，或前往 AI 配置页核对 API 端点"
+        )
     if isinstance(exc, openai.APIStatusError):
         return LLMError(ErrorCode.LLM_CALL_FAILED, f"AI 服务返回异常状态 {exc.status_code}")
     return LLMError(ErrorCode.LLM_CALL_FAILED, f"AI 调用失败：{str(exc)[:120]}")
