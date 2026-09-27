@@ -66,7 +66,8 @@ async function onActivate(item) {
 }
 
 /** 点击整行 = 设为当前（仅非激活行可点，激活行点击无意义）。
- *  行内「修改 / 删除」按钮所在的容器已 stopPropagation，不会误触发本函数。 */
+ *  与行内「设为当前」按钮**并存**：按钮负责可发现，整行可点负责顺手；两者殊途同归。
+ *  行内按钮所在的容器已 stopPropagation，不会误触发本函数。 */
 function onRowClick(item) {
   if (item.is_active) return
   onActivate(item)
@@ -131,8 +132,19 @@ onMounted(load)
           <span class="ai__dot" :class="{ 'ai__dot--on': item.is_active }" />
           <span class="ai__name">{{ item.name }}</span>
           <span class="ai__model">{{ item.model || '默认模型' }}</span>
-          <!-- 行内操作区 stopPropagation：否则点「修改 / 删除」会连带触发整行的「设为当前」 -->
+          <!-- 行内操作区 stopPropagation：否则点「设为当前 / 修改 / 删除」会连带触发整行的切换 -->
           <div class="ai__ops" @click.stop>
+            <!-- 显式入口：整行可点是快捷操作，但界面上得有一处「这行可以切过去」的明示（台账 #63） -->
+            <el-button
+              v-if="!item.is_active"
+              size="small"
+              type="primary"
+              plain
+              @click="onActivate(item)"
+            >
+              设为当前
+            </el-button>
+            <el-button v-else size="small" disabled>当前使用中</el-button>
             <el-button size="small" @click="openEdit(item)">修改</el-button>
             <el-button size="small" type="danger" plain @click="onRemove(item)">删除</el-button>
           </div>

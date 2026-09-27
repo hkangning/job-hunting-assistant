@@ -9,6 +9,10 @@ import {
   emptyData, health, staticAvatar, fail404
 } from './misc.js'
 
+/** 返回**硬编码样例数据**的接口（非真实业务数据）——日志里明确标注。
+ *  台账 #61 的三个误报全部源于此：样例被当成真系统的数据去排查。 */
+const SAMPLE_ROUTES = new Set(['/overview'])
+
 const EXTRA_ROUTES = {
   'GET /profile': getProfile,
   'PUT /profile': putProfile,
@@ -60,12 +64,20 @@ export default function mockApi() {
         // 兜底捕获：mock 内部异常降级为 500 响应，不能让一个坏请求带崩整个 dev server
         try {
           const route = path.slice('/api/v1'.length)
-          console.log(`[mock] ${method} ${route}`)
-
           const auth = AUTH_ROUTES.find(([m, p]) => m === method && p === route)
-          if (auth) return sendJson(res, ...(await auth[2](req)))
-
           const extra = EXTRA_ROUTES[`${method} ${route}`]
+
+          // 日志带上数据来源标注：样例数据 / 未实现，二者都容易被误读为真系统行为
+          const tag = auth
+            ? ''
+            : extra
+              ? SAMPLE_ROUTES.has(route)
+                ? '（样例数据，非真实业务数据）'
+                : ''
+              : '（未单独实现，返回空数据）'
+          console.log(`[mock] ${method} ${route}${tag}`)
+
+          if (auth) return sendJson(res, ...(await auth[2](req)))
           if (extra) return sendJson(res, ...(await extra(req)))
 
           // 未单独实现的业务接口：鉴权通过则空数据成功，否则 401

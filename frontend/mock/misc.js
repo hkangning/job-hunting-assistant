@@ -33,7 +33,7 @@ export async function getSettings(req) {
     ok({
       ...db.configs.get(user.id),
       asr_key_set: false,
-      crawl_enabled: 'false'
+      crawl_enabled: false
     }),
     200
   ]
@@ -45,7 +45,8 @@ export async function putSettings(req) {
   const body = await jsonBody(req)
   const config = db.configs.get(user.id)
   for (const [key, value] of Object.entries(body)) {
-    if (key in config) config[key] = String(value)
+    // 按原类型存值：曾用 String(value)，布尔被存成 "false" 而前端以 !! 判真 → 恒为 true（台账 #61）
+    if (key in config) config[key] = value
   }
   return [ok(config), 200]
 }

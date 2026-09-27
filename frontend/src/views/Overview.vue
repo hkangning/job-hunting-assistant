@@ -94,7 +94,12 @@ onUnmounted(() => clearInterval(timer))
       <template v-else>
       <!-- ① 待面试 / 笔试：最紧急，排最前 -->
 
-      <el-card v-if="upcoming.length" shadow="never" class="overview__card">
+      <el-card
+        v-if="upcoming.length"
+        shadow="never"
+        class="overview__card overview__card--link"
+        @click="goApplications"
+      >
         <h3 class="overview__title">待面试 / 笔试</h3>
         <div class="evlist">
           <div
@@ -102,7 +107,7 @@ onUnmounted(() => clearInterval(timer))
             :key="e.application_id"
             class="evlist__item"
             :class="{ 'evlist__item--soon': isTomorrow(e) }"
-            @click="goApplications"
+            @click.stop="goApplications"
           >
             <i class="evlist__dot" :style="{ background: STATUS_COLORS[e.status] }"></i>
             <span class="evlist__time">{{ shortDateTime(e.event_at) }}</span>
@@ -115,14 +120,19 @@ onUnmounted(() => clearInterval(timer))
 
       <!-- ② 跟进提醒 -->
 
-      <el-card v-if="followUps.length" shadow="never" class="overview__card">
+      <el-card
+        v-if="followUps.length"
+        shadow="never"
+        class="overview__card overview__card--link"
+        @click="goApplications"
+      >
         <h3 class="overview__title">该跟进一下了</h3>
         <div class="evlist">
           <div
             v-for="f in followUps"
             :key="f.application_id"
             class="evlist__item"
-            @click="goApplications"
+            @click.stop="goApplications"
           >
             <i class="evlist__dot" :style="{ background: STATUS_COLORS.APPLIED }"></i>
             <span class="evlist__main">{{ f.company }} · {{ f.position }}</span>
@@ -137,14 +147,18 @@ onUnmounted(() => clearInterval(timer))
            内容随步骤 21~23 填充。见问题记录 IS-29（招聘信息与投递管理是候选池 → 进度追踪的
            两段式，靠视觉语言区分、不合并，故这里的岗位状态不借用投递状态色）与 IS-30。 -->
 
-      <el-card shadow="never" class="overview__card">
+      <el-card
+        shadow="never"
+        class="overview__card overview__card--link"
+        @click="router.push('/campus')"
+      >
         <h3 class="overview__title">校招情报</h3>
         <div v-if="campusEvents.length || jobPostings.length" class="evlist">
           <div
             v-for="e in campusEvents"
             :key="`c-${e.id}`"
             class="evlist__item"
-            @click="router.push('/campus')"
+            @click.stop="router.push('/campus')"
           >
             <i class="evlist__dot" :style="{ background: 'var(--m-campus)' }"></i>
             <span class="evlist__time">{{ e.event_date }}</span>
@@ -155,7 +169,7 @@ onUnmounted(() => clearInterval(timer))
             v-for="p in jobPostings"
             :key="`j-${p.id}`"
             class="evlist__item"
-            @click="router.push('/campus')"
+            @click.stop="router.push('/campus')"
           >
             <i class="evlist__dot" :style="{ background: 'var(--m-campus)' }"></i>
             <span class="evlist__main">{{ p.company }} · {{ p.title }}</span>
@@ -165,7 +179,7 @@ onUnmounted(() => clearInterval(timer))
         <p v-else class="overview__hint">
           聚合多所高校就业网的宣讲会 / 双选会 / 岗位，按画像匹配度排序。
         </p>
-        <el-button link type="primary" class="overview__more" @click="router.push('/campus')">
+        <el-button link type="primary" class="overview__more" @click.stop="router.push('/campus')">
           {{ campusEvents.length || jobPostings.length ? '查看全部' : '去发现机会' }} →
         </el-button>
       </el-card>
@@ -262,6 +276,16 @@ onUnmounted(() => clearInterval(timer))
 .overview__card {
   border-radius: var(--r-card);
   margin-bottom: var(--card-gap);
+}
+/* 卡片整体可点（台账 #64）：跳转目标与卡内按钮一致，把可点区域扩大到整张卡——
+   卡内可交互元素均已 stopPropagation，避免一次点击触发两次导航。
+   悬停反馈沿用底部状态条的口径（边框转品牌色）。 */
+.overview__card--link {
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.overview__card--link:hover {
+  border-color: var(--brand);
 }
 .overview__title {
   font-size: var(--fs-title);

@@ -27,9 +27,12 @@ export function createUser({ username, password, nickname, email }) {
     name: '', school: '', major: '', degree: '', gpa: '', english_level: '', resume_text: '',
     target_position: '', target_city: '', skills: '', weaknesses: '', note: ''
   })
+  // 值按**原类型**存：布尔就存布尔、数字就存数字——与真后端 GET /settings 的 DTO 一致。
+  // 曾统一存字符串，而前端 applySettings 用 `!!data.voice_enabled` 判真，`!!"false" === true`，
+  // 导致走 mock 时「关闭语音 → 保存」必然弹回开启（台账 #61）
   db.configs.set(user.id, {
-    tts_enabled: 'false', voice_enabled: 'false', default_question_count: '8',
-    asr_provider: 'funasr', tts_voice: 'zh-CN-XiaoxiaoNeural', guide_done: 'false'
+    tts_enabled: false, voice_enabled: false, default_question_count: 8,
+    asr_provider: 'funasr', tts_voice: 'zh-CN-XiaoxiaoNeural', guide_done: false
   })
   return user
 }
