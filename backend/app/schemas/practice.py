@@ -92,6 +92,13 @@ class QuestionPickRequest(BaseModel):
     )
 
 
+class ChoiceOption(BaseModel):
+    """选择题选项（不含正确标记，可安全下发直接渲染）。"""
+
+    key: str = Field(description="选项标识 A~D")
+    text: str = Field(description="选项文本")
+
+
 class QuestionItem(BaseModel):
     """抽到的题目（不含 answer 与 rubric，防先看答案）。"""
 
@@ -101,6 +108,11 @@ class QuestionItem(BaseModel):
     content: str = Field(description="题干")
     qtype: str = Field(description="题型枚举值")
     mastery: int = Field(description="该题所属领域的当前掌握度 0~100（无记录为 0），供前端标注弱项")
+    options: list[ChoiceOption] | None = Field(
+        default=None,
+        description="选择题选项数组；仅 qtype=CHOICE 有值，其余题型为 null。不含正确标记，"
+        "故可原样渲染为可点选项——前端不必把选项拼进题干，也不必自行判断对错",
+    )
 
 
 class QuestionListData(BaseModel):

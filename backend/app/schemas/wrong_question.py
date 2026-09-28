@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_serializer, model_validator
 
 from app.models.enums import Direction
+from app.schemas.practice import ChoiceOption
 from app.utils.datetime_utils import format_datetime
 
 
@@ -14,6 +15,11 @@ class WrongQuestionItem(BaseModel):
     id: int = Field(description="错题条目 id")
     question_id: int = Field(description="题目 id")
     content: str = Field(description="题干（联表 question 取全量）")
+    qtype: str = Field(description="题型枚举值（选择题复习走选项点选，与陪练同口径）")
+    options: list[ChoiceOption] | None = Field(
+        default=None,
+        description="选择题选项数组；仅 qtype=CHOICE 有值、其余为 null。不含正确标记，可安全下发",
+    )
     direction: str = Field(description="知识领域，枚举 Direction")
     source_type: str = Field(description="入本来源，枚举 WrongSourceType")
     review_stage: int = Field(description="复习档位 1~4；5 = 四档已走完（对应 mastered_at 有值）")

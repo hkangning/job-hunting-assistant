@@ -38,6 +38,10 @@ class Question(Base):
     qtype: Mapped[str] = mapped_column(
         String(20), default=QuestionType.SUBJECTIVE
     )  # 题型，枚举 QuestionType（CHOICE 走规则判定）
+    options: Mapped[str | None] = mapped_column(
+        Text
+    )  # 选择题选项数组（JSON 字符串，不含正确标记，可安全下发；仅 CHOICE 有值）
+    explanation: Mapped[str | None] = mapped_column(Text)  # 选择题解析（答完展示；仅 CHOICE 有值）
     source: Mapped[str] = mapped_column(
         String(20), default=QuestionSource.BUILTIN
     )  # 题目来源，枚举 QuestionSource

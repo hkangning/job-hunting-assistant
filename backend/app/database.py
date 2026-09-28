@@ -109,9 +109,9 @@ def init_account_data(db: Session, user_id: int) -> None:
 def _load_seed_questions(db: Session) -> int:
     """种子题库 upsert（以题干 content 为匹配键），返回新增题数（数据库设计 §4）。
 
-    内置题的五项分类字段（stack / direction / answer / qtype / rubric）以种子文件为准原地
-    回填；AI 生成题不归种子文件管，题干撞车也不覆盖。不做物理删除——wrong_question 与
-    practice_record 的外键指向 question.id，删题会破坏用户错题本与陪练历史。
+    内置题的七个字段（stack / direction / answer / qtype / rubric / options / explanation）以
+    种子文件为准原地回填；AI 生成题不归种子文件管，题干撞车也不覆盖。不做物理删除——
+    wrong_question 与 practice_record 的外键指向 question.id，删题会破坏用户错题本与陪练历史。
     """
     from app.models import Direction, Question, QuestionSource, QuestionType, Stack
 
@@ -127,6 +127,8 @@ def _load_seed_questions(db: Session) -> int:
         qtype = QuestionType(item.get("qtype", QuestionType.SUBJECTIVE))
         rubric_obj = item.get("rubric")  # 种子文件里是嵌套对象，入库转 JSON 字符串
         rubric = json.dumps(rubric_obj, ensure_ascii=False) if rubric_obj else None
+        options_obj = item.get("options")  # 选择题选项数组，同上转 JSON 字符串（不含正确标记）
+        options = json.dumps(options_obj, ensure_ascii=False) if options_obj else None
         question = existing.get(item["content"])
         if question is None:
             question = Question(
@@ -136,6 +138,8 @@ def _load_seed_questions(db: Session) -> int:
                 answer=item["answer"],
                 rubric=rubric,
                 qtype=qtype,
+                options=options,
+                explanation=item.get("explanation"),
                 source=QuestionSource.BUILTIN,
                 created_at=datetime.now(),
             )
@@ -148,4 +152,6 @@ def _load_seed_questions(db: Session) -> int:
             question.answer = item["answer"]
             question.qtype = qtype
             question.rubric = rubric
+            question.options = options
+            question.explanation = item.get("explanation")
     return added

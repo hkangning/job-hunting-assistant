@@ -21,6 +21,7 @@ from app.schemas.practice import (
     StackOption,
 )
 from app.utils.mastery import compute_mastery
+from app.utils.practice_flow import parse_options
 
 # 技术栈中文名与下辖领域（顺序即前端筛选面板的展示顺序）
 STACKS: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
@@ -195,6 +196,7 @@ def pick_questions(
             content=q.content,
             qtype=q.qtype,
             mastery=mastery_map.get(q.direction, 0),
+            options=parse_options(q.options) or None,  # 仅选择题有值，其余题型下发 null
         )
         for q in picked
     ]

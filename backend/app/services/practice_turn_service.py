@@ -38,9 +38,11 @@ from app.services import practice_session_service
 from app.utils.practice_flow import (
     ATTACK_FACE_ORDER,
     MAX_LAYERS,
+    expand_choice_input,
     is_stuck,
     judge_choice,
     next_turn,
+    parse_options,
 )
 from app.utils.section_splitter import SectionSplitter, drop_sections, public_text
 from app.utils.sse import SSE
@@ -160,8 +162,8 @@ def _submit_turn(
             )
         )
 
-    if question.qtype == QuestionType.CHOICE:
-        # 客观题：服务端规则比对，零 token 即时返回
+    if question.qtype == QuestionType.CHOICE and not records:
+        # 选择题的首次作答轮：服务端规则比对，零 token 即时返回；追问轮回到开放作答
         return (
             yield from _choice_turn(
                 db, session=session, question=question, records=records, payload=payload, client=client
@@ -228,20 +230,23 @@ def _choice_turn(
     payload: PracticeTurnRequest,
     client: LLMClient,
 ) -> Iterator[str]:
-    """客观题：归一化比对判对错，评分与点评由服务端拼（产出结构与作答轮一致）。"""
-    correct = judge_choice(question.answer, payload.user_input or "")
+    """选择题首次作答轮：选项标识展开后规则比对，评分与点评由服务端拼（产出结构与作答轮一致）。"""
+    options = parse_options(question.options)
+    said = expand_choice_input(payload.user_input or "", options)
+    correct = judge_choice(question.answer, payload.user_input or "", options)
     score = 10 if correct else 0
     score_text = f"## 本轮评分\n评分 {score}/10，{'答对了' if correct else '答错了'}。\n"
-    review_text = f"\n## 点评\n{_choice_review(question, payload.user_input or '', correct)}"
+    review_text = f"\n## 点评\n{_choice_review(question, said, correct)}"
     yield SSE.delta(score_text, "round_score")
     yield SSE.delta(review_text, "review")
     record = _save_round(
         db,
         session=session,
         kind=_next_kind(records),
-        answer=_answer_of(payload),
+        answer=said,  # 落库展开后的选项文本，回看与后续追问上下文自然可读
         score=score,
         review=_stored(score_text + review_text),
+        is_correct=1 if correct else 0,  # 客观题规则判定结果落库（主观题由模型评分，此列为 NULL）
         elapsed_ms=payload.elapsed_ms,
     )
     return (
@@ -418,6 +423,7 @@ def _save_round(
     answer: str | None = None,
     score: int | None = None,
     review: str | None = None,
+    is_correct: int | None = None,
     elapsed_ms: int | None = None,
 ) -> PracticeRecord:
     """落库一轮。轮次号取库里最大值 +1——一次请求可能连落两轮（作答 + 提示），内存快照会重号。"""
@@ -430,6 +436,7 @@ def _save_round(
         user_answer=answer,
         score=score,
         review=review,
+        is_correct=is_correct,
         elapsed_ms=elapsed_ms,
     )
     db.add(record)
@@ -532,12 +539,13 @@ def _done(
 # ---------- 客观题规则判定 ----------
 
 
-def _choice_review(question: Question, user_input: str, correct: bool) -> str:
-    """客观题点评：直接给标准答案 + 一句差在哪（规则判定，不调 LLM）。"""
+def _choice_review(question: Question, said: str, correct: bool) -> str:
+    """选择题点评：对错 + 正确选项 + 解析（规则判定，不调 LLM）。"""
     if correct:
-        return f"答对了。标准答案是「{question.answer}」。"
-    said = user_input.strip() or "（未作答）"
-    return f"你答的是「{said}」，标准答案是「{question.answer}」。对着标准答案再核一遍。"
+        head = f"选对了，正确答案就是「{question.answer}」。"
+    else:
+        head = f"这次选的是「{said.strip() or '（未作答）'}」，正确答案是「{question.answer}」。"
+    return f"{head}\n\n{question.explanation}" if question.explanation else head
 
 
 def _extract_score(text: str) -> int | None:

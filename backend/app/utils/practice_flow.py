@@ -1,11 +1,13 @@
-"""训练相关的纯函数层（系统设计 §5.10）：轮次状态机 + 客观题规则判定。
+"""训练相关的纯函数层（系统设计 §5.10）：轮次状态机 + 选择题规则判定。
 
 状态机：给定「模式 + 已发生的轮次 + 本轮结果」，输出下一步动作，由服务层负责执行。
 把"该不该继续追"从 LLM 手里拿回来，避免硬凑层数。
 
-判定：客观题比对标准答案、不调 LLM（零 token），陪练作答与错题复习共用同一套口径。
+判定：把选择题的选项标识（如 `"B"`）展开为选项文本，与正确答案归一化后精确比对、不调
+LLM（零 token）。陪练作答与错题复习共用同一套比对，不各写一套。
 """
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -127,10 +129,44 @@ def normalize_text(text: str) -> str:
     return _PUNCT_RE.sub("", text).lower()
 
 
-def judge_choice(answer: str, user_input: str) -> bool:
-    """客观题规则比对：归一化后互相包含即判对。
+def parse_options(raw: str | None) -> list[dict]:
+    """把库里的 `options`（JSON 字符串）解析为选项数组；空值或串损坏一律当没有选项。"""
+    if not raw:
+        return []
+    try:
+        options = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    return options if isinstance(options, list) else []
 
-    题库的客观题只有标准答案、没有选项数组，故不做选项匹配。
+
+def expand_choice_input(user_input: str, options: list[dict] | None) -> str:
+    """把选择题的选项标识（如 `"B"`）展开为选项文本；展开不到则原样返回。
+
+    先按标识匹配（忽略大小写与首尾空白）；匹配不到时再容错比一次选项文本本身——
+    前端若误传了文本、或旧版前端仍按开放作答提交，也能正常判定而非一律判错。
     """
-    expected, got = normalize_text(answer), normalize_text(user_input)
-    return bool(expected) and bool(got) and (expected in got or got in expected)
+    raw = (user_input or "").strip()
+    groups = options or []
+    if not raw or not groups:
+        return raw
+    for item in groups:
+        key = str(item.get("key", "")).strip()
+        if key and raw.upper() == key.upper():
+            return str(item.get("text", ""))
+    got = normalize_text(raw)
+    for item in groups:
+        text = str(item.get("text", ""))
+        if got and normalize_text(text) == got:
+            return text
+    return raw
+
+
+def judge_choice(answer: str, user_input: str, options: list[dict] | None = None) -> bool:
+    """选择题规则比对：选项标识展开为选项文本后，与正确答案归一化**精确相等**。
+
+    不用包含匹配——单字符的选项标识会被 `"AB"` 这类组合误判。
+    """
+    expanded = expand_choice_input(user_input, options)
+    expected, got = normalize_text(answer), normalize_text(expanded)
+    return bool(expected) and expected == got

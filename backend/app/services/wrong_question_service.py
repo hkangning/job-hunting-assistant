@@ -22,7 +22,7 @@ from app.schemas.wrong_question import (
     WrongQuestionReviewData,
 )
 from app.services import practice_service
-from app.utils.practice_flow import judge_choice
+from app.utils.practice_flow import expand_choice_input, judge_choice, parse_options
 
 REVIEW_STAGE_DAYS = (1, 3, 7, 15)  # 复习档位 1~4 对应的间隔天数（数据库设计 §3.9）
 MAX_REVIEW_STAGE = len(REVIEW_STAGE_DAYS)  # 走完四档即掌握
@@ -212,19 +212,21 @@ def _find_or_create_question(db: Session, payload: WrongQuestionAddRequest) -> Q
 def _judge(
     db: Session, *, user_id: int, question: Question, answer: str, client: LLMClient
 ) -> tuple[bool, str]:
-    """按题型分派判定：客观题规则比对（零 token），主观题与场景题走 LLM。"""
+    """按题型分派判定：选择题规则比对（零 token），主观题与场景题走 LLM。"""
     if question.qtype == QuestionType.CHOICE:
-        correct = judge_choice(question.answer, answer)
-        return correct, _choice_explain(question.answer, answer, correct)
+        options = parse_options(question.options)
+        correct = judge_choice(question.answer, answer, options)
+        return correct, _choice_explain(question, expand_choice_input(answer, options), correct)
     return _judge_by_llm(db, user_id=user_id, question=question, answer=answer, client=client)
 
 
-def _choice_explain(answer: str, user_input: str, correct: bool) -> str:
-    """客观题判定解析：直接给标准答案对照（不调 LLM）。"""
+def _choice_explain(question: Question, said: str, correct: bool) -> str:
+    """选择题判定解析：对错 + 正确选项 + 解析（不调 LLM，与陪练同口径）。"""
     if correct:
-        return f"答对了。标准答案是「{answer}」。"
-    said = user_input.strip() or "（未作答）"
-    return f"你答的是「{said}」，标准答案是「{answer}」。对着标准答案再核一遍。"
+        head = f"选对了，正确答案就是「{question.answer}」。"
+    else:
+        head = f"这次选的是「{said.strip() or '（未作答）'}」，正确答案是「{question.answer}」。"
+    return f"{head}\n\n{question.explanation}" if question.explanation else head
 
 
 def _judge_by_llm(
@@ -263,6 +265,8 @@ def _to_item(row: WrongQuestion, question: Question) -> WrongQuestionItem:
         id=row.id,
         question_id=row.question_id,
         content=question.content,
+        qtype=question.qtype,
+        options=parse_options(question.options) or None,  # 仅选择题有值，其余题型下发 null
         direction=question.direction,
         source_type=row.source_type,
         review_stage=row.review_stage,
