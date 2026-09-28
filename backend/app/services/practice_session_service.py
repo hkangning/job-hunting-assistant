@@ -196,6 +196,7 @@ def list_sessions(
                 question_content=_preview(contents.get(s.question_id, "")),
                 mode=s.mode,
                 status=s.status,
+                time_limit=s.time_limit,
                 overall_score=s.overall_score,
                 passed=bool(s.passed) if s.passed is not None else None,
                 break_face=s.break_face,
@@ -217,6 +218,7 @@ def get_session_detail(db: Session, *, user_id: int, session_id: int) -> Session
         id=session.id,
         mode=session.mode,
         status=session.status,
+        time_limit=session.time_limit,
         question=QuestionBrief(
             id=question.id,
             content=question.content,
