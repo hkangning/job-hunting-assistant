@@ -36,11 +36,14 @@ function tick() {
   rafId = requestAnimationFrame(tick)
 }
 
+// immediate：挂载时文本可能已经有内容（模型快、或多个 delta 成批到达），
+// 此时不会再有 text 变化来触发 watch，少了它该段文字就永远空着
 watch(
   () => props.text,
   () => {
     if (rafId === null) rafId = requestAnimationFrame(tick)
-  }
+  },
+  { immediate: true }
 )
 
 onUnmounted(() => {
