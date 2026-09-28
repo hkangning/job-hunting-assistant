@@ -212,11 +212,12 @@ onUnmounted(stopTimer)
   align-items: center;
   gap: 10px;
 }
+/* 倒计时是「事实」不是「评价」，用中性色；只剩 10 秒才转红告警 */
 .runner__timer {
   font-size: var(--fs-title);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--m-practice);
+  color: var(--c-text);
 }
 .runner__timer--urgent {
   color: var(--el-color-danger);

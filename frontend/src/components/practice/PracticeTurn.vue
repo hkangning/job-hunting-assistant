@@ -8,7 +8,7 @@
 import { computed } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import StreamText from '../StreamText.vue'
-import { DIMENSION_LABELS, parseRoundScore } from '../../utils/practiceStream'
+import { DIMENSION_LABELS, parseRoundScore, toPlainText } from '../../utils/practiceStream'
 
 const props = defineProps({
   turn: { type: Object, required: true },
@@ -94,45 +94,45 @@ const followUpLabel = computed(() => {
             总分 <b>{{ scoreInfo && scoreInfo.score !== null ? scoreInfo.score : dimensionTotal }}</b>
           </div>
         </div>
-        <p v-else class="turn__text"><StreamText :text="block.text" /></p>
+        <p v-else class="turn__text"><StreamText :text="toPlainText(block.text)" /></p>
       </template>
 
       <!-- 提示：只给方向不给答案 -->
       <template v-else-if="block.section === 'hint'">
         <span class="turn__tag turn__tag--hint">方向性提示</span>
-        <p class="turn__text"><StreamText :text="block.text" :streaming="turn.streaming" /></p>
+        <p class="turn__text"><StreamText :text="toPlainText(block.text)" :streaming="turn.streaming" /></p>
       </template>
 
       <!-- 挑错材料：待挑错的候选人答案 -->
       <template v-else-if="block.section === 'material'">
         <span class="turn__tag turn__tag--material">候选人答案（找出其中的错误）</span>
-        <p class="turn__material"><StreamText :text="block.text" :streaming="turn.streaming" /></p>
+        <p class="turn__material"><StreamText :text="toPlainText(block.text)" :streaming="turn.streaming" /></p>
       </template>
 
       <!-- 下一问：一次只问一个 -->
       <template v-else-if="block.section === 'next_question'">
         <span v-if="followUpLabel" class="turn__tag turn__tag--followup">{{ followUpLabel }}</span>
         <p class="turn__text turn__text--strong">
-          <StreamText :text="block.text" :streaming="turn.streaming" />
+          <StreamText :text="toPlainText(block.text)" :streaming="turn.streaming" />
         </p>
       </template>
 
       <!-- 整场总结 -->
       <template v-else-if="block.section === 'summary'">
         <span class="turn__tag turn__tag--summary">本场总结</span>
-        <p class="turn__text"><StreamText :text="block.text" :streaming="turn.streaming" /></p>
+        <p class="turn__text"><StreamText :text="toPlainText(block.text)" :streaming="turn.streaming" /></p>
       </template>
 
       <!-- 参考答案：仅 QUICK 当轮给，其余模式在结算页 -->
       <template v-else-if="block.section === 'reference_answer'">
         <span class="turn__tag turn__tag--ref">{{ answerTitle }}</span>
-        <p class="turn__text"><StreamText :text="block.text" :streaming="turn.streaming" /></p>
+        <p class="turn__text"><StreamText :text="toPlainText(block.text)" :streaming="turn.streaming" /></p>
       </template>
 
       <!-- 差距点与其余文本 -->
       <template v-else>
         <span v-if="block.section === 'review'" class="turn__tag">与参考答案的差距</span>
-        <p class="turn__text"><StreamText :text="block.text" :streaming="turn.streaming" /></p>
+        <p class="turn__text"><StreamText :text="toPlainText(block.text)" :streaming="turn.streaming" /></p>
       </template>
     </div>
 

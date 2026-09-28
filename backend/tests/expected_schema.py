@@ -7,6 +7,13 @@ DateTime→DATETIME、Date→DATE、Integer→INTEGER）。
 多账号改造（v1.3）后：表数 15 → **17**（新增 `user`、`llm_provider_config`），
 8 张账号私有表补 `user_id` + `idx_*_user` 索引，`wrong_question` / `reminder` /
 `user_profile` / `config` 四张表的约束一并变更。
+
+八股陪练升级为「训练系统」（数据库设计 v1.14）后：表数 17 → **19**（新增
+`practice_session`、`domain_mastery`），`practice_record` 扩 4 列
+（`session_id` / `round_index` / `round_kind` / `elapsed_ms`）、`user_answer`
+放宽为可空、并新增 `idx_practice_session` 与指向 `practice_session` 的外键。
+**注意**：该表走的是手工 `ALTER`（`create_all` 不给已存在的表补列，见数据库设计 §7.3），
+开发库与测试库都要执行一次，否则逐轮点评与历史查询会报「未知列」。
 """
 
 # 每表结构：columns 元组为 (列名, 类型, 允许为空, 是否主键)
@@ -138,7 +145,11 @@ TABLES: dict[str, dict] = {
             ("id", "INTEGER", False, True),
             ("user_id", "INTEGER", False, False),
             ("question_id", "INTEGER", False, False),
-            ("user_answer", "TEXT", False, False),
+            ("session_id", "INTEGER", True, False),
+            ("round_index", "INTEGER", False, False),
+            ("round_kind", "VARCHAR(20)", False, False),
+            ("elapsed_ms", "INTEGER", True, False),
+            ("user_answer", "TEXT", True, False),
             ("score", "INTEGER", True, False),
             ("review", "TEXT", True, False),
             ("is_correct", "INTEGER", True, False),
@@ -148,9 +159,61 @@ TABLES: dict[str, dict] = {
             "idx_practice_user": ["user_id"],
             "idx_practice_q": ["question_id"],
             "idx_practice_time": ["created_at"],
+            "idx_practice_session": ["session_id"],
         },
         "uniques": [],
-        "foreign_keys": [("user_id", "user", "id"), ("question_id", "question", "id")],
+        "foreign_keys": [
+            ("user_id", "user", "id"),
+            ("question_id", "question", "id"),
+            ("session_id", "practice_session", "id"),
+        ],
+    },
+    "practice_session": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
+            ("question_id", "INTEGER", False, False),
+            ("mode", "VARCHAR(20)", False, False),
+            ("status", "VARCHAR(20)", False, False),
+            ("time_limit", "INTEGER", True, False),
+            ("overall_score", "INTEGER", True, False),
+            ("break_face", "VARCHAR(20)", True, False),
+            ("hint_count", "INTEGER", False, False),
+            ("passed", "INTEGER", True, False),
+            ("wrong_question_id", "INTEGER", True, False),
+            ("started_at", "DATETIME", False, False),
+            ("finished_at", "DATETIME", True, False),
+        ],
+        "indexes": {
+            "idx_ps_user": ["user_id"],
+            "idx_ps_question": ["question_id"],
+            "idx_ps_time": ["started_at"],
+        },
+        "uniques": [],
+        "foreign_keys": [
+            ("user_id", "user", "id"),
+            ("question_id", "question", "id"),
+            ("wrong_question_id", "wrong_question", "id"),
+        ],
+    },
+    "domain_mastery": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
+            ("stack", "VARCHAR(20)", False, False),
+            ("direction", "VARCHAR(20)", False, False),
+            ("mastery", "INTEGER", False, False),
+            ("answered_count", "INTEGER", False, False),
+            ("covered_count", "INTEGER", False, False),
+            ("last_practiced_at", "DATETIME", True, False),
+        ],
+        "indexes": {
+            "idx_dm_user": ["user_id"],
+        },
+        "uniques": [
+            ["user_id", "stack", "direction"],
+        ],
+        "foreign_keys": [("user_id", "user", "id")],
     },
     "wrong_question": {
         "columns": [
