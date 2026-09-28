@@ -11,7 +11,7 @@ import {
   getPracticeMeta, drawQuestions, createSession, finishSession,
   listSessions, getSession, getMastery, practiceTurnStream
 } from '../api/practice'
-import { createTurn, applyDelta } from '../utils/practiceStream'
+import { createTurn, applyDelta, toPlainText } from '../utils/practiceStream'
 import PracticeSetup from '../components/practice/PracticeSetup.vue'
 import PracticeRunner from '../components/practice/PracticeRunner.vue'
 import PracticeResult from '../components/practice/PracticeResult.vue'
@@ -277,7 +277,7 @@ const detailModeLabel = computed(() =>
         />
         <section v-if="detail.reference_answer" class="practice__card">
           <h3 class="practice__card-title">{{ detailAnswerTitle }}</h3>
-          <p class="practice__answer">{{ detail.reference_answer }}</p>
+          <p class="practice__answer">{{ toPlainText(detail.reference_answer) }}</p>
         </section>
       </div>
 

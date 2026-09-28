@@ -6,6 +6,7 @@
  * （该题此前入过本时为原 id，界面上不区分两者——文案对两种情况都成立）。
  */
 import { computed } from 'vue'
+import { toPlainText } from '../../utils/practiceStream'
 
 const props = defineProps({
   result: { type: Object, required: true },
@@ -82,13 +83,13 @@ const delta = computed(() => {
     <section v-if="result.gaps && result.gaps.length" class="result__card">
       <h3 class="result__title">还缺什么</h3>
       <ul class="result__gaps">
-        <li v-for="(gap, index) in result.gaps" :key="index">{{ gap }}</li>
+        <li v-for="(gap, index) in result.gaps" :key="index">{{ toPlainText(gap) }}</li>
       </ul>
     </section>
 
     <section class="result__card">
       <h3 class="result__title">{{ answerTitle }}</h3>
-      <p class="result__answer">{{ result.reference_answer }}</p>
+      <p class="result__answer">{{ toPlainText(result.reference_answer) }}</p>
     </section>
 
     <section v-if="delta" class="result__card">
