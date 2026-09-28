@@ -178,7 +178,7 @@ async function openDetail(item) {
  *
  * 不猜后端状态机的下一步——直接发 `action=SUBMIT`，由后端按自己的进度处理
  * （该追问就追问、该收尾就收尾），前端只负责把历史轮次摆出来。
- * 已知缺口：回看响应没有 `time_limit`，故恢复后按不限时继续。
+ * 限时档位由回看接口的 `time_limit` 恢复（接口文档 v1.27 补，IS-38）。
  */
 async function resumeSession(item) {
   const data = await getSession(item.id)
@@ -188,9 +188,10 @@ async function resumeSession(item) {
     session_id: data.id,
     mode: data.mode,
     status: data.status,
+    time_limit: data.time_limit ?? null,
     question: data.question
   }
-  turns.value = (data.rounds || []).map(toTurnModel)
+  turns.value = (data.rounds || []).map((round) => toTurnModel(round, data.mode))
   phase.value = 'training'
 }
 
@@ -215,20 +216,24 @@ function backToSetup() {
 
 /**
  * 后端存的轮次 → PracticeTurn 的视图模型（回看与「继续作答」共用）。
- * 后端把每轮点评存成整段文本（无 section 分流），这里按轮次类型还原成块：
- * 提示轮 → hint；材料轮（REBUTTAL 且无作答，其 review 存的是材料全文）→ material；其余 → review。
+ *
+ * 后端把每轮点评存成整段文本（无 section 分流），这里按轮次类型还原成块。
+ * 注意**材料轮的 `round_kind` 也是 `HINT`**（与教练模式的提示轮同一个值，接口文档
+ * v1.26 实现口径），只能靠会话模式区分，故要把 `sessionMode` 一并传进来；
+ * 其 `review` 存的是材料全文，按 material 渲染。
  */
-function toTurnModel(round) {
+function toTurnModel(round, sessionMode) {
   const blocks = []
   if (round.score !== null && round.score !== undefined) {
     blocks.push({ section: 'round_score', text: `${round.score} 分` })
   }
-  const isMaterial = round.kind === 'REBUTTAL' && !round.user_answer
-  const section = round.kind === 'HINT' ? 'hint' : isMaterial ? 'material' : 'review'
+  const isMaterial = sessionMode === 'DEBUG' && round.kind === 'HINT'
+  const section = isMaterial ? 'material' : round.kind === 'HINT' ? 'hint' : 'review'
   if (round.review) blocks.push({ section, text: round.review })
   return {
     kind: round.kind,
-    userAnswer: round.user_answer ?? null,
+    // 提示轮 / 材料轮的作答是空串，转 null 走「不渲染作答区」的分支
+    userAnswer: round.user_answer || null,
     streaming: false,
     error: '',
     next: {},
@@ -238,7 +243,9 @@ function toTurnModel(round) {
   }
 }
 
-const detailRounds = computed(() => (detail.value ? detail.value.rounds.map(toTurnModel) : []))
+const detailRounds = computed(() =>
+  detail.value ? detail.value.rounds.map((round) => toTurnModel(round, detail.value.mode)) : []
+)
 
 const detailAnswerTitle = computed(() =>
   detail.value?.question?.qtype === 'SCENARIO' ? '参考框架' : '参考答案'

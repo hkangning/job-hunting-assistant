@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  createTurn, applyDelta, getBlock, parseRoundScore, DIMENSION_LABELS
+  createTurn, applyDelta, getBlock, parseRoundScore, toPlainText, DIMENSION_LABELS
 } from '../src/utils/practiceStream.js'
 
 test('按 section 分流成块，同 section 的 delta 依次拼接', () => {
@@ -63,7 +63,22 @@ test('getBlock 取不到返回 undefined', () => {
   assert.equal(getBlock(createTurn(), 'summary'), undefined)
 })
 
-test('parseRoundScore 提取首个 0~10 分数并给出结论文本', () => {
+test('toPlainText 剥掉标题行与行内强调标记', () => {
+  assert.equal(toPlainText('## 本轮评分\n评分 0/10，答错了。'), '评分 0/10，答错了。')
+  assert.equal(toPlainText('\n## 点评\n标准答案是……'), '\n标准答案是……')
+  assert.equal(toPlainText('## 追问\n'), '')
+  assert.equal(toPlainText('**重点**：`-Xmx` 参数没交代'), '重点：-Xmx 参数没交代')
+  assert.equal(toPlainText('没有标题的纯文本'), '没有标题的纯文本')
+  assert.equal(toPlainText(''), '')
+})
+
+test('parseRoundScore 适配后端实际下发的「评分 X/10」段落', () => {
+  assert.deepEqual(parseRoundScore('## 本轮评分\n评分 0/10，答错了。'), { score: 0, note: '答错了。' })
+  assert.deepEqual(parseRoundScore('## 本轮评分\n评分 7/10，思路清晰。'), { score: 7, note: '思路清晰。' })
+  assert.deepEqual(parseRoundScore('评分 10 / 10。完整'), { score: 10, note: '完整' })
+})
+
+test('parseRoundScore 兼容「X 分」写法', () => {
   assert.deepEqual(parseRoundScore('7 分，答得不错'), { score: 7, note: '答得不错' })
   assert.deepEqual(parseRoundScore('**8 分**：思路清晰'), { score: 8, note: '思路清晰' })
   assert.deepEqual(parseRoundScore('10 分。完整'), { score: 10, note: '完整' })

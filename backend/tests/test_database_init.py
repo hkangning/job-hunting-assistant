@@ -1,9 +1,12 @@
-"""建表冒烟（TC-51）：17 表存在、字段/索引/约束与设计文档一致、默认值正确、注册预置数据、种子题库就位。
+"""建表冒烟（TC-51）：全部表存在、字段/索引/约束与设计文档一致、默认值正确、注册预置数据、种子题库就位。
 
 **数据库 2026-09-26 由 SQLite 换为 MySQL 8.0**（数据库设计 v1.9）：表数与结构断言不变，
 原 SQLite 专有的 WAL / 外键 PRAGMA 断言改为 MySQL 口径（InnoDB 引擎 + utf8mb4 字符集）。
 
-期望值来源：《数据库设计文档》v1.9 §3~§4，固化在 tests/expected_schema.py。
+期望值来源：《数据库设计文档》v1.14 §3~§4，固化在 tests/expected_schema.py。
+
+**表数**：15 → 17（多账号）→ **19**（八股训练系统）。该数字不再写进断言——用例 1 改为
+**与 `Base.metadata` 比对**，新增表时只改镜像、不改断言。
 
 约定：写数据的用例一律 flush + rollback，**不 commit**——保证用例之间互不残留，
 否则种子题库类断言（题数、题干唯一）会被前面用例插入的临时数据干扰。
@@ -20,7 +23,7 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 import app.models.enums as enums
-from app.database import SessionLocal, engine, init_db
+from app.database import Base, SessionLocal, engine, init_db
 from app.models import (
     AgentConversation,
     Application,
@@ -71,12 +74,19 @@ def _new_user(db, username: str = "helper_user") -> User:
     return user
 
 
-def test_all_17_tables_exist(client: TestClient):
-    """用例 1：经应用启动（lifespan → init_db）后，17 张表全部建出（多账号改造前为 15 张）。"""
+def test_all_tables_exist(client: TestClient):
+    """用例 1：经应用启动（lifespan → init_db）后，ORM 定义的全部表都建了出来。
+
+    表数不再写死在断言里（历史上依次为 15 → 17 → 19，每加一次表都要改这行）；
+    改为**与 ORM 定义比对**：镜像与 `Base.metadata` 必须一一对应，新增表忘了登记镜像同样会被拦下。
+    """
     actual = set(inspect(engine).get_table_names())
     missing = set(TABLES) - actual
     assert not missing, f"缺失表：{sorted(missing)}"
-    assert len(TABLES) == 17, f"期望 17 张表，期望值文件中有 {len(TABLES)} 张"
+    assert set(TABLES) == set(Base.metadata.tables), (
+        f"镜像与 ORM 定义不一致：镜像多 {sorted(set(TABLES) - set(Base.metadata.tables))}、"
+        f"镜像缺 {sorted(set(Base.metadata.tables) - set(TABLES))}"
+    )
 
 
 def test_table_columns_match_doc(client: TestClient):

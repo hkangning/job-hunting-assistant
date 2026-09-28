@@ -70,19 +70,36 @@ function tryParseJson(text) {
 }
 
 /**
+ * 把后端下发的 Markdown 片段转成可直接显示的纯文本。
+ *
+ * 两件事：①**剥掉标题行**（`## 本轮评分` / `## 点评` / `## 追问` / `## 总结`）——
+ * 后端按段落组织文本、标题行随 `delta` 原样下发（与 JD 分析同一口径），而本页的
+ * 版式已由前端标签承担（评分徽章、「与参考答案的差距」、「第 N 层 · 攻击面」），
+ * 标题再显示一遍就是重复；②**去掉行内强调标记**（`**` 与反引号）——AI 输出常带
+ * 粗体与行内代码，本页按纯文本渲染，留着标记反而干扰阅读（2026-09-28 真联调时发现）。
+ */
+export function toPlainText(text) {
+  return String(text ?? '')
+    .replace(/^#{1,6}[^\n]*\n?/gm, '')
+    .replace(/\*\*/g, '')
+    .replace(/`/g, '')
+}
+
+/**
  * 从 `round_score` 文本里抽出本轮评分与结论（展示口径：评分徽章 + 一句话结论）。
  *
- * 后端给的是自然语言（如「7 分，答得不错」），结构化的分数只在结算响应里。
- * 取不出分数时整句当结论、分数位显示占位，不阻断渲染。
+ * 后端实际下发的是「## 本轮评分\n评分 7/10，思路清晰。」这样的 Markdown 段落
+ * （真联调时确认，2026-09-28），也兼容「7 分，答得不错」这类自然语言写法。
+ * 结构化分数只在结算响应里，这里取不出就不显示分数位，不阻断渲染。
  */
 export function parseRoundScore(text) {
-  const plain = String(text ?? '').replace(/[*#`]/g, '')
-  const matched = plain.match(/^\s*(\d+(?:\.\d+)?)\s*分?\s*[，,：:、.。]?\s*/)
+  const plain = toPlainText(text).trim()
+  const matched = plain.match(/^(?:评分\s*)?(\d+(?:\.\d+)?)\s*(?:\/\s*10|分)\s*[，,：:.。]?\s*/)
   if (matched) {
     const score = Number(matched[1])
     if (score >= 0 && score <= 10) {
       return { score, note: plain.slice(matched[0].length).trim() }
     }
   }
-  return { score: null, note: plain.trim() }
+  return { score: null, note: plain }
 }

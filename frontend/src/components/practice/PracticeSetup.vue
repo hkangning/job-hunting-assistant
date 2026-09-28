@@ -121,7 +121,7 @@ function start() {
 
     <div class="setup__field">
       <span class="setup__label">领域</span>
-      <div v-if="directionOptions.length" class="setup__chips">
+      <div v-if="stacks.length && directionOptions.length" class="setup__chips">
         <button
           v-for="domain in directionOptions"
           :key="domain.value"
@@ -134,6 +134,8 @@ function start() {
           {{ domain.label }}
         </button>
       </div>
+      <!-- 严格两步：领域候选只在选了技术栈之后出现。
+           原先把全部 18 个领域平铺出来，一屏全是灰胶囊，既像标签云也违背「先选栈再选领域」的设计 -->
       <span v-else class="setup__empty">先选技术栈</span>
     </div>
 
@@ -260,9 +262,9 @@ function start() {
   border-top: 1px solid var(--c-divider);
 }
 .setup__label {
-  flex: 0 0 52px;
+  flex: 0 0 48px;
   padding-top: 6px;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 .setup__chips {
@@ -277,33 +279,39 @@ function start() {
   color: var(--c-text-3);
 }
 
+/* 胶囊：白底细边，比灰底更轻也更像「可点的按钮」而非「贴上去的标签」 */
 .chip {
-  padding: 5px 14px;
+  padding: 4px 13px;
   font-family: inherit;
   font-size: var(--fs-sm);
   color: var(--c-text-2);
-  background: var(--c-bg);
-  border: 1px solid transparent;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
   border-radius: 999px;
   cursor: pointer;
   transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 .chip:hover:not(:disabled) {
-  color: var(--m-practice);
-  background: color-mix(in srgb, var(--m-practice) 10%, var(--c-card));
+  color: var(--brand);
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--c-card));
 }
+/* 选中态用品牌紫——全站一致（Element 的选中也是这个色），
+   且避免用绿色：绿在界面里读作「成功/通过」，而这里只是「选中」 */
 .chip--on {
-  color: var(--c-card);
-  background: var(--m-practice);
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, var(--c-card));
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--c-card));
   font-weight: 600;
 }
+/* 岗位是「一键预设」而非一种选中状态，用虚线边框与实心选中态区分开 */
 .chip--preset {
-  color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 9%, var(--c-card));
+  color: var(--c-text-2);
+  background: transparent;
+  border-style: dashed;
 }
 .chip--preset:hover:not(:disabled) {
-  color: var(--c-card);
-  background: var(--brand);
+  color: var(--brand);
+  border-color: var(--brand);
 }
 .chip:disabled {
   opacity: 0.6;
@@ -352,7 +360,7 @@ function start() {
   color: var(--c-text);
 }
 .seg__item--on {
-  color: var(--m-practice);
+  color: var(--brand);
   background: var(--c-card);
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(42, 39, 64, 0.1);
