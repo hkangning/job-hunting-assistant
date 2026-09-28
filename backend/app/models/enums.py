@@ -92,6 +92,43 @@ class WrongSourceType(StrEnum):
     MANUAL = "MANUAL"  # 手动添加
 
 
+class PracticeMode(StrEnum):
+    """训练模式（practice_session.mode）：决定这一场陪练怎么聊。"""
+
+    QUICK = "QUICK"  # 快练：一题一答一评（原有形态）
+    INTERVIEWER = "INTERVIEWER"  # 面试官深挖：追问到底，答不上记断点
+    COACH = "COACH"  # 教练引导：答不上降级给提示
+    DEBUG = "DEBUG"  # 挑错纠错：AI 给带错答案，用户找错
+    FEYNMAN = "FEYNMAN"  # 费曼复述：用户先讲，AI 挑漏洞
+
+
+class PracticeSessionStatus(StrEnum):
+    """训练会话状态（practice_session.status）。"""
+
+    RUNNING = "RUNNING"  # 进行中
+    FINISHED = "FINISHED"  # 正常结算
+    ABORTED = "ABORTED"  # 中途作废（材料生成失败等）
+
+
+class AttackFace(StrEnum):
+    """追问攻击面（practice_session.break_face）：追问链的四个层次，层级按此顺序固定。"""
+
+    BASIS = "BASIS"  # 依据（第 1 层）：为什么这么做、原理是什么
+    BOUNDARY = "BOUNDARY"  # 边界（第 2 层）：什么情况下会失效、挂了怎么办
+    TRADEOFF = "TRADEOFF"  # 取舍（第 3 层）：为什么不用另一种方案、代价是什么
+    LANDING = "LANDING"  # 落地（第 4 层）：具体怎么配、量级多少、怎么验证
+
+
+class RoundKind(StrEnum):
+    """轮次类型（practice_record.round_kind）。"""
+
+    OPENING = "OPENING"  # 初始作答
+    FOLLOW_UP = "FOLLOW_UP"  # 追问轮
+    HINT = "HINT"  # 提示轮（求提示 / 教练模式降级；该轮无作答与评分）
+    REBUTTAL = "REBUTTAL"  # 找错轮（挑错模式提交找出的错误）
+    RETELL = "RETELL"  # 复述轮（费曼模式的讲解轮）
+
+
 class ReminderType(StrEnum):
     """提醒类型（reminder.reminder_type）。"""
 

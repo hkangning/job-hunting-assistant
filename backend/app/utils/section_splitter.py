@@ -71,3 +71,34 @@ class SectionSplitter:
             if any(keyword in text for keyword in keywords):
                 return section
         return None
+
+
+def _segments(
+    text: str, rules: Sequence[tuple[Sequence[str], str]]
+) -> list[tuple[str, str | None]]:
+    """整段文本一次性切分（对流式生成器产出的全文做**重切分**，与增量切分同源）。"""
+    splitter = SectionSplitter(rules)
+    return splitter.feed(text) + splitter.flush()
+
+
+def public_text(text: str, rules: Sequence[tuple[Sequence[str], str]]) -> str:
+    """剔除内部段（`_` 前缀）后的全文。
+
+    流式链路只下发公开段，但**落库的是模型原始全文**（内部段是服务端的判定依据，
+    丢了就没法在结算时重算命中率）；故回看与拼语料前都要过这里剥一层。
+    """
+    return "".join(
+        part for part, section in _segments(text, rules) if not (section or "").startswith("_")
+    ).strip()
+
+
+def internal_text(text: str, rules: Sequence[tuple[Sequence[str], str]], name: str) -> str:
+    """取指定内部段的全文；该段不存在时返回空串（调用方按 fail-closed 处理）。"""
+    return "".join(part for part, section in _segments(text, rules) if section == name).strip()
+
+
+def drop_sections(
+    text: str, rules: Sequence[tuple[Sequence[str], str]], names: set[str]
+) -> str:
+    """按段落丢弃指定段，其余原样拼接（落库前用：`traps` 是模型的思考步骤，既不下发也不落库）。"""
+    return "".join(part for part, section in _segments(text, rules) if section not in names)

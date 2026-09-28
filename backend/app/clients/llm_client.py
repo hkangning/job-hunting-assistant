@@ -116,7 +116,7 @@ class OpenAICompatibleClient(LLMClient):
         response = _create_chat(_build_client(config), config, messages)
         content = (response.choices[0].message.content or "") if response.choices else ""
         try:
-            return _parse_json(content)
+            return parse_json_block(content)
         except ValueError as exc:
             raise LLMError(ErrorCode.LLM_OUTPUT_INVALID, f"AI 输出格式异常：{exc}") from exc
 
@@ -258,8 +258,11 @@ def _translate(exc: Exception) -> LLMError:
     return LLMError(ErrorCode.LLM_CALL_FAILED, f"AI 调用失败：{str(exc)[:120]}")
 
 
-def _parse_json(text: str) -> dict:
-    """解析模型返回的 JSON：容忍 ```json 围栏与前后解释文字（取首个 `{` 到末个 `}`）；失败抛 ValueError。"""
+def parse_json_block(text: str) -> dict:
+    """解析模型返回的 JSON：容忍 ```json 围栏与前后解释文字（取首个 `{` 到末个 `}`）；失败抛 ValueError。
+
+    公开：陪练的「判定」段（挑错模式的命中率）也吃这套容错，不复写一份。
+    """
     raw = text.strip()
     fenced = _JSON_FENCE.search(raw)
     if fenced:
@@ -271,3 +274,6 @@ def _parse_json(text: str) -> dict:
     if not isinstance(data, dict):
         raise ValueError("JSON 顶层不是对象")
     return data
+
+
+_parse_json = parse_json_block  # 兼容既有直测用例引用的旧名

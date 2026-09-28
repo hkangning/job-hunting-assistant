@@ -5,13 +5,17 @@ from app.models.agent import AgentConversation, AgentMessage
 from app.models.application import Application, JdAnalysisReport
 from app.models.enums import (
     ApplicationStatus,
+    AttackFace,
     CloseReason,
     Direction,
     ExperienceItemSource,
     MessageRole,
+    PracticeMode,
+    PracticeSessionStatus,
     QuestionSource,
     QuestionType,
     ReminderType,
+    RoundKind,
     SessionStatus,
     Stack,
     UserPlan,
@@ -20,7 +24,7 @@ from app.models.enums import (
 )
 from app.models.experience import Experience, ExperienceItem
 from app.models.interview import InterviewQa, InterviewSession
-from app.models.question import PracticeRecord, Question, WrongQuestion
+from app.models.question import DomainMastery, PracticeRecord, PracticeSession, Question, WrongQuestion
 from app.models.system import CampusEvent, Config, Reminder, UserProfile
 from app.models.user import LlmProviderConfig, User
 
@@ -36,7 +40,9 @@ __all__ = [
     "Experience",
     "ExperienceItem",
     "Question",
+    "PracticeSession",
     "PracticeRecord",
+    "DomainMastery",
     "WrongQuestion",
     "AgentConversation",
     "AgentMessage",
@@ -54,6 +60,10 @@ __all__ = [
     "QuestionSource",
     "Stack",
     "WrongSourceType",
+    "PracticeMode",
+    "PracticeSessionStatus",
+    "AttackFace",
+    "RoundKind",
     "ReminderType",
     "MessageRole",
     "UserRole",

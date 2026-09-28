@@ -17,6 +17,7 @@ from app.routers import (
     jd_analysis,
     llm_providers,
     overview,
+    practice,
     profile,
     settings as settings_router,
     stream,
@@ -61,6 +62,7 @@ app.include_router(profile.router, prefix=settings.api_prefix)
 app.include_router(applications.router, prefix=settings.api_prefix)
 app.include_router(jd_analysis.router, prefix=settings.api_prefix)
 app.include_router(overview.router, prefix=settings.api_prefix)
+app.include_router(practice.router, prefix=settings.api_prefix)
 app.include_router(llm_providers.router, prefix=settings.api_prefix)
 app.include_router(settings_router.router, prefix=settings.api_prefix)
 app.include_router(stream.router, prefix=settings.api_prefix)

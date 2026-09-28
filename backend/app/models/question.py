@@ -1,4 +1,4 @@
-"""题库、陪练记录与错题本模型（数据库设计文档 3.7 / 3.8 / 3.9）。"""
+"""题库、陪练记录与错题本模型（数据库设计文档 3.7 / 3.8 / 3.9 / 3.23 / 3.24）。"""
 
 from datetime import datetime
 
@@ -6,7 +6,16 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, Uniqu
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
-from app.models.enums import QuestionSource, QuestionType, Stack, WrongSourceType
+from app.models.enums import (
+    AttackFace,
+    PracticeMode,
+    PracticeSessionStatus,
+    QuestionSource,
+    QuestionType,
+    RoundKind,
+    Stack,
+    WrongSourceType,
+)
 
 
 class Question(Base):
@@ -35,24 +44,83 @@ class Question(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 创建时间
 
 
+class PracticeSession(Base):
+    """训练会话：一场训练的容器，包含若干轮 practice_record（FR-009）。"""
+
+    __tablename__ = "practice_session"
+    __table_args__ = (
+        Index("idx_ps_user", "user_id"),
+        Index("idx_ps_question", "question_id"),
+        Index("idx_ps_time", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
+    question_id: Mapped[int] = mapped_column(ForeignKey("question.id"))  # 题目
+    mode: Mapped[str] = mapped_column(String(20))  # 训练模式，枚举 PracticeMode
+    status: Mapped[str] = mapped_column(
+        String(20), default=PracticeSessionStatus.RUNNING
+    )  # 会话状态，枚举 PracticeSessionStatus
+    time_limit: Mapped[int | None] = mapped_column(Integer)  # 每轮限时秒数（NULL=不限时）
+    overall_score: Mapped[int | None] = mapped_column(Integer)  # 整场综合分 0~10
+    break_face: Mapped[str | None] = mapped_column(
+        String(20)
+    )  # 首个断点所在层级与攻击面，枚举 AttackFace（层级由它唯一确定）
+    hint_count: Mapped[int] = mapped_column(Integer, default=0)  # 求提示次数
+    passed: Mapped[int | None] = mapped_column(Integer)  # 是否通过（NULL=未结算）
+    wrong_question_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wrong_question.id", ondelete="SET NULL")
+    )  # 入错题本产生的条目（NULL=未入本；错题被删时置空、保留训练历史）
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 开始时间
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)  # 结算时间
+
+
 class PracticeRecord(Base):
-    """陪练记录：一次作答一行，含 AI 评分与点评（FR-009）。"""
+    """陪练记录：一轮作答一行，含 AI 评分与点评（FR-009）。"""
 
     __tablename__ = "practice_record"
     __table_args__ = (
         Index("idx_practice_user", "user_id"),
         Index("idx_practice_q", "question_id"),
         Index("idx_practice_time", "created_at"),
+        Index("idx_practice_session", "session_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     question_id: Mapped[int] = mapped_column(ForeignKey("question.id"))  # 题目
-    user_answer: Mapped[str] = mapped_column(Text)  # 用户作答
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("practice_session.id", name="fk_practice_record_session")
+    )  # 所属训练会话（历史单轮记录为 NULL）
+    round_index: Mapped[int] = mapped_column(Integer, default=1)  # 第几轮（1 = 初始作答）
+    round_kind: Mapped[str] = mapped_column(
+        String(20), default=RoundKind.OPENING
+    )  # 轮次类型，枚举 RoundKind
+    elapsed_ms: Mapped[int | None] = mapped_column(Integer)  # 本轮耗时毫秒（限时模式用）
+    user_answer: Mapped[str | None] = mapped_column(Text)  # 用户作答（提示轮没有作答，可空）
     score: Mapped[int | None] = mapped_column(Integer)  # AI 评分 0~10
     review: Mapped[str | None] = mapped_column(Text)  # AI 点评全文
     is_correct: Mapped[int | None] = mapped_column(Integer)  # 判定对错（NULL=未判定；客观题规则判定）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 作答时间
+
+
+class DomainMastery(Base):
+    """领域掌握度账本：每账号 × 每领域一行，驱动薄弱优先选题（FR-009）。"""
+
+    __tablename__ = "domain_mastery"
+    __table_args__ = (
+        UniqueConstraint("user_id", "stack", "direction", name="uq_dm_user_stack_direction"),
+        Index("idx_dm_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
+    stack: Mapped[str] = mapped_column(String(20))  # 技术栈，枚举 Stack
+    direction: Mapped[str] = mapped_column(String(20))  # 领域，枚举 Direction
+    mastery: Mapped[int] = mapped_column(Integer, default=0)  # 掌握度 0~100
+    answered_count: Mapped[int] = mapped_column(Integer, default=0)  # 累计作答轮次
+    covered_count: Mapped[int] = mapped_column(Integer, default=0)  # 练过的不同题目数
+    last_practiced_at: Mapped[datetime | None] = mapped_column(DateTime)  # 最近练习时间（衰减依据）
 
 
 class WrongQuestion(Base):

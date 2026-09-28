@@ -2,9 +2,11 @@
 
 - `/stream/demo`：协议自检端点（步骤 11），供前端 StreamText 组件联调与流式协议回归；
 - `/stream/jd-analysis`：JD 匹配分析（步骤 12），首条完整业务链路——画像+JD 组装 prompt，
-  AI 逐段产出五段报告，`section_splitter` 逐块标注段落，全文随流落库。
+  AI 逐段产出五段报告，`section_splitter` 逐块标注段落，全文随流落库；
+- `/stream/practice-turn`：八股陪练每轮（步骤 13），五种模式共用一个入口——按模式与时机分派到
+  作答点评 / 追问 / 提示 / 材料 / 找错 / 复述，轮次产出即落库。
 
-其余业务链路（陪练点评 / 模拟面试 / 面经复盘）后续步骤逐个加入本文件。
+其余业务链路（模拟面试 / 面经复盘）后续步骤逐个加入本文件。
 
 路由层只做协议转换：取登录态、校验入参、组装业务生成器、交给 `sse_response` 包装，不直接访问 ORM。
 """
@@ -22,8 +24,9 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.prompts import JD_ANALYSIS_SECTION_RULES
+from app.schemas.practice import PracticeTurnRequest
 from app.schemas.stream import DemoChatRequest, JdAnalysisRequest
-from app.services import jd_service
+from app.services import jd_service, practice_turn_service
 from app.utils.section_splitter import SectionSplitter
 from app.utils.sse import SSE, sse_response
 
@@ -129,6 +132,32 @@ def jd_analysis_stream(
             raise
 
     return sse_response(_run, start_message="正在分析你的 JD…")
+
+
+@router.post("/stream/practice-turn", summary="陪练每轮（流式）")
+def practice_turn_stream(
+    payload: PracticeTurnRequest,
+    current_user: User = Depends(get_current_user),
+    client: LLMClient = Depends(get_llm_client),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """每轮统一入口：初始作答 / 追问 / 提示 / 找错 / 复述都走这里（接口文档 3.8）。
+
+    事件流 `start → delta×N → done`，`done.extra` 回报 `should_finish` 与本轮之后的层号与攻击面
+    （`layer` / `face`，无下一轮为 `null`）；本轮产出即落库，断连则整个本轮不落库（会话仍是 `RUNNING`）。
+    """
+    user_id = current_user.id
+    # 会话级校验必须在流式响应建立之前完成（接口文档 3.8：404 + 10002 / 400 + 10001 按普通响应体返回）
+    practice_turn_service.ensure_playable(db, user_id=user_id, payload=payload)
+
+    def _run(stream_db: Session) -> Iterator[str]:
+        return (
+            yield from practice_turn_service.run_turn(
+                stream_db, user_id=user_id, payload=payload, client=client
+            )
+        )
+
+    return sse_response(_run, start_message="正在点评…")
 
 
 def _save_partial(
