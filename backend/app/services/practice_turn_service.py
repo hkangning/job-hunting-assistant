@@ -35,7 +35,13 @@ from app.prompts import (
 )
 from app.schemas.practice import PracticeTurnRequest
 from app.services import practice_session_service
-from app.utils.practice_flow import ATTACK_FACE_ORDER, MAX_LAYERS, is_stuck, next_turn
+from app.utils.practice_flow import (
+    ATTACK_FACE_ORDER,
+    MAX_LAYERS,
+    is_stuck,
+    judge_choice,
+    next_turn,
+)
 from app.utils.section_splitter import SectionSplitter, drop_sections, public_text
 from app.utils.sse import SSE
 
@@ -48,7 +54,6 @@ ANSWER_KINDS = (RoundKind.OPENING, RoundKind.FOLLOW_UP, RoundKind.REBUTTAL, Roun
 
 _SCORE_RE = re.compile(r"评分[^\d]{0,6}(\d{1,2})")
 _DIM_RES = {key: re.compile(rf"{key}\D{{0,8}}(\d{{1,2}})") for key in DIMENSION_KEYS}
-_PUNCT_RE = re.compile(r"[\s，。、；：？！,.;:?!（）()\[\]【】\"'“”‘’]+")
 
 
 def ensure_playable(db: Session, *, user_id: int, payload: PracticeTurnRequest) -> PracticeSession:
@@ -224,7 +229,7 @@ def _choice_turn(
     client: LLMClient,
 ) -> Iterator[str]:
     """客观题：归一化比对判对错，评分与点评由服务端拼（产出结构与作答轮一致）。"""
-    correct = _judge_choice(question.answer, payload.user_input or "")
+    correct = judge_choice(question.answer, payload.user_input or "")
     score = 10 if correct else 0
     score_text = f"## 本轮评分\n评分 {score}/10，{'答对了' if correct else '答错了'}。\n"
     review_text = f"\n## 点评\n{_choice_review(question, payload.user_input or '', correct)}"
@@ -525,19 +530,6 @@ def _done(
 
 
 # ---------- 客观题规则判定 ----------
-
-
-def _judge_choice(answer: str, user_input: str) -> bool:
-    """客观题规则比对：归一化（去空白标点、转小写）后互相包含即判对。
-
-    题库的客观题只有标准答案、没有选项数组，故不做选项匹配。
-    """
-    expected, got = _normalize(answer), _normalize(user_input)
-    return bool(expected) and bool(got) and (expected in got or got in expected)
-
-
-def _normalize(text: str) -> str:
-    return _PUNCT_RE.sub("", text).lower()
 
 
 def _choice_review(question: Question, user_input: str, correct: bool) -> str:

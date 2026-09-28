@@ -21,6 +21,7 @@ from app.routers import (
     profile,
     settings as settings_router,
     stream,
+    wrong_questions,
 )
 from app.utils.security import AVATAR_DIR
 
@@ -66,6 +67,7 @@ app.include_router(practice.router, prefix=settings.api_prefix)
 app.include_router(llm_providers.router, prefix=settings.api_prefix)
 app.include_router(settings_router.router, prefix=settings.api_prefix)
 app.include_router(stream.router, prefix=settings.api_prefix)
+app.include_router(wrong_questions.router, prefix=settings.api_prefix)
 
 # 头像静态访问：库中存的 uploads/avatars/xxx.png 直接拼后端地址即可（系统设计 3.5，本机运行）
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)

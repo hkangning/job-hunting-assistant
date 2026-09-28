@@ -4,20 +4,19 @@
 """
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.clients.llm_client import parse_json_block
 from app.exceptions import BizException, ErrorCode
-from app.models import PracticeRecord, PracticeSession, Question, WrongQuestion
+from app.models import PracticeRecord, PracticeSession, Question
 from app.models.enums import (
     AttackFace,
     PracticeMode,
     PracticeSessionStatus,
     RoundKind,
-    WrongSourceType,
 )
 from app.prompts import PRACTICE_TURN_SECTION_RULES
 from app.schemas.common import PageData
@@ -31,7 +30,7 @@ from app.schemas.practice import (
     SessionListItem,
     SessionRoundItem,
 )
-from app.services import practice_service
+from app.services import practice_service, wrong_question_service
 from app.utils.practice_flow import (
     ATTACK_FACE_ORDER,
     MAX_LAYERS,
@@ -40,7 +39,6 @@ from app.utils.practice_flow import (
 )
 from app.utils.section_splitter import internal_text, public_text
 
-REVIEW_STAGE_DAYS = (1, 3, 7, 15)  # 复习档位 1~4 对应的间隔天数（数据库设计 §3.9）
 QUESTION_PREVIEW_LIMIT = 60  # 历史列表的题干预览截断长度
 GAP_ITEM_LIMIT = 50  # 单条缺口的字数上限
 GAPS_LIMIT = 5  # 缺口清单条数上限
@@ -136,7 +134,7 @@ def finish_session(db: Session, *, user_id: int, session_id: int) -> SessionFini
     session.finished_at = datetime.now()
     answered = any(r.round_kind in ANSWER_KINDS and (r.user_answer or "").strip() for r in records)
     if not passed and answered:  # 一场都没答就结算的，不判「未通过」、也不入本
-        session.wrong_question_id = _upsert_wrong_question(
+        session.wrong_question_id = wrong_question_service.upsert_wrong_question(
             db, user_id=user_id, question_id=session.question_id, now=session.finished_at
         ).id
     db.commit()
@@ -386,35 +384,6 @@ def _gap_lines(text: str) -> list[str]:
     if lines:
         return [re.split(r"[。！？]", lines[0])[0].strip() + "。"]
     return []
-
-
-def _upsert_wrong_question(
-    db: Session, *, user_id: int, question_id: int, now: datetime
-) -> WrongQuestion:
-    """未通过则入错题本：已在本则档位重置回第 1 档、答错次数累加、退出「已掌握」。"""
-    row = db.execute(
-        select(WrongQuestion).where(
-            WrongQuestion.user_id == user_id, WrongQuestion.question_id == question_id
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        row = WrongQuestion(
-            user_id=user_id,
-            question_id=question_id,
-            source_type=WrongSourceType.PRACTICE,
-            review_stage=1,
-            next_review_at=now + timedelta(days=REVIEW_STAGE_DAYS[0]),
-            wrong_count=1,
-        )
-        db.add(row)
-    else:
-        row.review_stage = 1
-        row.wrong_count += 1
-        row.next_review_at = now + timedelta(days=REVIEW_STAGE_DAYS[0])
-        # 又错了就退出「已掌握」，否则该题此后再不复现（数据库设计 §3.9）
-        row.mastered_at = None
-    db.flush()
-    return row
 
 
 def _preview(text: str) -> str:

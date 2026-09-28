@@ -338,3 +338,36 @@ def build_practice_summary_messages(question, *, history: list[dict]) -> list[di
 三到五句话收尾：整体表现如何、最该补的一到两个方向（具体到知识点）、下次遇到同类题该怎么组织回答。
 """
     return [{"role": "system", "content": PRACTICE_SUMMARY_SYSTEM}, {"role": "user", "content": user}]
+
+
+# ---- 错题本（FR-010）：复习判定 ----
+
+
+WRONG_QUESTION_JUDGE_SYSTEM = """你是资深技术面试官，正在帮一位求职者复习错题。
+
+判定规则：
+- 只判断他这次**是否掌握了这个知识点**，不因表达啰嗦、举例多少扣分；
+- 答对的标准是**要害答到**，不要求与标准答案逐字一致；
+- 拿不准时从严判错，并在解析里点明缺了什么——复习的意义就在于暴露还没掌握的部分。"""
+
+
+def build_wrong_question_judge_messages(question, user_answer: str) -> list[dict]:
+    """错题复习的判定（SUBJECTIVE / SCENARIO）：输出 `{"correct": bool, "explain": "..."}`。
+
+    判定依据与陪练点评同一套靶子——场景题展开四维 `rubric`、其余用标准答案（系统设计 §5.3）。
+    """
+    user = f"""【题目】{question.content}
+
+【判定依据】
+{_key_points(question)}
+
+【他这次的回答】
+{user_answer}
+
+只输出一个 JSON 对象，不要包裹代码块、不要任何多余文字：
+{{"correct": true 或 false, "explain": "一句话说明判定理由；判错时点明缺了哪个关键点"}}
+"""
+    return [
+        {"role": "system", "content": WRONG_QUESTION_JUDGE_SYSTEM},
+        {"role": "user", "content": user},
+    ]

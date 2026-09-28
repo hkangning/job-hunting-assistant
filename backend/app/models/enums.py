@@ -88,6 +88,7 @@ class WrongSourceType(StrEnum):
     """错题入本来源（wrong_question.source_type）。"""
 
     PRACTICE = "PRACTICE"  # 陪练答错入本
+    DRILL = "DRILL"  # 练习模式知识点入本
     INTERVIEW = "INTERVIEW"  # 面试知识点入本
     MANUAL = "MANUAL"  # 手动添加
 

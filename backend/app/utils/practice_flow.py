@@ -1,7 +1,12 @@
-"""训练轮次状态机（系统设计 §5.10）。纯函数：给定「模式 + 已发生的轮次 + 本轮结果」，
-输出下一步动作，由服务层负责执行。把"该不该继续追"从 LLM 手里拿回来，避免硬凑层数。
+"""训练相关的纯函数层（系统设计 §5.10）：轮次状态机 + 客观题规则判定。
+
+状态机：给定「模式 + 已发生的轮次 + 本轮结果」，输出下一步动作，由服务层负责执行。
+把"该不该继续追"从 LLM 手里拿回来，避免硬凑层数。
+
+判定：客观题比对标准答案、不调 LLM（零 token），陪练作答与错题复习共用同一套口径。
 """
 
+import re
 from dataclasses import dataclass
 
 from app.models.enums import AttackFace, PracticeMode
@@ -110,3 +115,22 @@ def judge_passed(
     if mode is PracticeMode.FEYNMAN:
         return (leak_count if leak_count is not None else 99) < 3
     return False
+
+
+# ---- 客观题规则判定（陪练作答与错题复习共用）----
+
+_PUNCT_RE = re.compile(r"[\s，。、；：？！,.;:?!（）()\[\]【】\"'“”‘’]+")
+
+
+def normalize_text(text: str) -> str:
+    """归一化：去空白与标点、转小写——两侧同口径之后才能比对。"""
+    return _PUNCT_RE.sub("", text).lower()
+
+
+def judge_choice(answer: str, user_input: str) -> bool:
+    """客观题规则比对：归一化后互相包含即判对。
+
+    题库的客观题只有标准答案、没有选项数组，故不做选项匹配。
+    """
+    expected, got = normalize_text(answer), normalize_text(user_input)
+    return bool(expected) and bool(got) and (expected in got or got in expected)
