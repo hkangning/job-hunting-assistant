@@ -1,4 +1,4 @@
-"""数据库结构期望值：逐字段固化自《数据库设计文档》v1.5 §3，供建表冒烟测试（TC-51）比对。
+"""数据库结构期望值：逐字段固化自《数据库设计文档》v1.15 §3，供建表冒烟测试（TC-51）比对。
 
 本文件只存数据、不写逻辑：设计文档升版时同步改这里。
 类型字符串取 SQLAlchemy 在 SQLite 下的编译结果（String(n)→VARCHAR(n)、Text→TEXT、
@@ -14,6 +14,12 @@ DateTime→DATETIME、Date→DATE、Integer→INTEGER）。
 放宽为可空、并新增 `idx_practice_session` 与指向 `practice_session` 的外键。
 **注意**：该表走的是手工 `ALTER`（`create_all` 不给已存在的表补列，见数据库设计 §7.3），
 开发库与测试库都要执行一次，否则逐轮点评与历史查询会报「未知列」。
+
+选择题选项与解析（数据库设计 v1.15）后：`question` 新增 `options` / `explanation`
+两列（均 TEXT 可空，**仅 `qtype=CHOICE` 有值**——非选择题不得带这两个字段），
+同样走手工 `ALTER`（§7.3），开发库与测试库都要执行一次，否则启动导入即报
+「Unknown column 'question.options'」；`WrongSourceType` 补 `DRILL`
+（文档 v1.7 先行定义、本次代码落地，练习模式知识点入本）。
 """
 
 # 每表结构：columns 元组为 (列名, 类型, 允许为空, 是否主键)
@@ -130,6 +136,8 @@ TABLES: dict[str, dict] = {
             ("answer", "TEXT", False, False),
             ("rubric", "TEXT", True, False),
             ("qtype", "VARCHAR(20)", False, False),
+            ("options", "TEXT", True, False),
+            ("explanation", "TEXT", True, False),
             ("source", "VARCHAR(20)", False, False),
             ("created_at", "DATETIME", False, False),
         ],
@@ -387,7 +395,7 @@ ENUM_MEMBERS: dict[str, set[str]] = {
     "ExperienceItemSource": {"LLM_EXTRACT", "MANUAL"},
     "QuestionType": {"SUBJECTIVE", "CHOICE", "SCENARIO"},
     "QuestionSource": {"BUILTIN", "AI_GENERATED"},
-    "WrongSourceType": {"PRACTICE", "INTERVIEW", "MANUAL"},
+    "WrongSourceType": {"PRACTICE", "DRILL", "INTERVIEW", "MANUAL"},
     "ReminderType": {"FOLLOW_UP", "WRONG_QUESTION", "INTERVIEW"},
     "MessageRole": {"USER", "ASSISTANT", "TOOL"},
     # 步骤 5 新增两个枚举（数据库设计 §5 user.role / user.plan）
@@ -395,12 +403,13 @@ ENUM_MEMBERS: dict[str, set[str]] = {
     "UserPlan": {"FREE", "PRO"},
 }
 
-# 《数据库设计文档》§4 种子题库要求（2026-09-26 题库升级：128 → 585 题）
+# 《数据库设计文档》§4 种子题库要求（2026-09-28 题库升级：585 → 672 题，新增 87 道选择题）
 # 两层分类 = 5 个技术栈 × 18 个领域，题型含 152 道场景题（全部带 rubric 评分标尺）
-SEED_MIN_TOTAL = 585
-SEED_MIN_PER_STACK = 60  # 实测最小为 AI_AGENT 70
+# 与 100 道选择题（全部带选项数组与解析）
+SEED_MIN_TOTAL = 672
+SEED_MIN_PER_STACK = 60  # 实测最小为 AI_AGENT 87
 SEED_STACKS = ("JAVA_BACKEND", "PYTHON", "AI_AGENT", "BACKEND_COMMON", "COMMON")
-SEED_MIN_PER_DIRECTION = 10  # 实测最小为 15（AGENT / PROMPT / RAG）
+SEED_MIN_PER_DIRECTION = 10  # 实测最小为 19（AGENT / PROMPT / RAG）
 SEED_DIRECTIONS = (
     "JAVA", "JVM", "CONCURRENCY", "SPRING",
     "MYSQL", "REDIS", "MQ",

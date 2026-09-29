@@ -64,14 +64,15 @@ job-hunting-assistant/
 ### 数据库（首次，一次性）
 
 ```powershell
-# MySQL80 服务需已启动。注意：<密码> 是占位符，必须替换成真实密码再执行（尖括号一并替换掉），
+# MySQL 服务需已启动（Windows 下服务名通常为 MySQL80）。注意：<密码> 是占位符，必须替换成真实密码再执行（尖括号一并替换掉），
 # 原样执行会把密码设成中文占位符、后端报 1045 且很难查；命令末 -p 回车后输入 root 密码
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p -e "CREATE DATABASE IF NOT EXISTS job_hunter DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE DATABASE IF NOT EXISTS job_hunter_test DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE USER IF NOT EXISTS 'jobhunter'@'localhost' IDENTIFIED BY '<密码>'; GRANT ALL PRIVILEGES ON job_hunter.* TO 'jobhunter'@'localhost'; GRANT ALL PRIVILEGES ON job_hunter_test.* TO 'jobhunter'@'localhost'; FLUSH PRIVILEGES;"
+# 下方命令用 MySQL 客户端执行；客户端未加入 PATH 时，改用自己安装目录下的 mysql.exe 全路径
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS job_hunter DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE DATABASE IF NOT EXISTS job_hunter_test DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci; CREATE USER IF NOT EXISTS 'jobhunter'@'localhost' IDENTIFIED BY '<密码>'; GRANT ALL PRIVILEGES ON job_hunter.* TO 'jobhunter'@'localhost'; GRANT ALL PRIVILEGES ON job_hunter_test.* TO 'jobhunter'@'localhost'; FLUSH PRIVILEGES;"
 ```
 
 ```powershell
 # 建完自检：用刚设的账号连一次（密码即上面设的那个），能列出两个库即成功
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u jobhunter -p -e "SHOW DATABASES LIKE 'job_hunter%';"
+mysql -u jobhunter -p -e "SHOW DATABASES LIKE 'job_hunter%';"
 ```
 
 一条命令建好**两个库**（开发库 `job_hunter` + 测试库 `job_hunter_test`）、专用账号与授权；报 `1045` 时的排查与重置、逐条 SQL 见 [数据库设计文档 §7.1](docs/03-数据库/数据库设计文档.md)

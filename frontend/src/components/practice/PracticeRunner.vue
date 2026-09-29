@@ -18,6 +18,7 @@ const props = defineProps({
 const emit = defineEmits(['submit', 'hint', 'end', 'exit', 'timeout', 'retry'])
 
 const answer = ref('')
+const picked = ref('')
 const remaining = ref(null)
 const showQuestion = ref(true)
 let timer = null
@@ -34,6 +35,27 @@ const roundNo = computed(() =>
 
 const isCoach = computed(() => props.session.mode === 'COACH')
 const canSubmit = computed(() => !props.streaming)
+
+/** 选择题的选项（后端仅对 `CHOICE` 下发，其余题型为 `null`）。 */
+const choiceOptions = computed(() => props.session.question?.options || [])
+
+/**
+ * 是否用点选作答：只有**首次作答轮**才走服务端规则判定，追问轮回到开放作答
+ * （追的是「为什么这么选」，得说理由）；
+ * `DEBUG` / `FEYNMAN` 两模式首轮不是作答轮（取材料 / 复述），其选择题一律按开放作答处理。
+ */
+const choiceMode = computed(
+  () =>
+    props.session.question?.qtype === 'CHOICE' &&
+    choiceOptions.value.length > 0 &&
+    props.turns.length === 0 &&
+    !['DEBUG', 'FEYNMAN'].includes(props.session.mode)
+)
+
+/** 选中项文本：提交后作为「我的作答」展示——与回看接口返回的展开文本同一形态。 */
+const pickedText = computed(
+  () => choiceOptions.value.find((opt) => opt.key === picked.value)?.text || ''
+)
 
 /**
  * 作答计时的起点：出题后（即上一轮流结束、作答框可用）起算，提交时上报耗时。
@@ -52,7 +74,8 @@ function beginAnswer() {
     if (remaining.value <= 0) {
       stopTimer()
       const elapsedMs = Date.now() - startedAt
-      answer.value = '' // 超时自动提交，输入框清空
+      answer.value = '' // 超时自动提交，作答区清空
+      picked.value = ''
       emit('timeout', { elapsedMs })
     }
   }, 1000)
@@ -80,8 +103,15 @@ const elapsed = () => (startedAt ? Date.now() - startedAt : 0)
 function submit() {
   if (!canSubmit.value) return
   stopTimer()
-  emit('submit', { userInput: answer.value, timedOut: false, elapsedMs: elapsed() })
+  // 选择题提交**选项标识**（契约推荐，与点选交互一致）；空提交仍放行——答不上来也是有效作答
+  emit('submit', {
+    userInput: choiceMode.value ? picked.value : answer.value,
+    displayText: choiceMode.value ? pickedText.value : '',
+    timedOut: false,
+    elapsedMs: elapsed()
+  })
   answer.value = ''
+  picked.value = ''
 }
 
 const urgent = computed(() => remaining.value !== null && remaining.value <= 10)
@@ -149,7 +179,24 @@ onUnmounted(stopTimer)
     </div>
 
     <section ref="answerBox" class="runner__card runner__card--answer">
+      <!-- 选择题首次作答轮走点选；追问轮与其余题型回到文本框（说理由得写字） -->
+      <div v-if="choiceMode" class="runner__choices">
+        <button
+          v-for="opt in choiceOptions"
+          :key="opt.key"
+          type="button"
+          class="choice"
+          :class="{ 'choice--picked': picked === opt.key }"
+          :disabled="streaming"
+          :aria-pressed="picked === opt.key"
+          @click="picked = opt.key"
+        >
+          <span class="choice__key">{{ opt.key }}</span>
+          <span class="choice__text">{{ opt.text }}</span>
+        </button>
+      </div>
       <el-input
+        v-else
         v-model="answer"
         type="textarea"
         :rows="4"
@@ -242,6 +289,64 @@ onUnmounted(stopTimer)
 
 .runner__stream {
   margin: var(--card-gap) 0;
+}
+
+/* 选择题选项：竖排——选项文本通常较长，横排会挤成两行以上反而难扫 */
+.runner__choices {
+  display: grid;
+  gap: 8px;
+}
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--c-text);
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.choice:hover:not(:disabled) {
+  border-color: var(--m-practice);
+}
+.choice:focus-visible {
+  outline: 2px solid var(--m-practice);
+  outline-offset: 2px;
+}
+.choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.choice--picked {
+  border-color: var(--m-practice);
+  background: color-mix(in srgb, var(--m-practice) 8%, var(--c-card));
+}
+.choice__key {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--c-text-2);
+  background: var(--c-bg);
+  border-radius: var(--r-mark);
+}
+.choice--picked .choice__key {
+  color: #fff;
+  background: var(--m-practice);
+}
+.choice__text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  word-break: break-word;
 }
 
 .runner__actions {

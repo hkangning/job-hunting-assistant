@@ -222,6 +222,29 @@ def fake_llm_client() -> Generator[FakeLLMClient, None, None]:
         app.dependency_overrides.pop(get_llm_client, None)
 
 
+@pytest.fixture()
+def llm_configured(client: TestClient) -> TestClient:
+    """给当前账号配一个供应商——AI 链路先过 `resolve_config`，账号未配置会直接 10012。
+
+    走真实的配置解析路径，真正的出网由 `fake_llm_client` 挡在网外；返回 client 便于链式书写。
+    """
+    from app.models import LlmProviderConfig
+    from app.utils.security import encrypt_text
+
+    with SessionLocal() as session:
+        session.add(
+            LlmProviderConfig(
+                user_id=client.auth_account["id"],
+                provider="deepseek",
+                api_key=encrypt_text("sk-test"),
+                model="test-model",
+                is_active=1,
+            )
+        )
+        session.commit()
+    return client
+
+
 def pytest_sessionfinish(session, exitstatus) -> None:
     """会话收尾：释放连接池。
 

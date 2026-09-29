@@ -373,9 +373,9 @@ def test_unique_constraints_enforced(client: TestClient, account, make_account):
 
 
 def test_seed_questions_count(client: TestClient):
-    """用例 12：种子题库总量 ≥585，5 个技术栈与 18 个领域均有覆盖（题库为公共表，全账号共享）。
+    """用例 12：种子题库总量 ≥672，5 个技术栈与 18 个领域均有覆盖（题库为公共表，全账号共享）。
 
-    题库于 2026-09-26 升级（128 → 585 题）：两层分类 = stack（决定服务哪些岗位）
+    题库于 2026-09-28 升级（585 → 672 题）：两层分类 = stack（决定服务哪些岗位）
     × direction（知识领域）；断言的每个维度都取下限而非精确值，题库继续扩充时无需改用例。
     """
     with SessionLocal() as db:
