@@ -54,7 +54,7 @@ const delta = computed(() => {
   <div class="result">
     <section class="result__card result__card--score" :class="{ 'result__card--fail': !result.passed }">
       <div class="result__score">
-        <span class="result__score-value">{{ result.overall_score }}</span>
+        <span class="result__score-value">{{ result.overall_score ?? 0 }}</span>
         <span class="result__score-unit">分</span>
       </div>
       <el-tag :type="result.passed ? 'success' : 'danger'" size="large" effect="dark">

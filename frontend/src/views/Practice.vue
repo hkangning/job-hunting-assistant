@@ -38,6 +38,9 @@ const mastery = ref([])
 // 回看
 const detail = ref(null)
 
+/** 上一场的配置——「再练一场」据此同配置直接抽新题，不必回准备台重选。 */
+const lastConfig = ref(null)
+
 onMounted(async () => {
   await Promise.allSettled([loadMeta(), loadHistory(), loadMastery()])
 })
@@ -61,6 +64,7 @@ async function loadMastery() {
 }
 
 async function handleStart(payload) {
+  lastConfig.value = { ...payload }  // 存副本：准备台的表单后续变动不该影响「再练一场」
   starting.value = true
   try {
     const drawn = await drawQuestions({
@@ -95,7 +99,8 @@ async function handleStart(payload) {
 function runTurn(payload) {
   const turn = reactive({
     kind: inferKind(payload.action),
-    userAnswer: payload.action === 'HINT' ? null : payload.userInput,
+    // 选择题提交的是选项标识（契约推荐），展示用展开后的文本——与回看接口返回的形态一致
+    userAnswer: payload.action === 'HINT' ? null : payload.displayText || payload.userInput,
     streaming: true,
     error: '',
     next: {},
@@ -154,7 +159,8 @@ async function settle(sessionId = session.value?.session_id) {
   await Promise.allSettled([loadHistory(), loadMastery()])
 }
 
-const handleSubmit = ({ userInput, timedOut, elapsedMs }) => runTurn({ userInput, timedOut, elapsedMs })
+const handleSubmit = ({ userInput, displayText, timedOut, elapsedMs }) =>
+  runTurn({ userInput, displayText, timedOut, elapsedMs })
 const handleHint = () => runTurn({ userInput: '', action: 'HINT' })
 const handleEnd = () => runTurn({ userInput: '', action: 'END' })
 const handleTimeout = ({ elapsedMs }) => runTurn({ userInput: '', timedOut: true, elapsedMs })
@@ -215,6 +221,15 @@ function backToSetup() {
 }
 
 /**
+ * 再练一场：沿用上一场的筛选与模式**直接抽新题开新的一场**。
+ * 与「回到准备台」分工不同——那个是回去改配置（两者此前都回准备台，功能重复）。
+ */
+function playAgain() {
+  if (lastConfig.value) handleStart(lastConfig.value)
+  else backToSetup()
+}
+
+/**
  * 后端存的轮次 → PracticeTurn 的视图模型（回看与「继续作答」共用）。
  *
  * 后端把每轮点评存成整段文本（无 section 分流），这里按轮次类型还原成块。
@@ -266,7 +281,9 @@ const detailModeLabel = computed(() =>
         <header class="practice__detail-head">
           <span class="practice__detail-mode">{{ detailModeLabel }}</span>
           <span class="practice__detail-title">{{ detail.question.content }}</span>
-          <el-button :icon="Close" @click="detail = null">关闭</el-button>
+          <el-button class="practice__detail-close" :icon="Close" @click="detail = null">
+            关闭
+          </el-button>
         </header>
         <PracticeTurn
           v-for="(round, index) in detailRounds"
@@ -302,7 +319,7 @@ const detailModeLabel = computed(() =>
         :result="result"
         :meta="meta"
         :qtype="session?.question?.qtype || 'SUBJECTIVE'"
-        @again="backToSetup"
+        @again="playAgain"
         @close="backToSetup"
         @open-wrong="router.push('/wrong-questions')"
       />
@@ -371,6 +388,19 @@ const detailModeLabel = computed(() =>
 }
 .practice__detail-head .el-button {
   flex: 0 0 auto;
+}
+/* 回看的关闭：默认的白底按钮压在白色卡片上边界不清（试用反馈「太不明显」）。
+   改中性浅底 + 边框 + 更深的字色，仍是次要动作的克制观感，但一眼能找到。 */
+.practice__detail-close {
+  color: var(--c-text);
+  background: var(--c-bg);
+  border-color: var(--c-border);
+}
+.practice__detail-close:hover,
+.practice__detail-close:focus {
+  color: var(--c-text);
+  background: var(--c-divider);
+  border-color: var(--c-text-3);
 }
 
 .practice__card {

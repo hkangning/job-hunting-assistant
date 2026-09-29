@@ -7,6 +7,7 @@
 步骤 13 新增项（追问链推进与终止、结算幂等与断点判定、薄弱优先选题、限时超时）。
 """
 
+import json
 from datetime import datetime, timedelta
 from typing import Generator
 
@@ -18,9 +19,9 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 
 from app.models.enums import AttackFace, PracticeMode
-from app.models.question import Question
+from app.models.question import DomainMastery, Question
 from app.utils import mastery as M
-from app.utils.practice_flow import is_break, is_stuck, judge_passed, next_turn
+from app.utils.practice_flow import is_break, is_stuck, judge_passed, next_turn, normalize_text
 
 # ================================================================ A 轮次状态机
 
@@ -546,3 +547,344 @@ class TestFinish:
         )
         assert resp.status_code == 404
         assert resp.json()["code"] == 10002
+
+
+# ================================================================ D 选择题（数据库设计 v1.15 / 接口文档 v1.29 §3.8）
+
+PRACTICE_STREAM = "/api/v1/stream/practice-turn"
+
+
+def _sse_events(body: str) -> list[tuple[str, dict]]:
+    """解析响应体里的 SSE 事件序列（`event: <名>` 与 `data: <JSON>` 两行一块）。"""
+    events = []
+    for block in body.split("\n\n"):
+        lines = block.strip().split("\n")
+        if len(lines) < 2 or not lines[0].startswith("event: "):
+            continue
+        events.append((lines[0][len("event: ") :], json.loads(lines[1][len("data: ") :])))
+    return events
+
+
+def _sections(events: list[tuple[str, dict]]) -> dict[str, str]:
+    """把带 `section` 的 `delta` 按段归并成 `{section: 全文}`（同段多个 delta 顺序拼接）。
+
+    `section` 是**可选字段**——服务端指定的段（选择题的 `round_score` / `review`、参考答案、
+    四维等）才带；AI 点评流本身按标题切段再下发，无标题时整段不带该字段，故此处跳过。
+    """
+    merged: dict[str, str] = {}
+    for name, data in events:
+        if name != "delta" or "section" not in data:
+            continue
+        merged[data["section"]] = merged.get(data["section"], "") + data["text"]
+    return merged
+
+
+def _choice_items(client: TestClient, account, count: int = 5) -> list[dict]:
+    """抽 `count` 道选择题（用 RANDOM——SMART 的加权抽样会让断言不稳定）。"""
+    resp = client.post(
+        f"{API}/questions",
+        json={"qtypes": ["CHOICE"], "count": count, "strategy": "RANDOM"},
+        headers=_auth(account),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["items"]
+
+
+def _correct_key(question_id: int, options: list[dict]) -> str:
+    """按归一化匹配找出正确项的标识——答案在库里，抽题响应里没有。"""
+    with SessionLocal() as session:
+        answer = session.get(Question, question_id).answer
+    return next(o["key"] for o in options if normalize_text(o["text"]) == normalize_text(answer))
+
+
+class TestChoicePick:
+    """选择题的抽题下发（接口文档 §3.8：`options` 仅 `CHOICE` 有值、不含正确标记）。"""
+
+    def test_options_carry_keys_and_text_only(self, client: TestClient, account):
+        """选项为 `[{key, text}]`、键 A~D 且**不含正确标记**——可原样渲染为可点选项而不泄题。"""
+        items = _choice_items(client, account)
+        assert items, "种子题库应含选择题"
+        for item in items:
+            assert item["qtype"] == "CHOICE"
+            options = item["options"]
+            assert isinstance(options, list) and len(options) == 4, options
+            for opt in options:
+                assert set(opt) == {"key", "text"}, f"选项带契约外字段：{opt}"
+                assert opt["key"] and opt["text"]
+            assert [o["key"] for o in options] == ["A", "B", "C", "D"]
+            assert "answer" not in item, "抽题不得下发答案"
+
+    def test_non_choice_options_is_null(self, client: TestClient, account):
+        """其余题型的 `options` 为 `null`——前端据此决定作答区是点选还是文本框。"""
+        resp = client.post(
+            f"{API}/questions",
+            json={"qtypes": ["SUBJECTIVE", "SCENARIO"], "count": 5, "strategy": "RANDOM"},
+            headers=_auth(account),
+        )
+        items = resp.json()["data"]["items"]
+        assert items, "种子题库应含主观题与场景题"
+        for item in items:
+            assert item["qtype"] != "CHOICE"
+            assert item["options"] is None
+
+
+class TestChoiceTurn:
+    """选择题首次作答轮的规则判定（接口文档 §3.8 实现口径第 12 条：零 token 即时产出）。"""
+
+    def _turn(self, client, account, question_id: int, *, mode: str = "QUICK", **payload):
+        session = _open(client, account, question_id, mode=mode)
+        resp = client.post(
+            f"{PRACTICE_STREAM}",
+            json={"session_id": session["session_id"], **payload},
+            headers=_auth(account),
+        )
+        assert resp.status_code == 200, resp.text
+        return session, _sse_events(resp.text)
+
+    def test_correct_key_is_judged_without_llm(self, client, account, fake_llm_client):
+        """提交正确标识 → 判对，且**整轮零 LLM 调用**（QUICK 仅一轮、收尾取题库答案）。"""
+        item = _choice_items(client, account, count=1)[0]
+        key = _correct_key(item["id"], item["options"])
+
+        _, events = self._turn(client, account, item["id"], user_input=key)
+        sections = _sections(events)
+
+        assert "round_score" in sections and "review" in sections
+        assert "答对了" in sections["round_score"]
+        assert fake_llm_client.stream_calls == [], "规则判定不得调模型"
+        assert fake_llm_client.json_calls == []
+
+    def test_wrong_key_review_shows_correct_option(self, client, account, fake_llm_client):
+        """答错时 `review` 给出正确选项（此反馈不属「追问中不给答案」的约束），同样零调用。"""
+        item = _choice_items(client, account, count=1)[0]
+        correct_key = _correct_key(item["id"], item["options"])
+        wrong_key = next(o["key"] for o in item["options"] if o["key"] != correct_key)
+        correct_text = next(o["text"] for o in item["options"] if o["key"] == correct_key)
+
+        _, events = self._turn(client, account, item["id"], user_input=wrong_key)
+        sections = _sections(events)
+
+        assert "答错了" in sections["round_score"]
+        assert correct_text in sections["review"], "点评要给出正确选项"
+        assert fake_llm_client.stream_calls == []
+
+    def test_illegal_key_is_judged_incorrect_not_rejected(self, client, account, fake_llm_client):
+        """不在选项内的标识 → **判错而非报错**。"""
+        item = _choice_items(client, account, count=1)[0]
+        _, events = self._turn(client, account, item["id"], user_input="Z")
+
+        assert "答错了" in _sections(events)["round_score"]
+        assert fake_llm_client.stream_calls == []
+
+    def test_stored_answer_is_expanded_option_text(self, client, account):
+        """落库 `user_answer` 是**展开后的选项文本**——回看与追问上下文自然可读。"""
+        item = _choice_items(client, account, count=1)[0]
+        key = _correct_key(item["id"], item["options"])
+        expected_text = next(o["text"] for o in item["options"] if o["key"] == key)
+
+        session, _ = self._turn(client, account, item["id"], user_input=key)
+        detail = client.get(
+            f"{API}/sessions/{session['session_id']}", headers=_auth(account)
+        ).json()["data"]
+
+        assert detail["rounds"][0]["user_answer"] == expected_text
+
+    def test_followup_turn_falls_back_to_llm(self, client, account, fake_llm_client, llm_configured):
+        """追问轮回到开放作答 → 交 LLM 点评（规则判定只在首次作答轮生效）。"""
+        item = _choice_items(client, account, count=1)[0]
+        key = _correct_key(item["id"], item["options"])
+        session, _ = self._turn(client, account, item["id"], mode="INTERVIEWER", user_input=key)
+        before = len(fake_llm_client.stream_calls)
+
+        resp = client.post(
+            f"{PRACTICE_STREAM}",
+            json={"session_id": session["session_id"], "user_input": "因为间隙锁挡住了插入"},
+            headers=_auth(account),
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(fake_llm_client.stream_calls) > before, "追问轮应走 AI 点评"
+
+
+# ================================================================ E 训练链路（开发计划步骤 13 测试任务）
+
+
+def _pick_one(client: TestClient, account, qtype: str = "SUBJECTIVE") -> dict:
+    resp = client.post(
+        f"{API}/questions",
+        json={"qtypes": [qtype], "count": 1, "strategy": "RANDOM"},
+        headers=_auth(account),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["items"][0]
+
+
+def _stream_turn(client: TestClient, account, session_id: int, **payload) -> list[tuple[str, dict]]:
+    """走一轮 `/stream/practice-turn`，返回事件序列。"""
+    resp = client.post(
+        f"{PRACTICE_STREAM}", json={"session_id": session_id, **payload}, headers=_auth(account)
+    )
+    assert resp.status_code == 200, resp.text
+    return _sse_events(resp.text)
+
+
+def _done_extra(events: list[tuple[str, dict]]) -> dict:
+    """取 `done` 事件的 `extra`——下一轮的层号与攻击面、以及本场是否该结算。"""
+    for name, data in events:
+        if name == "done":
+            return data["extra"]
+    raise AssertionError("事件流里没有 done")
+
+
+def _finish(client: TestClient, account, session_id: int) -> dict:
+    return client.post(f"{API}/sessions/{session_id}/finish", headers=_auth(account)).json()["data"]
+
+
+class TestFollowUpChain:
+    """追问链的推进与终止（接口文档 §3.8：层号与攻击面一一对应、四层封顶）。"""
+
+    def _open(self, client, account, mode: str = "INTERVIEWER", **kw) -> int:
+        item = _pick_one(client, account)
+        return _open(client, account, item["id"], mode=mode, **kw)["session_id"]
+
+    def test_layers_advance_in_fixed_order(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """`done.extra` 给「下一轮」的落点：1·BASIS → 2·BOUNDARY → 3·TRADEOFF → 4·LANDING。
+
+        首轮是 `OPENING`（不算层），所以第 1 轮作答后落点是**第 1 层**而非第 2 层。
+        """
+        session_id = self._open(client, account)
+
+        for expected_layer, expected_face in ((1, "BASIS"), (2, "BOUNDARY"), (3, "TRADEOFF"), (4, "LANDING")):
+            extra = _done_extra(
+                _stream_turn(client, account, session_id, user_input=f"第 {expected_layer} 次作答")
+            )
+            assert extra["layer"] == expected_layer
+            assert extra["face"] == expected_face
+            assert extra["should_finish"] is False, "还没追完，不该提示结算"
+
+    def test_chain_terminates_after_four_layers(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """追满四层（`OPENING` + 四层追问 = 五轮）→ `should_finish=true` 且无下一轮。"""
+        session_id = self._open(client, account)
+
+        for _ in range(5):
+            extra = _done_extra(_stream_turn(client, account, session_id, user_input="作答"))
+
+        assert extra["should_finish"] is True
+        assert extra["layer"] is None and extra["face"] is None
+
+    def test_user_can_end_early(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """主动结束（`action=END`）→ 本场该结算了，不必追满四层。"""
+        session_id = self._open(client, account)
+        _stream_turn(client, account, session_id, user_input="第一轮作答")
+
+        extra = _done_extra(_stream_turn(client, account, session_id, action="END"))
+        assert extra["should_finish"] is True
+
+
+class TestBreakPoint:
+    """断点判定与 `break_face`（结算的纯计算口径）。"""
+
+    def _open(self, client, account, mode: str = "INTERVIEWER", **kw) -> int:
+        item = _pick_one(client, account)
+        return _open(client, account, item["id"], mode=mode, **kw)["session_id"]
+
+    def test_stuck_records_break_at_its_layer(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """第 2 轮（即四层里的第 1 层）交白卷 → 该轮记断点、`break_face` 落在 `BASIS`。"""
+        session_id = self._open(client, account)
+        _stream_turn(client, account, session_id, user_input="第一轮正常作答")
+        _stream_turn(client, account, session_id, user_input="")  # 答不上
+
+        data = _finish(client, account, session_id)
+
+        assert data["rounds"][1]["is_break"] is True
+        assert data["break_face"] == "BASIS", "断点应落在它发生的层级"
+
+    def test_no_break_means_null_face(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """全程答得下来 → `break_face` 为 `null`（没有断点就没有层级）。"""
+        session_id = self._open(client, account, mode="QUICK")
+        _stream_turn(client, account, session_id, user_input="完整作答")
+
+        data = _finish(client, account, session_id)
+        assert all(r["is_break"] is False for r in data["rounds"])
+        assert data["break_face"] is None
+
+    def test_timeout_counts_as_break(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """限时内一字未写 → `timed_out=true` 且计断点（`timed_out` 由服务端按 `elapsed_ms` 推导）。"""
+        session_id = self._open(client, account, mode="QUICK", time_limit=60)
+
+        _stream_turn(client, account, session_id, user_input="", elapsed_ms=60_000, timed_out=True)
+        detail = client.get(f"{API}/sessions/{session_id}", headers=_auth(account)).json()["data"]
+        assert detail["rounds"][0]["timed_out"] is True
+
+        data = _finish(client, account, session_id)
+        assert data["rounds"][0]["is_break"] is True
+
+
+class TestReferenceAnswerTiming:
+    """参考答案的发放时机分模式（接口文档 §3.8：QUICK 轮内给，追问模式推迟到结算）。"""
+
+    def test_quick_gives_it_in_the_turn(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """QUICK 只有一轮——轮内直接给参考答案。"""
+        item = _pick_one(client, account)
+        session_id = _open(client, account, item["id"], mode="QUICK")["session_id"]
+
+        sections = _sections(_stream_turn(client, account, session_id, user_input="作答"))
+        assert "reference_answer" in sections
+
+    def test_follow_up_modes_withhold_until_finish(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """追问模式轮内不给（追问中给答案等于泄题），结算才给。"""
+        item = _pick_one(client, account)
+        session_id = _open(client, account, item["id"], mode="INTERVIEWER")["session_id"]
+
+        sections = _sections(_stream_turn(client, account, session_id, user_input="作答"))
+        assert "reference_answer" not in sections
+
+        assert _finish(client, account, session_id)["reference_answer"]
+
+
+class TestSmartPicking:
+    """薄弱优先选题（契约：`(100 - 掌握度) / 50 × 练习历史系数` 加权抽样）。
+
+    拿 `OS` 与 `NETWORK` 做对照——种子题库里两者**题量相同**（各 45 道），
+    领域占比的差异只可能来自权重，不受题库基数干扰。
+    """
+
+    @pytest.fixture()
+    def mastery_marks(self, client: TestClient, account) -> tuple[str, str]:
+        """把两个领域分别标成掌握度 0 与 100，返回 (弱, 强)。"""
+        weak, strong = "OS", "NETWORK"
+        with SessionLocal() as session:
+            session.add_all(
+                [
+                    DomainMastery(
+                        user_id=account["id"], stack="COMMON", direction=weak,
+                        mastery=0, answered_count=0, covered_count=0,
+                    ),
+                    DomainMastery(
+                        user_id=account["id"], stack="COMMON", direction=strong,
+                        mastery=100, answered_count=0, covered_count=0,
+                    ),
+                ]
+            )
+            session.commit()
+        return weak, strong
+
+    def _draw(self, client: TestClient, account, strategy: str, marks: tuple[str, str], times: int) -> list[str]:
+        weak, strong = marks
+        return [
+            client.post(
+                f"{API}/questions",
+                json={"directions": [weak, strong], "count": 1, "strategy": strategy},
+                headers=_auth(account),
+            ).json()["data"]["items"][0]["direction"]
+            for _ in range(times)
+        ]
+
+    def test_smart_never_draws_a_mastered_direction(self, client: TestClient, account, mastery_marks):
+        """掌握度 100 的领域权重为 0——`SMART` 抽样里绝不出现（确定性断言，非统计）。"""
+        weak, _ = mastery_marks
+        assert set(self._draw(client, account, "SMART", mastery_marks, 10)) == {weak}
+
+    def test_random_is_unaffected_by_mastery(self, client: TestClient, account, mastery_marks):
+        """`RANDOM` 是纯随机对照——掌握度不该左右它，两个领域都会出现。"""
+        _, strong = mastery_marks
+        assert strong in self._draw(client, account, "RANDOM", mastery_marks, 15)
