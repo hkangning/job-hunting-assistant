@@ -161,6 +161,7 @@ TABLES: dict[str, dict] = {
             ("score", "INTEGER", True, False),
             ("review", "TEXT", True, False),
             ("is_correct", "INTEGER", True, False),
+            ("next_choices", "TEXT", True, False),
             ("created_at", "DATETIME", False, False),
         ],
         "indexes": {

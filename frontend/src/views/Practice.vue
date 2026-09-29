@@ -72,7 +72,10 @@ async function handleStart(payload) {
       directions: payload.directions.length ? payload.directions : undefined,
       qtypes: payload.qtypes.length ? payload.qtypes : undefined,
       count: 1,
-      strategy: payload.strategy
+      strategy: payload.strategy,
+      // 带上模式：挑错 / 费曼两模式与选择题形态不搭，后端据此**从源头不抽**选择题——
+      // 否则要等「开始」才被开一场的校验拒掉（400 + 10001），体验上是点了才报错
+      mode: payload.mode
     })
     const question = drawn.items?.[0]
     if (!question) {

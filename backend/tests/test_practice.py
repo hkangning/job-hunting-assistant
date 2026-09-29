@@ -548,6 +548,32 @@ class TestFinish:
         assert resp.status_code == 404
         assert resp.json()["code"] == 10002
 
+    def test_zero_round_settlement_scores_zero(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """IS-42：开一场后一轮未答直接结算 → 综合分 **0**（此前为 `null`，结算页曾渲染成空白）。
+
+        `null` 只属于**未结算**的会话（历史列表项），两个值不要混。
+        """
+        item = _pick_one(client, account, "CHOICE")
+        session_id = _open(client, account, item["id"], mode="QUICK")["session_id"]
+
+        data = client.post(
+            f"{API}/sessions/{session_id}/finish", headers=_auth(account)
+        ).json()["data"]
+
+        assert data["overall_score"] == 0, "零轮结算应为 0 分而非 null"
+        assert data["passed"] is False
+        assert data["wrong_question_id"] is None, "没答过不该入错题本"
+        assert data["rounds"] == []
+
+    def test_unfinished_session_score_stays_null(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """未结算的会话在历史列表里仍是 `null`——与零轮结算的 0 分是两回事。"""
+        item = _pick_one(client, account, "CHOICE")
+        _open(client, account, item["id"], mode="QUICK")
+
+        row = client.get(f"{API}/sessions", headers=_auth(account)).json()["data"]["items"][0]
+        assert row["overall_score"] is None
+        assert row["status"] == "RUNNING"
+
 
 # ================================================================ D 选择题（数据库设计 v1.15 / 接口文档 v1.29 §3.8）
 
@@ -892,48 +918,126 @@ class TestSmartPicking:
 
 # ================================================================ F 追问轮的点选（《选择题作答形态规范》）
 
-_REASON_CHOICES = (
-    "待后端实现「追问轮结构化选项」（规范 §2.3 的 next_choices 段）："
-    "当前追问轮回到开放作答，事件流里没有该段。后端落地后转 XPASS，届时摘掉。"
-)
-_REASON_JUDGE = (
-    "待后端实现「追问轮的规则判定」（规范 §2.2）：追问轮的点选应即时给对错，"
-    "当前该轮走 AI 点评、无服务端拼装的判定文本。"
-)
+_FALLBACK_OPTIONS = [
+    {"key": "A", "text": "连接池被打满"},
+    {"key": "B", "text": "GC 停顿变长"},
+    {"key": "C", "text": "网络抖动"},
+]
+
+
+def _followup_chunks(*, answer: str = "A", options: list | None = None, explain: str = "解析占位") -> list[str]:
+    """构造带选项的追问输出——AI 的真实产出形态（`app/prompts.py` 的追问模板）。
+
+    段标题是**中文**「下一轮选项」（内部 section 名才是 `next_choices`），JSON 包在代码块里；
+    服务端按段切分后：题干走 `next_question` 流式下发，选项**剥离正确项**后走 `next_choices` 下发，
+    完整版落库供下一轮判定。
+    """
+    payload = {"options": options if options is not None else _FALLBACK_OPTIONS, "answer": answer, "explain": explain}
+    return [
+        "## 追问\n如果并发再翻十倍，最先崩的是哪一环？\n\n",
+        f"## 下一轮选项\n```json\n{json.dumps(payload, ensure_ascii=False)}\n```\n",
+    ]
 
 
 class TestFollowUpChoices:
     """追问轮的点选作答（规范：`docs/superpowers/specs/2026-09-29-选择题作答形态规范-design.md`）。
 
-    后端尚未实现，故两个用例整条以 `xfail(strict=True)` 固定契约——后端落地后自动转
-    **XPASS**（strict 模式下会失败），届时摘掉标记即可。
+    追问的选项由 AI 随追问下发（`next_choices` 段）：合法则下发剥离正确项的那份、完整版落库；
+    不合法（键不连续、项数越界、`answer` 越界等）则**整段丢弃**，该轮降级回开放作答。
     """
 
-    @pytest.mark.xfail(strict=True, reason=_REASON_CHOICES)
-    def test_followup_turn_carries_choices(self, client: TestClient, account, fake_llm_client, llm_configured):
-        """追问轮下发 `next_choices` 段：3~4 项、键从 A 连续，且**不含正确项**。"""
+    def _to_followup(self, client: TestClient, account, fake_llm_client) -> tuple[int, list[tuple[str, dict]]]:
+        """开一场选择题、答完首轮——服务端据此产出追问（此时 fake 的输出带选项）。"""
         item = _pick_one(client, account, "CHOICE")
         session_id = _open(client, account, item["id"], mode="INTERVIEWER")["session_id"]
+        return session_id, _stream_turn(client, account, session_id, user_input="A")
+
+    def test_followup_turn_carries_choices(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """追问轮下发 `next_choices` 段：键从 A 连续，且**不含正确项与解析**。"""
+        fake_llm_client.chunks = _followup_chunks()
+        _, events = self._to_followup(client, account, fake_llm_client)
 
         payload = None
-        for name, data in _stream_turn(client, account, session_id, user_input="A"):
+        for name, data in events:
             if name == "delta" and data.get("section") == "next_choices":
                 payload = data["text"]
         assert payload is not None, "追问轮应下发 next_choices 段"
 
         options = json.loads(payload)["options"]
         assert 3 <= len(options) <= 4, f"选项数应为 3~4，实际 {len(options)}"
-        assert [opt["key"] for opt in options] == list("ABCD"[: len(options)])
+        assert [opt["key"] for opt in options] == list("ABC"[: len(options)])
         for opt in options:
-            assert set(opt) == {"key", "text"}, f"选项不得含正确标记：{opt}"
+            assert set(opt) == {"key", "text"}, f"下发不得含正确项或解析：{opt}"
 
-    @pytest.mark.xfail(strict=True, reason=_REASON_JUDGE)
     def test_followup_choice_is_rule_judged(self, client: TestClient, account, fake_llm_client, llm_configured):
         """追问轮提交选项标识 → 服务端规则判定、即时给对错（与首轮同形）。"""
-        item = _pick_one(client, account, "CHOICE")
-        session_id = _open(client, account, item["id"], mode="INTERVIEWER")["session_id"]
-        _stream_turn(client, account, session_id, user_input="A")  # 首轮：点选
+        fake_llm_client.chunks = _followup_chunks(answer="A")
+        session_id, _ = self._to_followup(client, account, fake_llm_client)
 
-        sections = _sections(_stream_turn(client, account, session_id, user_input="B"))
+        sections = _sections(_stream_turn(client, account, session_id, user_input="A"))
         score = sections.get("round_score", "")
-        assert "答对" in score or "答错" in score, f"追问轮的判定应由服务端拼装，实际：{score[:60]}"
+        assert "答对了" in score, f"追问轮的判定应由服务端拼装，实际：{score[:60]}"
+
+    def test_invalid_choices_fall_back_to_open_answer(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """选项不合法（键不连续）→ **整段不下发**，该轮回到开放作答（降级路径）。"""
+        fake_llm_client.chunks = _followup_chunks(
+            options=[{"key": "A", "text": "一"}, {"key": "C", "text": "三"}, {"key": "D", "text": "四"}]
+        )
+        _, events = self._to_followup(client, account, fake_llm_client)
+
+        sections = [data.get("section") for name, data in events if name == "delta"]
+        assert "next_choices" not in sections, "不合法的选项段不得下发"
+
+    def test_answer_key_out_of_range_falls_back(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """`answer` 不在选项内 → 同样降级（不合法一律丢弃）。"""
+        fake_llm_client.chunks = _followup_chunks(answer="Z")
+        _, events = self._to_followup(client, account, fake_llm_client)
+
+        sections = [data.get("section") for name, data in events if name == "delta"]
+        assert "next_choices" not in sections
+
+
+class TestChoiceModeGuards:
+    """选择题与不搭模式的互斥（规范 §2.5：挑错 / 费曼不抽、也不接受选择题）。"""
+
+    def test_debug_mode_rejects_choice_question(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """挑错模式 + 选择题 → 开一场直接 400 + 10001（训练形式与点选不搭）。"""
+        item = _pick_one(client, account, "CHOICE")
+
+        resp = client.post(
+            f"{API}/sessions",
+            json={"question_id": item["id"], "mode": "DEBUG"},
+            headers=_auth(account),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 10001
+
+    def test_feynman_mode_rejects_choice_question(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """费曼复述 + 选择题 → 同样拒绝。"""
+        item = _pick_one(client, account, "CHOICE")
+
+        resp = client.post(
+            f"{API}/sessions",
+            json={"question_id": item["id"], "mode": "FEYNMAN"},
+            headers=_auth(account),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 10001
+
+    def test_draw_with_debug_mode_excludes_choice(self, client: TestClient, account):
+        """抽题带 `mode=DEBUG` → 不返回选择题（从源头不抽，而非等到开一场才报错）。"""
+        resp = client.post(
+            f"{API}/questions",
+            json={"mode": "DEBUG", "qtypes": ["CHOICE"], "count": 3, "strategy": "RANDOM"},
+            headers=_auth(account),
+        )
+        assert resp.json()["data"]["items"] == [], "DEBUG 模式不该抽出选择题"
+
+    def test_draw_without_mode_still_returns_choice(self, client: TestClient, account):
+        """不传 `mode` 时不排除——老调用方行为不变。"""
+        resp = client.post(
+            f"{API}/questions",
+            json={"qtypes": ["CHOICE"], "count": 2, "strategy": "RANDOM"},
+            headers=_auth(account),
+        )
+        assert resp.json()["data"]["items"], "不传 mode 时选择题照常可抽"

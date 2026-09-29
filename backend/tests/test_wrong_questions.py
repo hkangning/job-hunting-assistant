@@ -300,15 +300,12 @@ class TestReview:
         assert data["explain"] == "要点齐了"
         assert len(fake_llm_client.json_calls) == 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="实现缺陷（2026-09-29 发现，已登记问题记录）：接口文档 §3.9 实现口径 5 要求"
-        "「空串或全空白 → 400 + 10001」，实现仅靠 pydantic 的 min_length 拦住空串，"
-        "全空白会走判定流程返回 200 并判错——用户误触即掉回第 1 档。待后端补 strip 校验后"
-        "本标记转为 XPASS，届时摘掉。",
-    )
     def test_blank_answer_is_rejected(self, client: TestClient, account):
-        """空作答不允许提交（复习是「作答」动作）→ 400 + 10001。"""
+        """空作答不允许提交（复习是「作答」动作）→ 400 + 10001。
+
+        原为 IS-41 的实现缺陷（全空白漏拦），后端已于 2026-09-29 修复，`xfail` 标记随之摘除
+        （待改问题 #75）。空串由请求模型的 `min_length` 拦、全空白由服务层 `strip` 拦，两条都断言。
+        """
         _, wrong_id = self._enrolled_choice(client, account)
 
         for blank in ("", "   "):
