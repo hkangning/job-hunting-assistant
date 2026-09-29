@@ -8,6 +8,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowUp, Back } from '@element-plus/icons-vue'
 import PracticeTurn from './PracticeTurn.vue'
+import ChoiceOptions from '../ChoiceOptions.vue'
 
 const props = defineProps({
   session: { type: Object, required: true },
@@ -183,22 +184,13 @@ onUnmounted(stopTimer)
     </div>
 
     <section ref="answerBox" class="runner__card runner__card--answer">
-      <!-- 选择题首次作答轮走点选；追问轮与其余题型回到文本框（说理由得写字） -->
-      <div v-if="choiceMode" class="runner__choices">
-        <button
-          v-for="opt in currentChoices"
-          :key="opt.key"
-          type="button"
-          class="choice"
-          :class="{ 'choice--picked': picked === opt.key }"
-          :disabled="streaming"
-          :aria-pressed="picked === opt.key"
-          @click="picked = opt.key"
-        >
-          <span class="choice__key">{{ opt.key }}</span>
-          <span class="choice__text">{{ opt.text }}</span>
-        </button>
-      </div>
+      <!-- 当前轮有选项就走点选（首轮取题库、追问轮取上一轮下发）；无选项即文本框 -->
+      <ChoiceOptions
+        v-if="choiceMode"
+        v-model="picked"
+        :options="currentChoices"
+        :disabled="streaming"
+      />
       <el-input
         v-else
         v-model="answer"
@@ -293,64 +285,6 @@ onUnmounted(stopTimer)
 
 .runner__stream {
   margin: var(--card-gap) 0;
-}
-
-/* 选择题选项：竖排——选项文本通常较长，横排会挤成两行以上反而难扫 */
-.runner__choices {
-  display: grid;
-  gap: 8px;
-}
-.choice {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  font: inherit;
-  text-align: left;
-  color: var(--c-text);
-  background: var(--c-card);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-control);
-  cursor: pointer;
-}
-.choice:hover:not(:disabled) {
-  border-color: var(--m-practice);
-}
-.choice:focus-visible {
-  outline: 2px solid var(--m-practice);
-  outline-offset: 2px;
-}
-.choice:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.choice--picked {
-  border-color: var(--m-practice);
-  background: color-mix(in srgb, var(--m-practice) 8%, var(--c-card));
-}
-.choice__key {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  color: var(--c-text-2);
-  background: var(--c-bg);
-  border-radius: var(--r-mark);
-}
-.choice--picked .choice__key {
-  color: #fff;
-  background: var(--m-practice);
-}
-.choice__text {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-body);
-  line-height: 1.6;
-  word-break: break-word;
 }
 
 .runner__actions {
