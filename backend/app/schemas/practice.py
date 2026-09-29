@@ -86,6 +86,13 @@ class QuestionPickRequest(BaseModel):
     qtypes: list[QuestionType] | None = Field(
         default=None, description="题型数组，元素 SUBJECTIVE / CHOICE / SCENARIO；不传 = 不限题型；非法值返回 10001"
     )
+    mode: PracticeMode | None = Field(
+        default=None,
+        description=(
+            "训练模式（枚举值），用于排除与该模式不搭的题型——挑错 / 费曼不出选择题；"
+            "不传 = 不限模式、不做排除；非法值返回 10001"
+        ),
+    )
     count: int = Field(default=1, ge=1, le=5, description="抽题数，默认 1，最大 5")
     strategy: Literal["SMART", "RANDOM"] = Field(
         default="SMART", description="选题策略：SMART 薄弱优先（默认）/ RANDOM 纯随机；非法值返回 10001"

@@ -8,7 +8,9 @@
 - **哪些内容落轮**：用户作答轮（`OPENING` / `FOLLOW_UP` / `REBUTTAL` / `RETELL`）与 AI 单方产出的
   提示轮、材料轮（`HINT`）各落一条；**追问本身只有一句话，不单独落轮**——「追问轮」在接口文档
   §3.8 中指用户被追问后作答的那一轮（`answered_count` 含追问轮、`round_count` 含提示轮与材料轮）；
-- **内部段（`_` 前缀）与埋雷段不下发**，但落库存模型原始全文——内部段是结算时重抠判定依据的来源；
+- **三类段落不下发**：内部段（`_` 前缀，落库保留——它是结算时重抠判定依据的来源）、埋雷段（模型的
+  思考步骤，不下发也不落库）、「下一轮选项」段（选择题的追问选项，**校验后转存记录列**，只把剥离了
+  正确项与解析的形态下发）；
 - 断连时 `GeneratorExit` 沿 `yield from` 传播，落库语句不会执行——**本轮没产出完的内容不落库**，
   已经落库的既往轮次不受影响，会话仍是 `RUNNING`，下次请求接着推（接口文档 §3.8 实现口径 5）。
 """
@@ -16,11 +18,12 @@
 import json
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.clients.llm_client import LLMClient, LLMConfig, resolve_config
+from app.clients.llm_client import LLMClient, LLMConfig, parse_json_block, resolve_config
 from app.models import PracticeRecord, PracticeSession, Question
 from app.models.enums import PracticeMode, QuestionType, RoundKind
 from app.prompts import (
@@ -49,13 +52,27 @@ from app.utils.sse import SSE
 
 # 场景题四维（接口文档 §3.8：一次性 JSON，缺项按 0 计）
 DIMENSION_KEYS = ("framework", "quantification", "tradeoff", "fallback")
-# 埋雷清单：模型的思考步骤，既不下发也不落库（系统设计 §5.10）
-DROPPED_SECTIONS = {"traps"}
+# 既不下发也不落库的段：埋雷清单是模型的思考步骤；下一轮选项**转存记录列**（校验通过才留）
+DROPPED_SECTIONS = {"traps", "next_choices"}
 EXHAUSTED_SCORE = 9  # 本轮评分到这就算「已挖到底」，状态机不再硬追
 ANSWER_KINDS = (RoundKind.OPENING, RoundKind.FOLLOW_UP, RoundKind.REBUTTAL, RoundKind.RETELL)
 
+# 追问轮下发选项的形态约束（SRS AC-18 ⑤）：项数 3~4，键从 A 起连续
+CHOICE_MIN = 3
+CHOICE_MAX = 4
+CHOICE_KEYS = "ABCD"
+
 _SCORE_RE = re.compile(r"评分[^\d]{0,6}(\d{1,2})")
 _DIM_RES = {key: re.compile(rf"{key}\D{{0,8}}(\d{{1,2}})") for key in DIMENSION_KEYS}
+
+
+@dataclass(frozen=True)
+class ChoiceSet:
+    """一次点选作答的选项集（SRS AC-18 ⑤）：首轮取题库，追问轮取上一轮追问下发的选项。"""
+
+    options: list[dict]  # `[{"key": "A", "text": "..."}, ...]`（下发形态只含这两个字段）
+    answer: str  # 正确项——首轮是题库答案文本，追问轮是模型给的选项标识，判定时统一展开
+    explanation: str  # 解析文案；为空则点评只给对错（模型没写解析不影响这一轮可用）
 
 
 def ensure_playable(db: Session, *, user_id: int, payload: PracticeTurnRequest) -> PracticeSession:
@@ -162,13 +179,22 @@ def _submit_turn(
             )
         )
 
-    if question.qtype == QuestionType.CHOICE and not records:
-        # 选择题的首次作答轮：服务端规则比对，零 token 即时返回；追问轮回到开放作答
-        return (
-            yield from _choice_turn(
-                db, session=session, question=question, records=records, payload=payload, client=client
+    if question.qtype == QuestionType.CHOICE:
+        choices = _choice_set(question, records)
+        if choices is not None:
+            # 选择题的作答轮（首轮取题库、追问轮取上一轮下发的选项）：服务端规则比对，零 token 即时返回；
+            # 追问轮没有可用选项（模型造不出唯一答案）则落到下面的开放作答，交 LLM 点评
+            return (
+                yield from _choice_turn(
+                    db,
+                    session=session,
+                    question=question,
+                    records=records,
+                    payload=payload,
+                    client=client,
+                    choices=choices,
+                )
             )
-        )
 
     return (
         yield from _scored_turn(
@@ -229,14 +255,17 @@ def _choice_turn(
     records: list[PracticeRecord],
     payload: PracticeTurnRequest,
     client: LLMClient,
+    choices: ChoiceSet,
 ) -> Iterator[str]:
-    """选择题首次作答轮：选项标识展开后规则比对，评分与点评由服务端拼（产出结构与作答轮一致）。"""
-    options = parse_options(question.options)
-    said = expand_choice_input(payload.user_input or "", options)
-    correct = judge_choice(question.answer, payload.user_input or "", options)
+    """选择题点选作答轮：选项标识展开后规则比对，评分与点评由服务端拼（产出结构与作答轮一致）。
+
+    首轮与追问轮走**同一条路径**——差别只在 `choices` 的来源（题库 / 上一轮追问下发）。
+    """
+    said = expand_choice_input(payload.user_input or "", choices.options)
+    correct = judge_choice(choices.answer, payload.user_input or "", choices.options)
     score = 10 if correct else 0
     score_text = f"## 本轮评分\n评分 {score}/10，{'答对了' if correct else '答错了'}。\n"
-    review_text = f"\n## 点评\n{_choice_review(question, said, correct)}"
+    review_text = f"\n## 点评\n{_choice_review(said, correct, choices=choices)}"
     yield SSE.delta(score_text, "round_score")
     yield SSE.delta(review_text, "review")
     record = _save_round(
@@ -280,7 +309,13 @@ def _proceed(
         # 「已发生的追问轮数」含本轮——本轮就是一次追问作答（`record` 刚落库，不在旧快照里）
         follow_up_count=_follow_up_count([*records, record]),
         last_result=_last_result(records, payload.user_input),
-        exhausted=record.score is not None and record.score >= EXHAUSTED_SCORE,
+        # 选择题的二值评分（对 10 / 错 0）没有「已挖到底」的语义，不据它短路追问链——
+        # 答对恰为 10 分会命中判据，那样选择题一场只走一轮，与「首轮到四层追问」的形态不符
+        exhausted=(
+            question.qtype != QuestionType.CHOICE
+            and record.score is not None
+            and record.score >= EXHAUSTED_SCORE
+        ),
     )
     history = _history([*records, record])
 
@@ -293,11 +328,23 @@ def _proceed(
             material = _save_round(db, session=session, kind=RoundKind.HINT, review=_stored(raw))
             return _done(material.id, should_finish=False)
         # 其余模式的追问只有一句话，**不单独落轮**——「追问轮」在本系统指用户被追问后作答的那一轮
+        carries_choices = question.qtype == QuestionType.CHOICE and mode in (
+            PracticeMode.INTERVIEWER,
+            PracticeMode.COACH,
+        )
+        choices_sink: list[ChoiceSet] = []
         yield from _stream(
             client,
             _config(db, session),
-            build_practice_followup_messages(question, history=history, face=decision.face),
+            build_practice_followup_messages(
+                question, history=history, face=decision.face, with_choices=carries_choices
+            ),
+            choices_sink=choices_sink if carries_choices else None,
         )
+        if choices_sink:
+            # 选项落在**本轮记录**上（下一轮据此点选）；模型没给或给得不合法则整段丢弃、下一轮回开放作答
+            record.next_choices = _dump_choices(choices_sink[0])
+            db.commit()
         return _done(
             record.id,
             should_finish=False,
@@ -366,29 +413,45 @@ def _settle(
 # ---------- 流式产出 ----------
 
 
-def _stream(client: LLMClient, config: LLMConfig, messages: list[dict]) -> Iterator[str]:
+def _stream(
+    client: LLMClient,
+    config: LLMConfig,
+    messages: list[dict],
+    *,
+    choices_sink: list[ChoiceSet] | None = None,
+) -> Iterator[str]:
     """流式产出并按段过滤，返回模型原始全文（含内部段，供落库与结算重抠）。
 
-    `dimensions` 段攒完一次性发一条 JSON——四维得分是「分项 + 总分」的呈现结构，
+    两类「一次性 JSON」段攒完再发、下发形态经服务端加工：`dimensions` 由自由文本抠成四维分数
+    （缺项按 0 计）；`next_choices` **仅在 `choices_sink` 非空时受理**（选择题的追问）——校验通过
+    才剥离正确项下发、完整版塞进 sink 供落库，不合法则整段丢弃（下一轮回到开放作答）。
     逐字增量对前端没有意义（接口文档 §3.8）。
     """
     splitter = SectionSplitter(PRACTICE_TURN_SECTION_RULES)
     pieces: list[str] = []
     dimensions = ""
+    choices_raw = ""
     for chunk in client.stream_chat(config, messages):
         pieces.append(chunk)
         for text, section in splitter.feed(chunk):
             if section == "dimensions":
                 dimensions += text
+            elif section == "next_choices":
+                choices_raw += text
             elif _is_downstream(section):
                 yield SSE.delta(text, section)
     for text, section in splitter.flush():
         if section == "dimensions":
             dimensions += text
+        elif section == "next_choices":
+            choices_raw += text
         elif _is_downstream(section):
             yield SSE.delta(text, section)
     if dimensions.strip():
         yield SSE.delta(_dimensions_json(dimensions), "dimensions")
+    if choices_sink is not None and (choices := _clean_choices(choices_raw)) is not None:
+        choices_sink.append(choices)
+        yield SSE.delta(_public_choices(choices), "next_choices")
     return "".join(pieces)
 
 
@@ -539,13 +602,99 @@ def _done(
 # ---------- 客观题规则判定 ----------
 
 
-def _choice_review(question: Question, said: str, correct: bool) -> str:
-    """选择题点评：对错 + 正确选项 + 解析（规则判定，不调 LLM）。"""
+def _choice_set(question: Question, records: list[PracticeRecord]) -> ChoiceSet | None:
+    """本轮可用的选项集：首轮取题库，追问轮取**最近一轮下发的选项**（SRS AC-18 ⑤）。
+
+    返回 None = 本轮没有可点选的选项（追问轮模型造不出唯一答案，或题库缺选项数据）——
+    该轮回到开放作答、交 LLM 点评。提示轮不写 `next_choices`，故提示之后仍用同一套选项。
+    """
+    if not records:
+        options = parse_options(question.options)
+        if not options:
+            return None
+        return ChoiceSet(
+            options=options, answer=question.answer, explanation=question.explanation or ""
+        )
+    for record in reversed(records):
+        choices = _load_choices(record)
+        if choices is not None:
+            return choices
+    return None
+
+
+def _clean_choices(raw: str) -> ChoiceSet | None:
+    """校验并清洗模型产出的「下一轮选项」段；任何不合法一律返回 None（该轮降级为开放作答）。
+
+    合法要求：JSON 可解析、`options` 为 3~4 项且键从 `A` 起连续、每项 `key` / `text` 齐全、
+    `answer` 命中选项之一。`explain` 缺失只意味着点评少一句解析，不影响点选与判定。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        data = parse_json_block(text)
+    except (ValueError, TypeError):
+        return None
+    options = data.get("options")
+    if not isinstance(options, list) or not CHOICE_MIN <= len(options) <= CHOICE_MAX:
+        return None
+    cleaned: list[dict] = []
+    for index, item in enumerate(options):
+        if not isinstance(item, dict):
+            return None
+        key = str(item.get("key") or "").strip().upper()
+        label = str(item.get("text") or "").strip()
+        if key != CHOICE_KEYS[index] or not label:
+            return None
+        cleaned.append({"key": key, "text": label})
+    answer = str(data.get("answer") or "").strip().upper()
+    if answer not in {opt["key"] for opt in cleaned}:
+        return None
+    return ChoiceSet(
+        options=cleaned, answer=answer, explanation=str(data.get("explain") or "").strip()
+    )
+
+
+def _public_choices(choices: ChoiceSet) -> str:
+    """下发形态：只给选项数组（每项 `key` / `text`），正确项与解析留在服务端（接口文档 §3.8）。"""
+    return json.dumps({"options": choices.options}, ensure_ascii=False)
+
+
+def _dump_choices(choices: ChoiceSet) -> str:
+    """落库形态：选项 + 正确项 + 解析，下一轮判定的依据（数据库设计 §3.8 `next_choices`）。"""
+    return json.dumps(
+        {"options": choices.options, "answer": choices.answer, "explain": choices.explanation},
+        ensure_ascii=False,
+    )
+
+
+def _load_choices(record: PracticeRecord) -> ChoiceSet | None:
+    """从记录还原选项集；该轮没下发或数据损坏返回 None（调用方按开放作答处理）。"""
+    raw = record.next_choices
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    options = data.get("options")
+    answer = str(data.get("answer") or "")
+    if not isinstance(options, list) or not options or not answer:
+        return None
+    return ChoiceSet(options=options, answer=answer, explanation=str(data.get("explain") or ""))
+
+
+def _choice_review(said: str, correct: bool, *, choices: ChoiceSet) -> str:
+    """选择题点评：对错 + 正确项 + 解析（规则判定，不调 LLM）。
+
+    追问轮模型给的正确项是选项标识（如 `"B"`），展示前先展开为选项文本。
+    """
+    expected = expand_choice_input(choices.answer, choices.options)
     if correct:
-        head = f"选对了，正确答案就是「{question.answer}」。"
+        head = f"选对了，正确答案就是「{expected}」。"
     else:
-        head = f"这次选的是「{said.strip() or '（未作答）'}」，正确答案是「{question.answer}」。"
-    return f"{head}\n\n{question.explanation}" if question.explanation else head
+        head = f"这次选的是「{said.strip() or '（未作答）'}」，正确答案是「{expected}」。"
+    return f"{head}\n\n{choices.explanation}" if choices.explanation else head
 
 
 def _extract_score(text: str) -> int | None:

@@ -105,6 +105,9 @@ class PracticeRecord(Base):
     score: Mapped[int | None] = mapped_column(Integer)  # AI 评分 0~10
     review: Mapped[str | None] = mapped_column(Text)  # AI 点评全文
     is_correct: Mapped[int | None] = mapped_column(Integer)  # 判定对错（NULL=未判定；客观题规则判定）
+    next_choices: Mapped[str | None] = mapped_column(
+        Text
+    )  # 本轮追问下发的选项 JSON（含 answer/explain，服务端判定用；下发时剥离正确项）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 作答时间
 
 

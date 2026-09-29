@@ -62,6 +62,7 @@ def pick_questions(
         stacks=payload.stacks,
         directions=payload.directions,
         qtypes=payload.qtypes,
+        mode=payload.mode.value if payload.mode else None,
         count=payload.count,
         strategy=payload.strategy,
     )
