@@ -888,3 +888,52 @@ class TestSmartPicking:
         """`RANDOM` 是纯随机对照——掌握度不该左右它，两个领域都会出现。"""
         _, strong = mastery_marks
         assert strong in self._draw(client, account, "RANDOM", mastery_marks, 15)
+
+
+# ================================================================ F 追问轮的点选（《选择题作答形态规范》）
+
+_REASON_CHOICES = (
+    "待后端实现「追问轮结构化选项」（规范 §2.3 的 next_choices 段）："
+    "当前追问轮回到开放作答，事件流里没有该段。后端落地后转 XPASS，届时摘掉。"
+)
+_REASON_JUDGE = (
+    "待后端实现「追问轮的规则判定」（规范 §2.2）：追问轮的点选应即时给对错，"
+    "当前该轮走 AI 点评、无服务端拼装的判定文本。"
+)
+
+
+class TestFollowUpChoices:
+    """追问轮的点选作答（规范：`docs/superpowers/specs/2026-09-29-选择题作答形态规范-design.md`）。
+
+    后端尚未实现，故两个用例整条以 `xfail(strict=True)` 固定契约——后端落地后自动转
+    **XPASS**（strict 模式下会失败），届时摘掉标记即可。
+    """
+
+    @pytest.mark.xfail(strict=True, reason=_REASON_CHOICES)
+    def test_followup_turn_carries_choices(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """追问轮下发 `next_choices` 段：3~4 项、键从 A 连续，且**不含正确项**。"""
+        item = _pick_one(client, account, "CHOICE")
+        session_id = _open(client, account, item["id"], mode="INTERVIEWER")["session_id"]
+
+        payload = None
+        for name, data in _stream_turn(client, account, session_id, user_input="A"):
+            if name == "delta" and data.get("section") == "next_choices":
+                payload = data["text"]
+        assert payload is not None, "追问轮应下发 next_choices 段"
+
+        options = json.loads(payload)["options"]
+        assert 3 <= len(options) <= 4, f"选项数应为 3~4，实际 {len(options)}"
+        assert [opt["key"] for opt in options] == list("ABCD"[: len(options)])
+        for opt in options:
+            assert set(opt) == {"key", "text"}, f"选项不得含正确标记：{opt}"
+
+    @pytest.mark.xfail(strict=True, reason=_REASON_JUDGE)
+    def test_followup_choice_is_rule_judged(self, client: TestClient, account, fake_llm_client, llm_configured):
+        """追问轮提交选项标识 → 服务端规则判定、即时给对错（与首轮同形）。"""
+        item = _pick_one(client, account, "CHOICE")
+        session_id = _open(client, account, item["id"], mode="INTERVIEWER")["session_id"]
+        _stream_turn(client, account, session_id, user_input="A")  # 首轮：点选
+
+        sections = _sections(_stream_turn(client, account, session_id, user_input="B"))
+        score = sections.get("round_score", "")
+        assert "答对" in score or "答错" in score, f"追问轮的判定应由服务端拼装，实际：{score[:60]}"

@@ -19,7 +19,7 @@ const FALLBACK_SECTION = 'text'
 
 /** 新建一轮的空壳。 */
 export function createTurn() {
-  return { blocks: [], dimensions: null, dimensionsRaw: '' }
+  return { blocks: [], dimensions: null, dimensionsRaw: '', choices: [], choicesRaw: '' }
 }
 
 /** 取某 section 的块，未出现则 undefined。 */
@@ -45,6 +45,15 @@ export function applyDelta(turn, { text, section } = {}) {
     appendTo(turn, 'dimensions', value)
     const parsed = tryParseJson(turn.dimensionsRaw)
     if (parsed) turn.dimensions = parsed
+    return
+  }
+
+  if (section === 'next_choices') {
+    // 与 dimensions 同构：一次性 JSON，分片到达时先累积、解析成功才落到 choices。
+    // 不进 blocks——选项不参与正文渲染，只供下一轮的作答区使用。
+    turn.choicesRaw += value
+    const parsed = tryParseJson(turn.choicesRaw)
+    if (parsed && Array.isArray(parsed.options)) turn.choices = parsed.options
     return
   }
 

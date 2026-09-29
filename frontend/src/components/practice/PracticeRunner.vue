@@ -36,25 +36,29 @@ const roundNo = computed(() =>
 const isCoach = computed(() => props.session.mode === 'COACH')
 const canSubmit = computed(() => !props.streaming)
 
-/** 选择题的选项（后端仅对 `CHOICE` 下发，其余题型为 `null`）。 */
-const choiceOptions = computed(() => props.session.question?.options || [])
+/**
+ * 当前轮的选项——**来源无关**：首轮取题库（随抽题下发），追问轮取上一轮 `next_choices`
+ * 段下发的选项。后端造不出唯一答案时会降级、不下发该段，这里自然为空。
+ */
+const currentChoices = computed(() => {
+  if (props.turns.length === 0) {
+    const question = props.session.question
+    return question?.qtype === 'CHOICE' ? question.options || [] : []
+  }
+  return props.turns[props.turns.length - 1]?.choices || []
+})
 
 /**
- * 是否用点选作答：只有**首次作答轮**才走服务端规则判定，追问轮回到开放作答
- * （追的是「为什么这么选」，得说理由）；
+ * 是否用点选作答：**当前轮有选项**即可——首轮与追问轮因此共用一套作答区。
  * `DEBUG` / `FEYNMAN` 两模式首轮不是作答轮（取材料 / 复述），其选择题一律按开放作答处理。
  */
 const choiceMode = computed(
-  () =>
-    props.session.question?.qtype === 'CHOICE' &&
-    choiceOptions.value.length > 0 &&
-    props.turns.length === 0 &&
-    !['DEBUG', 'FEYNMAN'].includes(props.session.mode)
+  () => currentChoices.value.length > 0 && !['DEBUG', 'FEYNMAN'].includes(props.session.mode)
 )
 
 /** 选中项文本：提交后作为「我的作答」展示——与回看接口返回的展开文本同一形态。 */
 const pickedText = computed(
-  () => choiceOptions.value.find((opt) => opt.key === picked.value)?.text || ''
+  () => currentChoices.value.find((opt) => opt.key === picked.value)?.text || ''
 )
 
 /**
@@ -182,7 +186,7 @@ onUnmounted(stopTimer)
       <!-- 选择题首次作答轮走点选；追问轮与其余题型回到文本框（说理由得写字） -->
       <div v-if="choiceMode" class="runner__choices">
         <button
-          v-for="opt in choiceOptions"
+          v-for="opt in currentChoices"
           :key="opt.key"
           type="button"
           class="choice"
