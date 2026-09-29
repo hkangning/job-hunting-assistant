@@ -17,3 +17,17 @@ class JdAnalysisRequest(BaseModel):
 
     jd_text: str = Field(min_length=1, max_length=10000, description="JD 原文（1~10000 字），分析后作为快照随报告落库")
     application_id: int | None = Field(default=None, description="关联的投递记录 id，可选；传入时须属当前账号，否则 10002")
+
+
+class InterviewChatRequest(BaseModel):
+    """模拟面试作答请求体（POST /stream/interview-chat，接口文档 3.7）。"""
+
+    session_id: int = Field(description="会话 id，须属当前账号，否则 404+10002")
+    answer: str | None = Field(
+        default=None,
+        description="本题作答；**空串 = 请出当前该出的题**（首题开场 / 续出下一题 / 重发未答题，见接口文档 3.7 实现口径 3）",
+    )
+    skip: bool = Field(default=False, description="true = 跳过当前未作答的题（不计分，直接下一题）")
+    segments: list[dict] | None = Field(
+        default=None, description="语音作答的 VAD 分句时间轴（步骤 24 语音落地后启用，本版忽略该字段）"
+    )

@@ -62,9 +62,15 @@ class SSE:
         return _event("tool_call", {"tool_name": tool_name, "args": args})
 
     @staticmethod
-    def done(record_id: int | None = None, extra: dict | None = None) -> str:
-        """流正常结束：携带落库记录 id 与附加数据（前端据此刷新列表/跳转）。"""
-        return _event("done", {"record_id": record_id, "extra": extra})
+    def done(record_id: int | None = None, extra: dict | None = None, seq: int | None = None) -> str:
+        """流正常结束：携带落库记录 id 与附加数据（前端据此刷新列表/跳转）。
+
+        `seq` 仅序号语义的链路传（模拟面试的题序，前端据此校准题号；不传则不下发该字段）。
+        """
+        data: dict = {"record_id": record_id, "extra": extra}
+        if seq is not None:
+            data["seq"] = seq
+        return _event("done", data)
 
     @staticmethod
     def error(code: int | ErrorCode, message: str) -> str:
@@ -130,7 +136,7 @@ def _drive(work: Callable[[Session], Iterator[str]], start_message: str) -> Iter
         yield SSE.error(ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.default_message)
     else:
         result = payload or {}
-        yield SSE.done(result.get("record_id"), result.get("extra"))
+        yield SSE.done(result.get("record_id"), result.get("extra"), result.get("seq"))
     finally:
         db.close()
 

@@ -59,18 +59,33 @@ def upsert_wrong_question(
 
 
 def list_wrong_questions(
-    db: Session, *, user_id: int, status: str | None, page: int, page_size: int
+    db: Session,
+    *,
+    user_id: int,
+    status: str | None,
+    keyword: str | None,
+    direction: str | None,
+    page: int,
+    page_size: int,
 ) -> PageData[WrongQuestionItem]:
-    """错题列表。排序 = 未掌握优先、再按到期先后（错题本是复习工具，先看该复习的）。"""
+    """错题列表。排序 = 未掌握优先、再按到期先后（错题本是复习工具，先看该复习的）。
+
+    `keyword` 按题干模糊匹配、`direction` 按题目领域精确筛选（接口文档 3.9）。
+    """
     conditions = [WrongQuestion.user_id == user_id]
     if status == "PENDING":
         conditions.append(WrongQuestion.mastered_at.is_(None))
     elif status == "MASTERED":
         conditions.append(WrongQuestion.mastered_at.is_not(None))
+    if keyword:
+        conditions.append(Question.content.like(f"%{keyword}%"))
+    if direction:
+        conditions.append(Question.direction == direction)
 
-    total = db.execute(
-        select(func.count()).select_from(WrongQuestion).where(*conditions)
-    ).scalar_one()
+    count_stmt = select(func.count()).select_from(WrongQuestion)
+    if keyword or direction:
+        count_stmt = count_stmt.join(Question, Question.id == WrongQuestion.question_id)
+    total = db.execute(count_stmt.where(*conditions)).scalar_one()
     rows = db.execute(
         select(WrongQuestion, Question)
         .join(Question, Question.id == WrongQuestion.question_id)

@@ -25,8 +25,8 @@ from app.deps import get_current_user
 from app.models import User
 from app.prompts import JD_ANALYSIS_SECTION_RULES
 from app.schemas.practice import PracticeTurnRequest
-from app.schemas.stream import DemoChatRequest, JdAnalysisRequest
-from app.services import jd_service, practice_turn_service
+from app.schemas.stream import DemoChatRequest, InterviewChatRequest, JdAnalysisRequest
+from app.services import interview_service, jd_service, practice_turn_service
 from app.utils.section_splitter import SectionSplitter
 from app.utils.sse import SSE, sse_response
 
@@ -158,6 +158,40 @@ def practice_turn_stream(
         )
 
     return sse_response(_run, start_message="正在点评…")
+
+
+@router.post("/stream/interview-chat", summary="模拟面试作答（流式）")
+def interview_chat_stream(
+    payload: InterviewChatRequest,
+    current_user: User = Depends(get_current_user),
+    client: LLMClient = Depends(get_llm_client),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """模拟面试一问一答（接口文档 3.7）。
+
+    事件流 `start → delta×N → done`：作答轮 delta 依次 `review` → `next_question`，开场轮与
+    跳过轮只有 `next_question`，答满题量轮只有 `review` 且 `done.extra.session_finished=true`。
+    整轮内容生成完才一次性落库，断连或中途失败不落任何记录（重试 = 整轮重发）。
+    """
+    user_id = current_user.id
+    # 会话与参数校验必须在流式响应建立之前完成（404+10002 / 40001 / 400+10001 按普通响应体返回）
+    interview_service.ensure_chattable(
+        db, user_id=user_id, session_id=payload.session_id, answer=payload.answer, skip=payload.skip
+    )
+
+    def _run(stream_db: Session) -> Iterator[str]:
+        return (
+            yield from interview_service.run_chat(
+                stream_db,
+                user_id=user_id,
+                session_id=payload.session_id,
+                answer=payload.answer,
+                skip=payload.skip,
+                client=client,
+            )
+        )
+
+    return sse_response(_run, start_message="面试官正在思考…")
 
 
 def _save_partial(

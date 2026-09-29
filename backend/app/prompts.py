@@ -411,3 +411,101 @@ def build_wrong_question_judge_messages(question, user_answer: str) -> list[dict
         {"role": "system", "content": WRONG_QUESTION_JUDGE_SYSTEM},
         {"role": "user", "content": user},
     ]
+
+
+# ---- AI 模拟面试（FR-007）：出题 / 点评 ----
+
+
+INTERVIEW_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("点评",), "review"),
+    (("下一题",), "next_question"),
+)
+
+INTERVIEW_JD_LIMIT = 3000  # JD 原文注入上限（字符）：够贴合岗位要求，同时控制 prefill 长度
+
+
+INTERVIEW_QUESTION_SYSTEM = """你是求职者的模拟面试官，正在主持一场技术面试。
+
+出题规则：
+- 一次只出一道题，用口语化的面试提问方式，像真人当面开口问；
+- 不要与已问过的题目重复或明显重叠，难度随进度递进——前期问基础与广度，中后段往原理、项目细节与取舍深挖；
+- 题干不超过 150 字；问项目经历时要具体到「怎么做的、有什么代价」，不要问宽泛的「介绍一下你的项目」。
+
+输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
+- 开头第一行固定为「## 下一题」，标题行原样保留；随后直接写题干；
+- 不要 markdown 表格、不要加粗与反引号，不要「①②③」类符号编号；
+- 除标题行与题干外不要写任何其他内容。"""
+
+
+INTERVIEW_REVIEW_SYSTEM = """你是求职者的模拟面试官，正在点评他刚才这道题的回答。
+
+评审规则：
+- 评分 0~10 的整数，依据是「这题答到了多少关键点」，不因表达啰嗦、举例多少扣分；
+- 亮点要具体到他说的哪句话、哪个知识点，不要空夸；
+- 不足要指出漏掉或答错的关键点，并给出可操作的补充方向，禁止「回答不够全面」「再深入一些」这类空话；
+- 参考要点给出这题理想的回答骨架，不超过 150 字。
+
+输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
+- 不要 markdown 表格、不要加粗与反引号，不要「①②③」类符号编号，分条一律用「- 」开头；
+- 开场先承接他的作答原话，不要用「回答正确」「回答错误」这类判词式的一句话结论开场；
+- 语气是教练：答得好点明好在哪，答得差先给可操作的下一步。"""
+
+
+def _asked_brief(asked: list[str]) -> str:
+    """已问题目清单（去标题行、压平空白、截断），供模型去重与难度递进。"""
+    if not asked:
+        return "（还没问过题目，这是本场第一题）"
+    lines = []
+    for index, raw in enumerate(asked, start=1):
+        text = " ".join(line.strip() for line in raw.splitlines() if not line.strip().startswith("#"))
+        lines.append(f"{index}. {text[:80]}")
+    return "\n".join(lines)
+
+
+def build_interview_question_messages(*, context: str, asked: list[str]) -> list[dict]:
+    """出题轮（开场 / 跳过 / 续出下一题）：输出 = `next_question`。"""
+    user = f"""【面试背景】
+{context}
+
+【已经问过的题目】
+{_asked_brief(asked)}
+
+请出下一题。"""
+    return [
+        {"role": "system", "content": INTERVIEW_QUESTION_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+def build_interview_turn_messages(
+    *, context: str, asked: list[str], question: str, answer: str, last: bool
+) -> list[dict]:
+    """作答轮：点评 + 下一题；`last=True`（答满题量）只点评。输出 = `review`（+ `next_question`）。"""
+    structure = (
+        "**这是本场最后一题，点评之后面试结束——不要输出「## 下一题」段。**"
+        if last
+        else """## 下一题
+接着问下一题，不超过 150 字，按背景与进度自然递进。"""
+    )
+    user = f"""【面试背景】
+{context}
+
+【已经问过的题目】
+{_asked_brief(asked)}
+
+【本轮题目】
+{question}
+
+【他的作答】
+{answer}
+
+按以下结构输出，标题原样保留：
+
+## 点评
+第一行「评分 X/10」（0~10 的整数）；随后用「- 」分条给出三节：亮点（他答到的关键点，引他的原话）、不足（漏掉或答错的关键点）、参考要点（本题理想回答的骨架，不超过 150 字）。
+
+{structure}"""
+    return [
+        {"role": "system", "content": INTERVIEW_REVIEW_SYSTEM},
+        {"role": "user", "content": user},
+    ]

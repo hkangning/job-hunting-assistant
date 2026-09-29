@@ -12,6 +12,7 @@ from app.clients.llm_client import LLMClient, get_llm_client
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
+from app.models.enums import Direction
 from app.schemas.common import ApiResponse, PageData
 from app.schemas.wrong_question import (
     WrongQuestionAddRequest,
@@ -29,6 +30,8 @@ def list_wrong_questions(
     status: Literal["PENDING", "MASTERED"] | None = Query(
         None, description="按状态过滤：PENDING 待复习 / MASTERED 已掌握；不传 = 全部"
     ),
+    keyword: str | None = Query(None, description="按题干模糊匹配；不传 = 不限"),
+    direction: Direction | None = Query(None, description="按题目领域筛选（枚举值，非法 → 10001）；不传 = 不限"),
     page: int = Query(1, ge=1, description="页码，从 1 起"),
     page_size: int = Query(10, ge=1, le=50, description="每页条数，默认 10，最大 50"),
     current_user: User = Depends(get_current_user),
@@ -37,7 +40,13 @@ def list_wrong_questions(
     """当前账号的错题列表：未掌握优先、再按到期先后（先看该复习的）。"""
     return ApiResponse[PageData[WrongQuestionItem]](
         data=wrong_question_service.list_wrong_questions(
-            db, user_id=current_user.id, status=status, page=page, page_size=page_size
+            db,
+            user_id=current_user.id,
+            status=status,
+            keyword=keyword,
+            direction=direction.value if direction is not None else None,
+            page=page,
+            page_size=page_size,
         )
     )
 
