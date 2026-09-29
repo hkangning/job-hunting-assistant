@@ -86,6 +86,13 @@ class QuestionPickRequest(BaseModel):
     qtypes: list[QuestionType] | None = Field(
         default=None, description="题型数组，元素 SUBJECTIVE / CHOICE / SCENARIO；不传 = 不限题型；非法值返回 10001"
     )
+    mode: PracticeMode | None = Field(
+        default=None,
+        description=(
+            "训练模式（枚举值），用于排除与该模式不搭的题型——挑错 / 费曼不出选择题；"
+            "不传 = 不限模式、不做排除；非法值返回 10001"
+        ),
+    )
     count: int = Field(default=1, ge=1, le=5, description="抽题数，默认 1，最大 5")
     strategy: Literal["SMART", "RANDOM"] = Field(
         default="SMART", description="选题策略：SMART 薄弱优先（默认）/ RANDOM 纯随机；非法值返回 10001"
@@ -196,7 +203,9 @@ class SessionFinishData(BaseModel):
     session_id: int = Field(description="训练会话 id")
     mode: str = Field(description="训练模式枚举值")
     question_id: int = Field(description="题目 id")
-    overall_score: int | None = Field(description="整场综合分 0~10，由各轮评分聚合（不含提示轮与材料轮）")
+    overall_score: int | None = Field(
+        description="整场综合分 0~10，由各轮评分聚合（不含提示轮与材料轮）；一场未答的零轮结算为 0"
+    )
     passed: bool = Field(description="是否通过：按各模式的通过判据判定")
     rounds: list[RoundBrief] = Field(description="逐轮摘要（按轮次升序）")
     break_face: str | None = Field(description="首个断点所在攻击面（层号由它唯一确定）；全程无断点为 null")

@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import DomainMastery, PracticeRecord, Question, WrongQuestion
+from app.models.enums import PracticeMode, QuestionType
 from app.schemas.practice import (
     DomainOption,
     FaceOption,
@@ -84,6 +85,9 @@ FACES: tuple[tuple[str, str, int, str], ...] = (
 
 TIME_LIMITS: tuple[int, ...] = (30, 60, 90, 120)  # 每轮限时档位（秒），不传即不限时
 
+# 与选择题形态不搭的训练模式（SRS AC-18 ⑤）：挑错要「找茬」、费曼要「复述」，点选无处发挥
+NO_CHOICE_MODES = frozenset({PracticeMode.DEBUG.value, PracticeMode.FEYNMAN.value})
+
 STACK_OF_DIRECTION: dict[str, str] = {d: stack for stack, _, domains in STACKS for d, _ in domains}
 
 
@@ -156,12 +160,14 @@ def pick_questions(
     stacks: list[str] | None = None,
     directions: list[str] | None = None,
     qtypes: list[str] | None = None,
+    mode: str | None = None,
     count: int = 1,
     strategy: str = "SMART",
 ) -> list[QuestionItem]:
     """抽题。`SMART` 按 (100 - 掌握度) 加权随机；`RANDOM` 纯随机。
 
-    三个筛选条件为与关系；命中不足 count 时按实际数量返回（不报错）。
+    四个筛选条件为与关系；命中不足 count 时按实际数量返回（不报错）。
+    `mode` 传挑错 / 费曼时排除选择题（SRS AC-18 ⑤）——这两种训练形态与点选作答不搭。
     """
     stmt = select(Question)
     if stacks:
@@ -170,6 +176,8 @@ def pick_questions(
         stmt = stmt.where(Question.direction.in_(directions))
     if qtypes:
         stmt = stmt.where(Question.qtype.in_(qtypes))
+    if mode in NO_CHOICE_MODES:
+        stmt = stmt.where(Question.qtype != QuestionType.CHOICE)
     pool = list(db.execute(stmt).scalars())
     if not pool:
         return []

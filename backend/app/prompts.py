@@ -137,6 +137,7 @@ PRACTICE_TURN_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("参考材料",), "material"),
     (("埋雷",), "traps"),
     (("追问",), "next_question"),
+    (("下一轮选项",), "next_choices"),  # 选择题追问下发的一次性 JSON，服务端校验后落列、剥离正确项下发
     (("总结",), "summary"),
     (("参考答案",), "reference_answer"),
     (("判定",), "_verdict"),  # 内部：挑错模式的命中判定 JSON，服务端抠完即弃
@@ -200,14 +201,34 @@ def build_practice_review_messages(question, user_answer: str, *, history: list[
     return [{"role": "system", "content": PRACTICE_REVIEW_SYSTEM}, {"role": "user", "content": user}]
 
 
+# 选择题的追问选项要求（SRS AC-18 ⑤《选择题作答形态规范》）：有唯一答案才输出，没有就整段不写
+PRACTICE_FOLLOWUP_CHOICES_RULE = """
+## 下一轮选项
+如果这个追问**有唯一正确答案**，再补一段选项供他点选作答，格式如下：
+
+```json
+{"options": [{"key": "A", "text": "第一项"}, {"key": "B", "text": "第二项"}, {"key": "C", "text": "第三项"}], "answer": "B", "explain": "一句话说清为什么选 B"}
+```
+
+选项 3~4 个，key 从 A 起连续且互不重复，`answer` 填正确项的 key，`explain` 写一句话解析。
+**没有唯一答案的追问（取舍权衡、开放讨论）整段不要输出**——逼他在多个都说得通的答案里硬猜，比不给选项更糟。
+"""
+
+
 def build_practice_followup_messages(
-    question, *, history: list[dict], face: AttackFace | None = None
+    question,
+    *,
+    history: list[dict],
+    face: AttackFace | None = None,
+    with_choices: bool = False,
 ) -> list[dict]:
-    """下一轮追问（INTERVIEWER / COACH / FEYNMAN）。输出 = `next_question`。
+    """下一轮追问（INTERVIEWER / COACH / FEYNMAN）。输出 = `next_question`（`with_choices` 时可能带 `next_choices`）。
 
     `face` 为四层追问链的攻击面，**费曼模式不传**——它的追问方向由复述轮挑出的漏洞决定。
+    `with_choices` 仅选择题的面试官 / 教练模式传真（其余模式的选择题形态不存在或已按开放作答处理）。
     """
     direction = f"\n【本轮追问方向】{ATTACK_FACE_HINTS[face.value]}\n" if face else ""
+    choices = PRACTICE_FOLLOWUP_CHOICES_RULE if with_choices else ""
     user = f"""【题目】{question.content}
 
 【要点靶子】（判断他哪些关键点还没答到）
@@ -220,7 +241,7 @@ def build_practice_followup_messages(
 
 ## 追问
 一句话顺着他的原话接（"你刚说用了 X——那……"），**只问一个问题**。优先追他还没答到的关键点；这块他已说清楚就换个角度继续。
-"""
+{choices}"""
     return [{"role": "system", "content": PRACTICE_FOLLOWUP_SYSTEM}, {"role": "user", "content": user}]
 
 

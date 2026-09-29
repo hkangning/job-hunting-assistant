@@ -16,6 +16,7 @@ from app.models.enums import (
     AttackFace,
     PracticeMode,
     PracticeSessionStatus,
+    QuestionType,
     RoundKind,
 )
 from app.prompts import PRACTICE_TURN_SECTION_RULES
@@ -55,10 +56,13 @@ def open_session(
     db: Session, *, user_id: int, question_id: int, mode: str, time_limit: int | None
 ) -> SessionCreateData:
     """开一场训练。**纯落库、零 LLM 调用**；同一道题可开多场，会话之间互不影响。"""
-    if db.get(Question, question_id) is None:
+    question = db.get(Question, question_id)
+    if question is None:
         raise BizException(ErrorCode.NOT_FOUND, "题目不存在")
     if mode not in MODE_VALUES:
         raise BizException(ErrorCode.PARAM_INVALID, "训练模式非法")
+    if mode in practice_service.NO_CHOICE_MODES and question.qtype == QuestionType.CHOICE:
+        raise BizException(ErrorCode.PARAM_INVALID, "该训练模式不支持选择题，请换一道题")
     if time_limit is not None and time_limit not in practice_service.TIME_LIMITS:
         raise BizException(
             ErrorCode.PARAM_INVALID,
@@ -117,7 +121,7 @@ def finish_session(db: Session, *, user_id: int, session_id: int) -> SessionFini
 
     mode = PracticeMode(session.mode)
     scores = [r.score for r in records if r.score is not None]
-    overall_score = round(sum(scores) / len(scores)) if scores else None
+    overall_score = round(sum(scores) / len(scores)) if scores else 0  # 一场未答也得 0 分，不返回 null（接口文档 §3.8）
     break_face = _first_break_face(records)
     passed = judge_passed(
         mode=mode,

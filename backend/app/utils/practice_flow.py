@@ -163,10 +163,13 @@ def expand_choice_input(user_input: str, options: list[dict] | None) -> str:
 
 
 def judge_choice(answer: str, user_input: str, options: list[dict] | None = None) -> bool:
-    """选择题规则比对：选项标识展开为选项文本后，与正确答案归一化**精确相等**。
+    """选择题规则比对：两侧都展开为选项文本后归一化**精确相等**（不调 LLM）。
+
+    两侧同口径展开——首轮的正确答案来自题库、是文本，追问轮的正确项由模型给出（如 `"B"`）是
+    标识，不做展开就会拿标识去比选项文本、必然判错。
 
     不用包含匹配——单字符的选项标识会被 `"AB"` 这类组合误判。
     """
-    expanded = expand_choice_input(user_input, options)
-    expected, got = normalize_text(answer), normalize_text(expanded)
+    expected = normalize_text(expand_choice_input(answer, options))
+    got = normalize_text(expand_choice_input(user_input, options))
     return bool(expected) and expected == got
