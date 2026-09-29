@@ -117,7 +117,7 @@ def finish_session(db: Session, *, user_id: int, session_id: int) -> SessionFini
 
     mode = PracticeMode(session.mode)
     scores = [r.score for r in records if r.score is not None]
-    overall_score = round(sum(scores) / len(scores)) if scores else None
+    overall_score = round(sum(scores) / len(scores)) if scores else 0  # 一场未答也得 0 分，不返回 null（接口文档 §3.8）
     break_face = _first_break_face(records)
     passed = judge_passed(
         mode=mode,

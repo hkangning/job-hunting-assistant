@@ -196,7 +196,9 @@ class SessionFinishData(BaseModel):
     session_id: int = Field(description="训练会话 id")
     mode: str = Field(description="训练模式枚举值")
     question_id: int = Field(description="题目 id")
-    overall_score: int | None = Field(description="整场综合分 0~10，由各轮评分聚合（不含提示轮与材料轮）")
+    overall_score: int | None = Field(
+        description="整场综合分 0~10，由各轮评分聚合（不含提示轮与材料轮）；一场未答的零轮结算为 0"
+    )
     passed: bool = Field(description="是否通过：按各模式的通过判据判定")
     rounds: list[RoundBrief] = Field(description="逐轮摘要（按轮次升序）")
     break_face: str | None = Field(description="首个断点所在攻击面（层号由它唯一确定）；全程无断点为 null")

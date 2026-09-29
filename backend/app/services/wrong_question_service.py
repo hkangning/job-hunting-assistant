@@ -141,6 +141,8 @@ def review_wrong_question(
     client: LLMClient,
 ) -> WrongQuestionReviewData:
     """复习判定 + 档位推进 + 重算掌握度。已掌握的条目不再受理（30002）。"""
+    if not answer.strip():  # 请求模型只拦得住空串，全空白在此拦下（接口文档 §3.9 实现口径 5）
+        raise BizException(ErrorCode.PARAM_INVALID, "作答内容不能为空")
     row = _get_owned(db, user_id=user_id, wrong_question_id=wrong_question_id, invalid=True)
     if row.mastered_at is not None:
         raise BizException(ErrorCode.WRONG_QUESTION_INVALID)
