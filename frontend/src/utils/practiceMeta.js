@@ -13,3 +13,10 @@ export function directionLabelMap(meta) {
   }
   return map
 }
+
+/** 题型枚举 → 中文名（错题本列表等处以标签形式展示）。 */
+export const QTYPE_LABELS = {
+  CHOICE: '选择题',
+  SUBJECTIVE: '主观题',
+  SCENARIO: '场景题'
+}

@@ -24,7 +24,7 @@ const isBlank = computed(() => route.meta.layout === 'blank')
       <el-header class="app-header">
         <AppHeader :collapse="collapse" @toggle="collapse = !collapse" />
       </el-header>
-      <el-main class="app-main">
+      <el-main class="app-main" :style="{ '--page-color': route.meta.color || 'var(--brand)' }">
         <router-view />
       </el-main>
     </el-container>
@@ -39,6 +39,18 @@ body,
 #app {
   height: 100%;
   margin: 0;
+}
+
+/* 页面主卡标题的模块色点：颜色随路由 meta.color（.app-main 下发 --page-color） */
+.dot-title::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--page-color, var(--brand));
+  vertical-align: 1px;
 }
 </style>
 
@@ -64,6 +76,9 @@ body,
 }
 .app-main {
   padding: var(--content-padding);
-  background: var(--c-bg);
+  /* 顶部一层极淡的主色渐变收底——告别纯灰平铺；约 320px 内回到 --c-bg */
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--brand) 4%, var(--c-bg)) 0%, var(--c-bg) 320px),
+    var(--c-bg);
 }
 </style>

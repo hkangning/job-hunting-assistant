@@ -12,6 +12,7 @@ import { listInterviewSessions } from '../api/interview'
 import { directionLabelMap } from '../utils/practiceMeta'
 import { shortDateTime } from '../utils/datetime'
 import InterviewCreateDialog from '../components/interview/InterviewCreateDialog.vue'
+import AppEmpty from '../components/AppEmpty.vue'
 
 const router = useRouter()
 
@@ -107,10 +108,15 @@ onMounted(() => {
       <el-button type="primary" @click="createVisible = true">发起面试</el-button>
     </header>
 
-    <el-empty v-if="!loading && !items.length" :description="emptyText">
+    <AppEmpty
+      v-if="!loading && !items.length"
+      type="interview"
+      :description="emptyText"
+      style="--empty-color: var(--m-interview)"
+    >
       <el-button v-if="status" @click="changeStatus('')">查看全部</el-button>
       <el-button v-else type="primary" @click="createVisible = true">发起面试</el-button>
-    </el-empty>
+    </AppEmpty>
 
     <template v-else>
       <ul v-loading="loading" class="interview__list">
@@ -181,7 +187,8 @@ onMounted(() => {
   border-radius: var(--r-control);
 }
 .seg__item {
-  padding: 5px 12px;
+  /* 32px 高：点击热区达惯例下限（原 28px） */
+  padding: 7px 14px;
   font: inherit;
   font-size: var(--fs-sm);
   color: var(--c-text-2);

@@ -5,6 +5,7 @@
  */
 import { computed } from 'vue'
 import { shortDateTime } from '../../utils/datetime'
+import AppEmpty from '../AppEmpty.vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -30,7 +31,7 @@ const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageS
 <template>
   <section class="history__card">
     <header class="history__head">
-      <h3 class="history__title">训练记录</h3>
+      <h3 class="history__title dot-title">训练记录</h3>
       <el-select
         :model-value="modeFilter"
         size="small"
@@ -48,7 +49,14 @@ const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageS
       </el-select>
     </header>
 
-    <el-empty v-if="!items.length" description="还没有训练记录" :image-size="60" />
+    <AppEmpty
+      v-if="!items.length"
+      type="note"
+      size="sm"
+      title="还没有训练记录"
+      description="去准备台开一场吧"
+      style="--empty-color: var(--m-practice)"
+    />
 
     <ul v-else class="history__list">
       <li v-for="item in items" :key="item.id" class="history__item" @click="handleClick(item)">
@@ -90,11 +98,11 @@ const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageS
 </template>
 
 <style scoped>
+/* 辅助卡＝线框卡（透明底、无阴影）：与白色主卡形成「虚 / 实」两层 */
 .history__card {
-  background: var(--c-card);
+  background: transparent;
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
-  box-shadow: 0 1px 2px rgba(42, 39, 64, 0.05);
   padding: var(--card-padding);
 }
 

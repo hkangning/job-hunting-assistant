@@ -8,7 +8,7 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Back } from '@element-plus/icons-vue'
+import { Back, CircleCheck } from '@element-plus/icons-vue'
 import { getInterviewSession, interviewChatStream } from '../api/interview'
 import { getPracticeMeta } from '../api/practice'
 import { directionLabelMap } from '../utils/practiceMeta'
@@ -35,6 +35,7 @@ const loading = ref(true)
 const streaming = ref(false)
 const thinking = ref('')
 const errorMsg = ref('')
+const errorCode = ref(null)
 const meta = ref(null)
 const scroller = ref(null)
 
@@ -69,7 +70,7 @@ async function load() {
     const built = buildMessages(data, data.qa_list || [])
     messages.value = built.messages
     tail.value = built.tail
-    scrollToBottom()
+    scrollToBottom(true)
     // 新会话：自动请首题；FINISHED 会话只读展示，不请求
     if (tail.value === 'empty' && data.status === 'ACTIVE') requestNext({ answer: '' })
   } catch (error) {
@@ -84,17 +85,16 @@ function requestNext(payload) {
   lastPayload = payload
   streaming.value = true
   errorMsg.value = ''
+  errorCode.value = null
   thinking.value = ''
   stream = interviewChatStream(
     { session_id: Number(sessionId), ...payload },
     {
       onStart: (d) => {
         thinking.value = d?.message || '面试官思考中…'
-        scrollToBottom()
       },
       onDelta: (d) => {
         applyDelta(messages.value, d)
-        scrollToBottom()
       },
       onDone: (d) => {
         sealStreaming(messages.value)
@@ -105,12 +105,12 @@ function requestNext(payload) {
         if (d.seq != null && last?.kind === 'question') last.seq = d.seq
         attachScore()
         tail.value = d.extra?.session_finished ? 'finished' : 'awaiting-answer'
-        scrollToBottom()
       },
       onError: (e) => {
         sealStreaming(messages.value)
         streaming.value = false
         thinking.value = ''
+        errorCode.value = e?.code ?? null
         errorMsg.value =
           e?.code === 10012
             ? '未配置 AI 密钥，请前往 AI 配置页配置后重试'
@@ -138,13 +138,13 @@ function submitAnswer() {
   const text = input.value.trim()
   input.value = ''
   appendAnswer(messages.value, text)
-  scrollToBottom()
+  scrollToBottom(true)
   requestNext({ answer: text })
 }
 
 function skip() {
   insertSkipped(messages.value)
-  scrollToBottom()
+  scrollToBottom(true)
   requestNext({ skip: true })
 }
 
@@ -160,22 +160,51 @@ function backToList() {
   router.push('/interview')
 }
 
-function scrollToBottom() {
+/**
+ * 粘性底部：只跟随、不拉扯。
+ *
+ * `stick` = 用户是否处在底部附近——内容变化（流式 delta、**打字机逐字增长**）时
+ * 若吸附则滚到底；用户上翻则解除吸附，回到底部附近再恢复。
+ * 用 MutationObserver 而非在事件回调里滚：打字机在流式结束后还要追 1~2 秒，
+ * 只在 onDelta/onDone 时刻滚会让底部在这段期间"长出去"（走查实测发现）。
+ * `force` 用于用户自己的动作（提交 / 跳过 / 进入页面），那些场景本来就期望看到最新。
+ */
+let stick = true
+
+function scrollToBottom(force = false) {
   nextTick(() => {
     const el = scroller.value
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    if (force) stick = true
+    if (stick) el.scrollTop = el.scrollHeight
   })
 }
+
+function onStreamScroll() {
+  const el = scroller.value
+  if (!el) return
+  stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+let observer = null
 
 onMounted(() => {
   load()
   getPracticeMeta()
     .then((data) => (meta.value = data))
     .catch(() => {}) // 拉不到就显示枚举值兜底
+  // 内容变化（含打字机逐字增长）时若吸附底部则跟随
+  observer = new MutationObserver(() => {
+    if (stick) scrollToBottom()
+  })
+  observer.observe(scroller.value, { childList: true, subtree: true, characterData: true })
 })
 
 // 离开页面时断流：避免后台跑完却没人消费（内容仍会由后端落库）
-onUnmounted(() => stream?.abort())
+onUnmounted(() => {
+  stream?.abort()
+  observer?.disconnect()
+})
 </script>
 
 <template>
@@ -191,13 +220,22 @@ onUnmounted(() => stream?.abort())
       </span>
     </header>
 
-    <div ref="scroller" v-loading="loading" class="chat__stream">
+    <div ref="scroller" v-loading="loading" class="chat__stream" @scroll.passive="onStreamScroll">
       <InterviewMessages :messages="messages" />
       <p v-if="thinking" class="chat__thinking">{{ thinking }}</p>
     </div>
 
     <div v-if="errorMsg" class="chat__error">
       <span>{{ errorMsg }}</span>
+      <el-button
+        v-if="errorCode === 10012"
+        size="small"
+        type="primary"
+        plain
+        @click="router.push('/ai-config')"
+      >
+        前往配置
+      </el-button>
       <el-button v-if="lastPayload" size="small" @click="retry">重试</el-button>
     </div>
 
@@ -206,9 +244,9 @@ onUnmounted(() => stream?.abort())
 
       <template v-else-if="tail === 'midway'">
         <div class="chat__resume">
-          <span class="chat__resume-text">上一轮已提交，面试尚未结束。</span>
+          <span class="chat__resume-text">上次作答已提交，下一题还没生成</span>
           <el-button type="primary" :loading="streaming" @click="continueNext">
-            继续下一题
+            继续本场面试
           </el-button>
         </div>
       </template>
@@ -242,7 +280,14 @@ onUnmounted(() => stream?.abort())
       </template>
     </footer>
 
-    <p v-else class="chat__done">本场面试已完成 · 共 {{ session?.question_count }} 题</p>
+    <div v-else class="chat__done">
+      <el-icon class="chat__done-icon"><CircleCheck /></el-icon>
+      <div class="chat__done-text">
+        <p class="chat__done-title">本场面试已完成 · 共 {{ session?.question_count }} 题</p>
+        <p class="chat__done-sub">本场记录已保存，可随时回到列表查看</p>
+      </div>
+      <el-button type="primary" @click="backToList">返回列表</el-button>
+    </div>
   </section>
 </template>
 
@@ -323,16 +368,38 @@ onUnmounted(() => stream?.abort())
   gap: 8px;
   margin-top: 8px;
 }
-.chat__preparing,
-.chat__done {
+.chat__preparing {
   margin: 0;
   padding: 4px 0;
   font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
+/* 完成卡：让「答满」有完成感与出口，而不只是一行灰字 */
 .chat__done {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   padding: 14px var(--card-padding);
   border-top: 1px solid var(--c-divider);
+}
+.chat__done-icon {
+  font-size: 26px;
+  color: var(--m-practice);
+}
+.chat__done-text {
+  flex: 1;
+  min-width: 0;
+}
+.chat__done-title {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--c-text);
+}
+.chat__done-sub {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
 }
 .chat__resume {
   display: flex;

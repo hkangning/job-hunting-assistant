@@ -5,7 +5,10 @@
  * 排序由后端给（未掌握优先 → 到期先后 → id），本组件不再排。
  */
 import { computed } from 'vue'
-import { directionLabelMap } from '../../utils/practiceMeta'
+import { Delete } from '@element-plus/icons-vue'
+import { QTYPE_LABELS, directionLabelMap } from '../../utils/practiceMeta'
+import { dueText } from '../../utils/reviewPlan'
+import AppEmpty from '../AppEmpty.vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -39,18 +42,12 @@ function toDate(text) {
 function isDue(item) {
   return !item.mastered_at && toDate(item.next_review_at) <= new Date()
 }
-
-function dueLabel(item) {
-  if (item.mastered_at) return ''
-  const days = Math.ceil((toDate(item.next_review_at) - Date.now()) / 86400000)
-  return days <= 0 ? '已到期' : `${days} 天后`
-}
 </script>
 
 <template>
   <section class="wrong">
     <header class="wrong__head">
-      <h3 class="wrong__title">错题本</h3>
+      <h3 class="wrong__title dot-title">错题本</h3>
       <div class="seg">
         <button
           v-for="opt in STATUS_OPTIONS"
@@ -65,7 +62,12 @@ function dueLabel(item) {
       </div>
     </header>
 
-    <el-empty v-if="!loading && !items.length" :description="emptyText" />
+    <AppEmpty
+      v-if="!loading && !items.length"
+      type="wrong"
+      :description="emptyText"
+      style="--empty-color: var(--m-wrong)"
+    />
 
     <template v-else>
       <ul v-loading="loading" class="wrong__list">
@@ -74,23 +76,20 @@ function dueLabel(item) {
             <span class="wrong__content">{{ item.content }}</span>
             <div class="wrong__meta">
               <span class="wrong__dir">{{ directionLabels[item.direction] || item.direction }}</span>
-              <span class="wrong__stage">
-                <template v-if="item.mastered_at">四档已走完</template>
-                <template v-else>第 {{ item.review_stage }} 档</template>
-              </span>
-              <span v-if="isDue(item)" class="wrong__due">{{ dueLabel(item) }}</span>
-              <span v-else-if="dueLabel(item)" class="wrong__later">{{ dueLabel(item) }}</span>
+              <span class="wrong__qtype">{{ QTYPE_LABELS[item.qtype] || item.qtype }}</span>
               <span v-if="item.mastered_at" class="wrong__mastered">已掌握</span>
+              <span v-else-if="isDue(item)" class="wrong__due">{{ dueText(item.next_review_at) }}</span>
+              <span v-else class="wrong__later">{{ dueText(item.next_review_at) }}</span>
             </div>
           </div>
+          <span class="wrong__arrow">›</span>
           <el-button
             link
             class="wrong__remove"
             title="从错题本移除"
+            :icon="Delete"
             @click.stop="emit('remove', item)"
-          >
-            删除
-          </el-button>
+          />
         </li>
       </ul>
 
@@ -139,7 +138,8 @@ function dueLabel(item) {
   border-radius: var(--r-control);
 }
 .seg__item {
-  padding: 5px 12px;
+  /* 32px 高：点击热区达惯例下限（原 28px） */
+  padding: 7px 14px;
   font: inherit;
   font-size: var(--fs-sm);
   color: var(--c-text-2);
@@ -209,8 +209,30 @@ function dueLabel(item) {
   background: color-mix(in srgb, var(--m-practice) 12%, var(--c-card));
   border-radius: var(--r-mark);
 }
-.wrong__remove {
+/* 题型：中性浅底标签——类型是中性信息，不抢到期标记的模块色 */
+.wrong__qtype {
+  padding: 1px 6px;
+  background: var(--c-bg);
+  border-radius: var(--r-mark);
+}
+/* 进入提示：常驻低对比度，hover 随条目变模块色 */
+.wrong__arrow {
   flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--c-text-3);
+  transition: color 0.15s;
+}
+.wrong__item:hover .wrong__arrow {
+  color: var(--m-wrong);
+}
+/* 删除：常驻图标、低对比度，hover 才显危险色（常驻可见是底线，只是不以文字抢注意力） */
+.wrong__remove.el-button {
+  flex: 0 0 auto;
+  color: var(--c-text-3);
+}
+.wrong__remove.el-button:hover {
+  color: var(--el-color-danger);
 }
 
 .wrong__pager {

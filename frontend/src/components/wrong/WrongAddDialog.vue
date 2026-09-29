@@ -77,7 +77,7 @@ async function submit() {
     width="560px"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <el-form ref="formRef" :model="form" :rules="rules" label-width="72px">
+    <el-form ref="formRef" :model="form" :rules="rules" label-width="88px">
       <el-form-item label="题干" prop="content">
         <el-input
           v-model="form.content"

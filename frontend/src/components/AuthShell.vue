@@ -22,7 +22,7 @@
   justify-content: center;
   width: 100vw;
   height: 100vh;
-  background: radial-gradient(120% 120% at 50% 40%, #5a4a93 0%, #3b3168 45%, #241f45 100%);
+  background: radial-gradient(120% 120% at 50% 40%, #2F5B9E 0%, #1E3E6B 45%, #122545 100%);
 }
 
 .auth__card {

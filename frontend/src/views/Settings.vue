@@ -109,7 +109,7 @@ onMounted(load)
 <template>
   <div v-loading="loading" class="settings">
     <el-card shadow="never" class="settings__card">
-      <h3 class="settings__title">语音交互</h3>
+      <h3 class="settings__title dot-title">语音交互</h3>
       <el-form label-width="120px">
         <el-form-item label="语音作答">
           <el-switch v-model="form.voice_enabled" />
@@ -150,7 +150,7 @@ onMounted(load)
     </el-card>
 
     <el-card shadow="never" class="settings__card">
-      <h3 class="settings__title">模拟面试</h3>
+      <h3 class="settings__title dot-title">模拟面试</h3>
       <el-form label-width="120px">
         <el-form-item label="默认题量">
           <el-input-number v-model="form.default_question_count" :min="1" :max="50" />
@@ -160,7 +160,7 @@ onMounted(load)
     </el-card>
 
     <el-card shadow="never" class="settings__card">
-      <h3 class="settings__title">信息采集</h3>
+      <h3 class="settings__title dot-title">信息采集</h3>
       <p class="settings__note">以下为系统级配置：任一账号修改后对全部账号生效。</p>
       <el-form label-width="120px">
         <el-form-item label="每日抓取">

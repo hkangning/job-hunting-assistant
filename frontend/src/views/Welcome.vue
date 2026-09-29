@@ -127,9 +127,9 @@ onBeforeUnmount(() => {
   height: 100vh;
   overflow: hidden;
   cursor: pointer;
-  /* 品牌紫深色渐变，中央聚焦（设计文档 §4.6） */
+  /* 品牌深蓝渐变，中央聚焦（设计文档 §4.6；2026-09-29 随主色由紫改蓝） */
   background:
-    radial-gradient(120% 120% at 50% 42%, #5a4a93 0%, #3b3168 45%, #241f45 100%);
+    radial-gradient(120% 120% at 50% 42%, #2F5B9E 0%, #1E3E6B 45%, #122545 100%);
   animation: welcomeIn 0.4s ease-out both;
   transition: opacity 0.4s ease;
 }

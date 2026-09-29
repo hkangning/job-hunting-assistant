@@ -287,15 +287,15 @@ onUnmounted(stopTimer)
   margin: var(--card-gap) 0;
 }
 
+/* 按钮行整体左对齐（2026-09-29 用户反馈调整）：选项与输入框都是左对齐的，
+   主操作「提交」跟随其正下方，点完选项不必横跨屏幕。
+   原布局以「退出」的 margin-right:auto 两端分列——提交被挤到屏幕最右，
+   从选项区（左侧）到提交的横向动线近 1000px。 */
 .runner__actions {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: 10px;
-}
-/* 「退出」是弱操作，推到最左侧与主操作拉开距离，避免误点 */
-.runner__quit {
-  margin-right: auto;
 }
 .runner__actions-main {
   display: flex;

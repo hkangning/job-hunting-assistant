@@ -10,14 +10,17 @@ import { Back } from '@element-plus/icons-vue'
 import ChoiceOptions from '../ChoiceOptions.vue'
 import { toPlainText } from '../../utils/practiceStream'
 import { directionLabelMap } from '../../utils/practiceMeta'
+import { dueText, nextPlanText } from '../../utils/reviewPlan'
 
 const props = defineProps({
   item: { type: Object, required: true },
   meta: { type: Object, default: null },
   result: { type: Object, default: null },
-  busy: { type: Boolean, default: false }
+  busy: { type: Boolean, default: false },
+  /** 队列里还有下一条待复习（父组件按下标后算，跳过已掌握）。 */
+  hasNext: { type: Boolean, default: false }
 })
-const emit = defineEmits(['submit', 'back', 'remove'])
+const emit = defineEmits(['submit', 'back', 'remove', 'next'])
 
 /** 选择题走点选；其余题型文本框。选项为空的 CHOICE（老数据）也退回文本框。 */
 const isChoice = computed(() => props.item.qtype === 'CHOICE' && (props.item.options || []).length > 0)
@@ -47,11 +50,12 @@ const directionLabel = computed(() => {
   return map[props.item?.direction] || props.item?.direction || ''
 })
 
-const stageText = computed(() => {
-  const before = props.item?.review_stage
-  const after = props.result?.review_stage
-  if (after === undefined || after === null) return `第 ${before} 档`
-  return `第 ${before} 档 → 第 ${after} 档`
+/** 头部右侧：未判定显示该题的复习时点；判定后显示下次复习时间（档位是内部机制，不上界面）。 */
+const headPlan = computed(() => {
+  if (props.result) {
+    return props.result.mastered ? '已掌握' : `下次复习：${nextPlanText(props.result.next_review_at)}`
+  }
+  return dueText(props.item.next_review_at)
 })
 </script>
 
@@ -59,7 +63,7 @@ const stageText = computed(() => {
   <section class="review">
     <header class="review__head">
       <span class="review__kind">错题复习</span>
-      <span class="review__stage">{{ stageText }}</span>
+      <span class="review__stage">{{ headPlan }}</span>
     </header>
 
     <p class="review__content">{{ item.content }}</p>
@@ -85,17 +89,22 @@ const stageText = computed(() => {
     <!-- 判定结果：答完才出现 -->
     <div v-if="result" class="review__result" :class="{ 'review__result--wrong': !result.correct }">
       <span class="review__verdict">{{ result.correct ? '答对了' : '答错了' }}</span>
-      <span v-if="result.mastered" class="review__mastered">四档已走完，已掌握</span>
       <p class="review__explain">{{ toPlainText(result.explain) }}</p>
     </div>
 
     <div class="review__actions">
       <el-button :icon="Back" :disabled="busy" @click="emit('back')">返回列表</el-button>
       <div class="review__actions-main">
-        <el-button link type="danger" :disabled="busy" @click="emit('remove', item)">删除此题</el-button>
+        <el-button link class="review__remove" :disabled="busy" @click="emit('remove', item)">
+          删除
+        </el-button>
         <el-button v-if="!result" type="primary" :disabled="!canSubmit" @click="submit">
           提交
         </el-button>
+        <el-button v-else-if="hasNext" type="primary" @click="emit('next')">
+          下一条待复习 →
+        </el-button>
+        <span v-else class="review__finished">这批错题已复习完</span>
       </div>
     </div>
   </section>
@@ -165,10 +174,16 @@ const stageText = computed(() => {
   font-weight: 700;
   color: var(--c-text);
 }
-.review__mastered {
-  margin-left: 10px;
+/* 删除：中性色 + hover 危险色——复习的主动作是「下一条」，删除不抢位 */
+.review__remove.el-button {
+  color: var(--c-text-3);
+}
+.review__remove.el-button:hover {
+  color: var(--el-color-danger);
+}
+.review__finished {
   font-size: var(--fs-sm);
-  color: var(--m-practice);
+  color: var(--c-text-2);
 }
 .review__explain {
   margin: 8px 0 0;
@@ -179,6 +194,8 @@ const stageText = computed(() => {
   word-break: break-word;
 }
 
+/* 按钮行整体左对齐（2026-09-29）：与陪练作答区同构——选项/输入框左对齐，
+   主操作跟随其正下方。原以 margin-left:auto 两端分列，点完选项要横跨屏幕才能提交。 */
 .review__actions {
   display: flex;
   align-items: center;
@@ -189,6 +206,5 @@ const stageText = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 </style>

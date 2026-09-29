@@ -9,10 +9,25 @@
  * 我的订阅、与投递 / JD 分析的打通。设计约定见问题记录 IS-29
  * （招聘信息与投递管理是「候选池 → 进度追踪」两段式，靠视觉语言区分、不合并）。
  */
+import AppEmpty from '../components/AppEmpty.vue'
 </script>
 
 <template>
-  <div>
-    <el-empty description="校招情报建设中 · 对应开发计划步骤 23：多校宣讲会 / 双选会 / 岗位聚合、日历视图与订阅" />
+  <div class="campus">
+    <AppEmpty
+      type="build"
+      title="校招情报正在建设中"
+      description="多所高校就业网的宣讲会 / 双选会 / 岗位聚合、跨源去重与变更提醒，见开发计划步骤 23"
+      style="--empty-color: var(--m-campus)"
+    />
   </div>
 </template>
+
+<style scoped>
+.campus {
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-card);
+  box-shadow: 0 1px 2px rgba(42, 39, 64, 0.05);
+}
+</style>

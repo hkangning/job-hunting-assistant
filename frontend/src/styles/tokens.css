@@ -3,9 +3,10 @@
 
 :root {
   /* ---------- 品牌与模块色 ----------
-     调性：提亮 + 降饱和的清爽蓝紫。求职本身是压力源，界面不再加重紧张感，
-     故避开深紫/暗琥珀这类“作战面板”色，改为明亮但不失专业的版本。 */
-  --brand: #7A6BC4;
+     调性：专业可信的深钢蓝 + 多彩模块色。求职本身是压力源，界面不加重紧张感；
+     主色由紫改蓝（2026-09-29，见设计稿「全站视觉与交互可达性优化」）——紫色是
+     AI 产品常见色，整体观感「像 AI 生成」，换成招聘/企业工具主流的深蓝后品牌感更稳。 */
+  --brand: #2F5B9E;
   --m-application: #5B8DD9;
   --m-jd: #4FA8A8;
   --m-interview: #D9A24E;
@@ -71,13 +72,13 @@
 /* ---------- Element Plus 主题覆盖：只改视觉变量，不改组件行为 ----------
    浅色阶按 Element Plus 的 mix(white, primary, n/10) 算法推导，保证与其内部组件配色自洽 */
 :root {
-  --el-color-primary: #7A6BC4;
-  --el-color-primary-light-3: #A297D6;
-  --el-color-primary-light-5: #BCB5E1;
-  --el-color-primary-light-7: #D7D2ED;
-  --el-color-primary-light-8: #E4E1F3;
-  --el-color-primary-light-9: #F1F0F9;
-  --el-color-primary-dark-2: #62569D;
+  --el-color-primary: #2F5B9E;
+  --el-color-primary-light-3: #6D8CBB;
+  --el-color-primary-light-5: #97ADCF;
+  --el-color-primary-light-7: #C1CEE2;
+  --el-color-primary-light-8: #D5DEEC;
+  --el-color-primary-light-9: #EAEFF5;
+  --el-color-primary-dark-2: #26497E;
 
   --el-border-radius-base: var(--r-control);
   --el-border-radius-small: var(--r-menu);

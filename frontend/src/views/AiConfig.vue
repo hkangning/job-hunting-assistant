@@ -16,6 +16,7 @@ import {
   listProvidersApi
 } from '../api/llmProviders'
 import ProviderFormDialog from '../components/ProviderFormDialog.vue'
+import AppEmpty from '../components/AppEmpty.vue'
 
 const loading = ref(true)
 const error = ref('')
@@ -111,8 +112,8 @@ onMounted(load)
     <!-- 我的配置：当前使用中作为卡片首条，与列表同属一个容器 -->
     <section class="ai__card">
       <div class="ai__head">
-        <h3 class="ai__card-title">我的配置</h3>
-        <el-button type="primary" size="small" @click="openAdd">+ 添加自定义模型</el-button>
+        <h3 class="ai__card-title dot-title">我的配置</h3>
+        <el-button type="primary" @click="openAdd">+ 添加自定义模型</el-button>
       </div>
 
       <div class="ai__current">
@@ -120,7 +121,14 @@ onMounted(load)
         当前使用中：<strong>{{ activeLabel }}</strong>
       </div>
 
-      <el-empty v-if="!configured.length" description="还没有自己的配置" :image-size="60" />
+      <AppEmpty
+        v-if="!configured.length"
+        type="note"
+        size="sm"
+        title="还没有自己的配置"
+        description="添加一家供应商，填上 Key 就能用 AI"
+        style="--empty-color: var(--brand)"
+      />
       <ul v-else class="ai__list">
         <li
           v-for="item in configured"

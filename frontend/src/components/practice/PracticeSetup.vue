@@ -158,7 +158,7 @@ function start() {
 
     <!-- 二、怎么练：本页的核心决策 -->
     <div class="setup__block">
-      <h3 class="setup__heading">怎么练</h3>
+      <h3 class="setup__heading dot-title">怎么练</h3>
       <div class="seg seg--fill">
         <button
           v-for="item in modeOptions"
@@ -281,7 +281,8 @@ function start() {
 
 /* 胶囊：白底细边，比灰底更轻也更像「可点的按钮」而非「贴上去的标签」 */
 .chip {
-  padding: 4px 13px;
+  /* 32px 高：点击热区达惯例下限（原 28px，扫描发现全站 14 处偏小控件，2026-09-29 提档） */
+  padding: 7px 14px;
   font-family: inherit;
   font-size: var(--fs-sm);
   color: var(--c-text-2);

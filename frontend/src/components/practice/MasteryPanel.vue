@@ -6,6 +6,7 @@
  * 与抽题的「薄弱优先」呼应——它同时也是「练什么」的决策依据。
  */
 import { shortDateTime } from '../../utils/datetime'
+import AppEmpty from '../AppEmpty.vue'
 
 defineProps({
   groups: { type: Array, default: () => [] }
@@ -14,8 +15,15 @@ defineProps({
 
 <template>
   <section class="mastery__card">
-    <h3 class="mastery__title">各领域掌握度</h3>
-    <el-empty v-if="!groups.length" description="练过之后这里会显示各领域掌握度" :image-size="60" />
+    <h3 class="mastery__title dot-title">各领域掌握度</h3>
+    <AppEmpty
+      v-if="!groups.length"
+      type="chart"
+      size="sm"
+      title="还没有掌握度数据"
+      description="练过之后这里会显示各领域掌握度"
+      style="--empty-color: var(--m-practice)"
+    />
 
     <div v-for="group in groups" :key="group.stack" class="mastery__group">
       <div class="mastery__group-head">
@@ -43,11 +51,11 @@ defineProps({
 </template>
 
 <style scoped>
+/* 辅助卡＝线框卡（透明底、无阴影）：与白色主卡形成「虚 / 实」两层 */
 .mastery__card {
-  background: var(--c-card);
+  background: transparent;
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
-  box-shadow: 0 1px 2px rgba(42, 39, 64, 0.05);
   padding: var(--card-padding);
 }
 

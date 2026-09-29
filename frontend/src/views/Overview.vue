@@ -100,7 +100,7 @@ onUnmounted(() => clearInterval(timer))
         class="overview__card overview__card--link"
         @click="goApplications"
       >
-        <h3 class="overview__title">待面试 / 笔试</h3>
+        <h3 class="overview__title dot-title">待面试 / 笔试</h3>
         <div class="evlist">
           <div
             v-for="e in upcoming"
@@ -126,7 +126,7 @@ onUnmounted(() => clearInterval(timer))
         class="overview__card overview__card--link"
         @click="goApplications"
       >
-        <h3 class="overview__title">该跟进一下了</h3>
+        <h3 class="overview__title dot-title">该跟进一下了</h3>
         <div class="evlist">
           <div
             v-for="f in followUps"
@@ -152,7 +152,7 @@ onUnmounted(() => clearInterval(timer))
         class="overview__card overview__card--link"
         @click="router.push('/campus')"
       >
-        <h3 class="overview__title">校招情报</h3>
+        <h3 class="overview__title dot-title">校招情报</h3>
         <div v-if="campusEvents.length || jobPostings.length" class="evlist">
           <div
             v-for="e in campusEvents"

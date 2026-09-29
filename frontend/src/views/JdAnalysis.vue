@@ -13,6 +13,7 @@ import { streamSSE } from '../utils/sse'
 import { listReports, getReport } from '../api/jdReports'
 import { listApplications } from '../api/applications'
 import { shortDateTime } from '../utils/datetime'
+import AppEmpty from '../components/AppEmpty.vue'
 
 // section 标识 → 中文名（五段固定，接口文档 §3.6）
 const SECTION_LABELS = {
@@ -223,7 +224,7 @@ onUnmounted(() => {
     <!-- 左栏：输入 + 历史 -->
     <aside class="jd__side">
       <section class="jd__card">
-        <h3 class="jd__card-title">粘贴 JD</h3>
+        <h3 class="jd__card-title dot-title">粘贴 JD</h3>
         <el-input
           v-model="jdText"
           type="textarea"
@@ -255,8 +256,15 @@ onUnmounted(() => {
       </section>
 
       <section class="jd__card">
-        <h3 class="jd__card-title">历史报告</h3>
-        <el-empty v-if="!reports.length" description="还没有分析记录" :image-size="60" />
+        <h3 class="jd__card-title dot-title">历史报告</h3>
+        <AppEmpty
+          v-if="!reports.length"
+          type="jd"
+          size="sm"
+          title="还没有分析记录"
+          description="粘贴 JD 生成第一份报告"
+          style="--empty-color: var(--m-jd)"
+        />
         <ul v-else class="jd__list">
           <li
             v-for="item in reports"
@@ -332,10 +340,11 @@ onUnmounted(() => {
         <p v-if="runMetaText" class="jd__report-meta">{{ runMetaText }}</p>
         <!-- 空态的条件**显式写出**、不用 v-else：上面的耗时行是新增的兄弟节点，
              若沿用 v-else，它会在生成中（有内容、尚无耗时）与内容并显 -->
-        <el-empty
+        <AppEmpty
           v-if="!reportText && !streaming"
+          type="jd"
           description="粘贴一份 JD 开始分析，或从左侧选择历史报告"
-          :image-size="80"
+          style="--empty-color: var(--m-jd)"
         />
       </div>
     </main>

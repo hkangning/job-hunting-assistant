@@ -46,16 +46,19 @@ async function loadMeta() {
   meta.value = await getPracticeMeta()
 }
 
-async function load() {
+async function load({ append = false } = {}) {
+  // append 模式只给连续复习用：翻页拉取并追加；列表自身的翻页与筛选仍为替换
+  const targetPage = append ? page.value + 1 : page.value
   loading.value = true
   try {
     const data = await listWrongQuestions({
       status: status.value || undefined,
-      page: page.value,
+      page: targetPage,
       page_size: pageSize.value
     })
-    items.value = data.items
+    items.value = append ? [...items.value, ...data.items] : data.items
     total.value = data.total
+    if (append) page.value = targetPage
   } finally {
     loading.value = false
   }
@@ -86,10 +89,58 @@ function changePage(value) {
   load()
 }
 
+// ---------- 连续复习（轻量串联，经讨论确定） ----------
+
+const reviewFinished = ref(false)
+const nextCandidate = ref(null)
+
+/** 当前条目之后的第一条未掌握——答错回档的条目在当前位置之前，不会被重复串到。 */
+function refreshNextCandidate() {
+  const idx = items.value.findIndex((i) => i.id === current.value?.id)
+  nextCandidate.value =
+    idx === -1 ? null : items.value.slice(idx + 1).find((i) => !i.mastered_at) || null
+}
+
+const hasNext = computed(
+  () => !reviewFinished.value && (!!nextCandidate.value || page.value * pageSize.value < total.value)
+)
+
 function openReview(item) {
   current.value = item
   reviewResult.value = null
+  reviewFinished.value = false
   phase.value = 'review'
+  refreshNextCandidate()
+}
+
+/** 「下一条待复习」：已加载部分找完仍有下一页时，静默拉取后继续；都没有则进入完成态。 */
+async function goNextReview() {
+  if (nextCandidate.value) {
+    openReview(nextCandidate.value)
+    return
+  }
+  if (page.value * pageSize.value < total.value) {
+    const anchorId = current.value.id
+    await load({ append: true })
+    const idx = items.value.findIndex((i) => i.id === anchorId)
+    const found = items.value.slice(idx + 1).find((i) => !i.mastered_at)
+    if (found) {
+      openReview(found)
+      return
+    }
+  }
+  reviewFinished.value = true
+}
+
+/** 侧栏「开始复习」：切到待复习筛选后打开第一条（后端排序：未掌握优先 → 到期先后）。 */
+async function startReview() {
+  if (status.value !== 'PENDING') {
+    status.value = 'PENDING'
+    page.value = 1
+    await load()
+  }
+  const first = items.value.find((i) => !i.mastered_at)
+  if (first) openReview(first)
 }
 
 /** 返回列表：档位可能已推进，回来重新取数。 */
@@ -108,7 +159,20 @@ async function submitReview(value) {
   }
   reviewing.value = true
   try {
-    reviewResult.value = await reviewWrongQuestion(current.value.id, value)
+    const result = await reviewWrongQuestion(current.value.id, value)
+    reviewResult.value = result
+    // 同步本地条目（档位 / 到期 / 掌握）——队列据此跳过刚走完四档的条目
+    const idx = items.value.findIndex((i) => i.id === current.value.id)
+    if (idx !== -1) {
+      items.value[idx] = {
+        ...items.value[idx],
+        review_stage: result.review_stage,
+        next_review_at: result.next_review_at,
+        mastered_at: result.mastered ? new Date().toISOString().slice(0, 19) : null
+      }
+      current.value = items.value[idx]
+      refreshNextCandidate()
+    }
     await loadCounts()
   } catch (error) {
     ElMessage.error(error?.message || '判定失败，请稍后重试')
@@ -147,9 +211,11 @@ async function removeItem(item) {
         :meta="meta"
         :result="reviewResult"
         :busy="reviewing"
+        :has-next="hasNext"
         @submit="submitReview"
         @back="backToList"
         @remove="removeItem"
+        @next="goNextReview"
       />
       <WrongList
         v-else
@@ -170,7 +236,7 @@ async function removeItem(item) {
 
     <aside class="wrong-page__side">
       <section class="wrong-page__card">
-        <h3 class="wrong-page__card-title">复习进度</h3>
+        <h3 class="wrong-page__card-title dot-title">复习进度</h3>
         <div class="wrong-page__stat">
           <span class="wrong-page__stat-value wrong-page__stat-value--due">{{ counts.pending }}</span>
           <span class="wrong-page__stat-label">待复习</span>
@@ -179,7 +245,15 @@ async function removeItem(item) {
           <span class="wrong-page__stat-value">{{ counts.mastered }}</span>
           <span class="wrong-page__stat-label">已掌握</span>
         </div>
-        <el-button class="wrong-page__add" type="primary" :icon="Plus" @click="addVisible = true">
+        <el-button
+          class="wrong-page__start"
+          type="primary"
+          :disabled="!counts.pending"
+          @click="startReview"
+        >
+          {{ counts.pending ? '开始复习' : '暂无待复习' }}
+        </el-button>
+        <el-button class="wrong-page__add" :icon="Plus" @click="addVisible = true">
           添加知识点
         </el-button>
       </section>
@@ -197,11 +271,11 @@ async function removeItem(item) {
   align-items: start;
 }
 
+/* 辅助卡＝线框卡（透明底、无阴影）：与白色主卡形成「虚 / 实」两层，卡片不再一样重 */
 .wrong-page__card {
-  background: var(--c-card);
+  background: transparent;
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
-  box-shadow: 0 1px 2px rgba(42, 39, 64, 0.05);
   padding: var(--card-padding);
 }
 .wrong-page__card-title {
@@ -235,8 +309,14 @@ async function removeItem(item) {
   color: var(--c-text-2);
 }
 
-.wrong-page__add {
+/* 「开始复习」是本页主任务；添加知识点是低频动作，降为次按钮 */
+.wrong-page__start {
   width: 100%;
   margin-top: var(--card-gap);
+}
+.wrong-page__add {
+  width: 100%;
+  margin-top: 8px;
+  margin-left: 0;
 }
 </style>

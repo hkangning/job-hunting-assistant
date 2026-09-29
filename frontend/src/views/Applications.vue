@@ -14,6 +14,7 @@ import ApplicationFormDialog from '../components/ApplicationFormDialog.vue'
 import ApplicationImportDialog from '../components/ApplicationImportDialog.vue'
 import CloseReasonDialog from '../components/CloseReasonDialog.vue'
 import TrendChart from '../components/TrendChart.vue'
+import AppEmpty from '../components/AppEmpty.vue'
 
 const PAGE_SIZE = 50 // 接口上限（接口文档 §1.1）
 const MAX_PAGES = 10 // 一次拉全的封顶：50 × 10 = 500 条
@@ -262,8 +263,10 @@ onMounted(load)
         @transit="onTransit"
       />
       <div v-if="isEmpty" class="apps__empty">
-        <el-empty
+        <AppEmpty
+          type="applications"
           :description="isFiltered ? '没有符合条件的记录' : '还没有投递记录，点击右上角「＋ 新增投递」或「批量导入」开始'"
+          style="--empty-color: var(--m-application)"
         />
       </div>
     </div>

@@ -162,9 +162,9 @@ async function saveProfile() {
               accept="image/png,image/jpeg,image/webp"
               :on-change="onPickAvatar"
             >
-              <el-button size="small" :loading="avatarUploading">更换头像</el-button>
+              <el-button :loading="avatarUploading">更换头像</el-button>
             </el-upload>
-            <el-button size="small" text @click="onResetAvatar">恢复默认</el-button>
+            <el-button text @click="onResetAvatar">恢复默认</el-button>
           </div>
         </div>
 
@@ -194,7 +194,7 @@ async function saveProfile() {
     <div class="profile__grid">
       <!-- 数据概览 -->
       <el-card shadow="never" class="profile__card">
-        <h3 class="profile__title">数据概览</h3>
+        <h3 class="profile__title dot-title">数据概览</h3>
         <div class="stats">
           <div class="stats__item">
             <span class="stats__num">{{ stats ? stats.application_count : '—' }}</span>
@@ -213,7 +213,7 @@ async function saveProfile() {
 
       <!-- 修改密码 -->
       <el-card shadow="never" class="profile__card">
-        <h3 class="profile__title">修改密码</h3>
+        <h3 class="profile__title dot-title">修改密码</h3>
         <el-form :model="pwd" label-width="82px" @submit.prevent="savePassword">
           <el-form-item label="原密码">
             <el-input v-model="pwd.old_password" type="password" show-password placeholder="当前密码" />
@@ -239,7 +239,7 @@ async function saveProfile() {
 
     <!-- 求职画像 -->
     <el-card shadow="never" class="profile__card">
-      <h3 class="profile__title">求职画像</h3>
+      <h3 class="profile__title dot-title">求职画像</h3>
       <el-form :model="profile" label-width="82px" @submit.prevent="saveProfile">
         <div class="profile__form-grid">
           <el-form-item label="姓名"><el-input v-model="profile.name" /></el-form-item>

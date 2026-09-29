@@ -296,7 +296,7 @@ const detailModeLabel = computed(() =>
           :qtype="detail.question.qtype"
         />
         <section v-if="detail.reference_answer" class="practice__card">
-          <h3 class="practice__card-title">{{ detailAnswerTitle }}</h3>
+          <h3 class="practice__card-title dot-title">{{ detailAnswerTitle }}</h3>
           <p class="practice__answer">{{ toPlainText(detail.reference_answer) }}</p>
         </section>
       </div>
