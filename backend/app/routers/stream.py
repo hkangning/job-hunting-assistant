@@ -4,9 +4,12 @@
 - `/stream/jd-analysis`：JD 匹配分析（步骤 12），首条完整业务链路——画像+JD 组装 prompt，
   AI 逐段产出五段报告，`section_splitter` 逐块标注段落，全文随流落库；
 - `/stream/practice-turn`：八股陪练每轮（步骤 13），五种模式共用一个入口——按模式与时机分派到
-  作答点评 / 追问 / 提示 / 材料 / 找错 / 复述，轮次产出即落库。
+  作答点评 / 追问 / 提示 / 材料 / 找错 / 复述，轮次产出即落库；
+- `/stream/interview-chat`：模拟面试一问一答（步骤 15），作答 / 跳过 / 开场 / 续题按进度分派，
+  一轮请求产出一轮内容，整轮生成完才落库；
+- `/stream/interview-summary`：面试总结报告（步骤 15），整场回顾生成总结并把会话置 FINISHED。
 
-其余业务链路（模拟面试 / 面经复盘）后续步骤逐个加入本文件。
+其余业务链路（面经复盘）后续步骤逐个加入本文件。
 
 路由层只做协议转换：取登录态、校验入参、组装业务生成器、交给 `sse_response` 包装，不直接访问 ORM。
 """
@@ -25,7 +28,12 @@ from app.deps import get_current_user
 from app.models import User
 from app.prompts import JD_ANALYSIS_SECTION_RULES
 from app.schemas.practice import PracticeTurnRequest
-from app.schemas.stream import DemoChatRequest, InterviewChatRequest, JdAnalysisRequest
+from app.schemas.stream import (
+    DemoChatRequest,
+    InterviewChatRequest,
+    InterviewSummaryRequest,
+    JdAnalysisRequest,
+)
 from app.services import interview_service, jd_service, practice_turn_service
 from app.utils.section_splitter import SectionSplitter
 from app.utils.sse import SSE, sse_response
@@ -90,10 +98,11 @@ def jd_analysis_stream(
     客户端中途断开时，已生成的内容同样落库并标记为未完成（接口文档 3.6），前端重新发起即可再次分析。
     """
     user_id = current_user.id
-    jd_text = payload.jd_text
     application_id = payload.application_id
     # 关联投递的归属校验必须在流式响应建立之前完成（系统设计 5.1：入参校验先于流式建立）
     jd_service.ensure_application(db, user_id, application_id)
+    # JD 原文：显式传入优先，其次取关联投递已填的岗位 JD；两者都取不到返回 10001
+    jd_text = jd_service.resolve_jd_text(db, user_id, payload.jd_text, application_id)
     started = time.perf_counter()
 
     def _run(stream_db: Session) -> Iterator[str]:
@@ -192,6 +201,34 @@ def interview_chat_stream(
         )
 
     return sse_response(_run, start_message="面试官正在思考…")
+
+
+@router.post("/stream/interview-summary", summary="面试总结报告（流式）")
+def interview_summary_stream(
+    payload: InterviewSummaryRequest,
+    current_user: User = Depends(get_current_user),
+    client: LLMClient = Depends(get_llm_client),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """整场面试结束后的总结报告（接口文档 3.7）。
+
+    事件流 `start → delta×N → done(record_id=session_id)`：delta 的 `section` 为 `summary`（正文），
+    正文之后可能跟一段 `wrong_candidates`（一次性 JSON 的错题候选，供前端出确认卡片）。
+    报告正文随流落库并把会话置 `FINISHED`（进行中的会话经此即「提前结束」）；已有总结时
+    直接回放、不调 LLM（重复调用不重复计费，候选段不落库故回放不含）。断连或中途失败不落库。
+    """
+    user_id = current_user.id
+    # 会话与「至少一条已完成问答」的校验必须在流式响应建立之前完成（404+10002 / 400+10001）
+    interview_service.ensure_summarizable(db, user_id=user_id, session_id=payload.session_id)
+
+    def _run(stream_db: Session) -> Iterator[str]:
+        return (
+            yield from interview_service.run_summary(
+                stream_db, user_id=user_id, session_id=payload.session_id, client=client
+            )
+        )
+
+    return sse_response(_run, start_message="正在生成总结…")
 
 
 def _save_partial(

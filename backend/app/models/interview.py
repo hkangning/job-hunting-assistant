@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
-from app.models.enums import Direction, SessionStatus
+from app.models.enums import Direction, InterviewIntensity, InterviewStage, SessionStatus
 
 
 class InterviewSession(Base):
@@ -27,6 +27,10 @@ class InterviewSession(Base):
         String(20), default=Direction.GENERAL
     )  # 面试方向，枚举 Direction
     question_count: Mapped[int] = mapped_column(Integer, default=8)  # 计划题量（3~15）
+    intensity: Mapped[str | None] = mapped_column(
+        String(20), default=InterviewIntensity.MEDIUM
+    )  # 面试强度，枚举 InterviewIntensity（存量会话为空，接口按 MEDIUM 兜底）
+    stage_plan: Mapped[str | None] = mapped_column(Text)  # 阶段计划 JSON：[{stage, count}]，老会话为空
     status: Mapped[str] = mapped_column(
         String(20), default=SessionStatus.ACTIVE
     )  # 会话状态，枚举 SessionStatus
@@ -44,6 +48,9 @@ class InterviewQa(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
     session_id: Mapped[int] = mapped_column(ForeignKey("interview_session.id"))  # 所属会话
     seq: Mapped[int] = mapped_column(Integer)  # 题序（从 1 开始）
+    stage: Mapped[str] = mapped_column(
+        String(20), default=InterviewStage.TECH, server_default=InterviewStage.TECH
+    )  # 所在阶段，枚举 InterviewStage（老数据默认 TECH）
     question: Mapped[str] = mapped_column(Text)  # AI 提问原文
     answer: Mapped[str | None] = mapped_column(Text)  # 用户作答（跳题为空）
     is_voice: Mapped[int] = mapped_column(Integer, default=0)  # 是否语音作答（0 文字 / 1 语音，P2）

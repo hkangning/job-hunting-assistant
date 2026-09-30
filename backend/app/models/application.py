@@ -23,6 +23,7 @@ class Application(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（账号私有数据）
     company: Mapped[str] = mapped_column(String(100))  # 公司名称
     position: Mapped[str] = mapped_column(String(100))  # 岗位名称
+    jd_text: Mapped[str | None] = mapped_column(Text)  # 岗位 JD 原文（新增/编辑必填由应用层校验；导入与存量行为空）
     city: Mapped[str | None] = mapped_column(String(50))  # 工作城市
     expected_salary: Mapped[str | None] = mapped_column(String(50))  # 期望/沟通薪资（自由文本）
     applied_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 投递日期（跟进提醒判定依据）

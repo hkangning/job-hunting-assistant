@@ -55,6 +55,14 @@ class Direction(StrEnum):
     GENERAL = "GENERAL"  # 通用综合（不参与题库分类，仅供模拟面试使用）
 
 
+class InterviewIntensity(StrEnum):
+    """面试强度（interview_session.intensity）：按目标公司档次校准出题深度与评分严格度。"""
+
+    LARGE = "LARGE"  # 大厂——深挖原理与底层机制、追问系统设计与取舍，评分从严
+    MEDIUM = "MEDIUM"  # 中厂（默认）——基础与常用框架原理并重、项目问真实细节，评分适中
+    SMALL = "SMALL"  # 小厂——重基础概念与实际落地，少问底层源码与复杂设计，评分以「能干活」为准
+
+
 class SessionStatus(StrEnum):
     """模拟面试会话状态（interview_session.status）。"""
 
@@ -62,11 +70,27 @@ class SessionStatus(StrEnum):
     FINISHED = "FINISHED"  # 已结束（已生成总结）
 
 
+class InterviewStage(StrEnum):
+    """面试阶段（interview_qa.stage、interview_session.stage_plan）：按固定顺序推进。"""
+
+    INTRO = "INTRO"  # 自我介绍（每场 1 题，开场）
+    TECH = "TECH"  # 技术问答（主体，八股与原理）
+    PROJECT = "PROJECT"  # 项目深挖（画像有经历条目时启用，基于画像经历提问）
+
+
 class ExperienceItemSource(StrEnum):
     """面经条目来源（experience_item.source_type）。"""
 
     LLM_EXTRACT = "LLM_EXTRACT"  # AI 提取
     MANUAL = "MANUAL"  # 手动补充
+
+
+class ExperienceType(StrEnum):
+    """画像经历条目类型（user_profile.experiences 元素的 type 字段，非表列）。"""
+
+    PROJECT = "PROJECT"  # 项目经历
+    INTERNSHIP = "INTERNSHIP"  # 实习经历
+    CAMPUS = "CAMPUS"  # 校园经历（社团 / 竞赛 / 课程实践）
 
 
 class QuestionType(StrEnum):

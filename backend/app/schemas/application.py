@@ -13,6 +13,8 @@ DateOnly = date
 
 # 公司/岗位名：必填、去首尾空格、1~100 字（数据库设计 3.1：VARCHAR(100) 非空）
 RequiredName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+# 岗位 JD：新增/编辑必填、去首尾空格、1~10000 字（与 JD 分析端点的 jd_text 同口径，接口文档 3.3 / 3.6）
+RequiredJdText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10000)]
 
 
 class ApplicationCreate(BaseModel):
@@ -20,6 +22,9 @@ class ApplicationCreate(BaseModel):
 
     company: RequiredName = Field(description="公司名称，必填，≤100 字")
     position: RequiredName = Field(description="岗位名称，必填，≤100 字")
+    jd_text: RequiredJdText = Field(
+        description="岗位 JD 原文，必填，1~10000 字（新增/编辑强制；批量导入可选填——导入模板另列，不经本请求体）"
+    )
     city: str | None = Field(default=None, max_length=50, description="工作城市，≤50 字")
     expected_salary: str | None = Field(
         default=None, max_length=50, description="期望/沟通薪资，自由文本（如 13k*14），≤50 字"
@@ -60,6 +65,7 @@ class ApplicationDTO(BaseModel):
     id: int = Field(description="投递记录 id")
     company: str = Field(description="公司名称")
     position: str = Field(description="岗位名称")
+    jd_text: str | None = Field(description="岗位 JD 原文；存量 / 批量导入未填的记录为 null")
     city: str | None = Field(description="工作城市，未填为 null")
     expected_salary: str | None = Field(description="期望/沟通薪资，未填为 null")
     applied_at: date = Field(description="投递日期 YYYY-MM-DD")
@@ -80,9 +86,10 @@ class ApplicationDTO(BaseModel):
 
 
 class ApplicationListItem(ApplicationDTO):
-    """投递列表项 DTO：字段与详情一致但不含 remark（接口文档 3.3：列表精简）。"""
+    """投递列表项 DTO：字段与详情一致但不含 remark 与 jd_text（接口文档 3.3：列表精简，JD 为大字段）。"""
 
     remark: str | None = Field(default=None, exclude=True, description="列表接口不返回备注，恒为 null")
+    jd_text: str | None = Field(default=None, exclude=True, description="列表接口不返回 JD 原文（大字段），恒为 null")
 
 
 class ImportErrorItem(BaseModel):
