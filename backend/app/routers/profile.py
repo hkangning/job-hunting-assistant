@@ -1,17 +1,18 @@
-"""画像接口：按账号隔离的读取与更新（接口文档 3.12）。
+"""画像接口：按账号隔离的读取与更新 + 简历文件解析（接口文档 3.12）。
 
-设置（/settings）与供应商配置（/llm-providers）分别属步骤 6，不在本文件。
+设置（/settings）与供应商配置（/llm-providers）都在步骤 6 独立成文件，不在本文件。
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
+from app.clients.llm_client import LLMClient, get_llm_client
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.schemas.common import ApiResponse
-from app.schemas.system import ProfileDTO, ProfileUpdateRequest
-from app.services import profile_service
+from app.schemas.system import ProfileDTO, ProfileUpdateRequest, ResumeParseData
+from app.services import profile_service, resume_service
 
 router = APIRouter(prefix="/profile", tags=["画像与设置"])
 
@@ -33,3 +34,27 @@ def update_profile(
     """更新当前账号画像：只更新提交的字段，未提交的保持原值，显式传 null 即清空。"""
     values = payload.model_dump(exclude_unset=True)
     return ApiResponse[ProfileDTO](data=profile_service.update_profile(db, current_user.id, values))
+
+
+@router.post("/resume", response_model=ApiResponse[ResumeParseData], summary="上传简历解析")
+async def parse_resume(
+    file: UploadFile = File(..., description="简历文件：.pdf / .docx，≤10MB"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    client: LLMClient = Depends(get_llm_client),
+) -> ApiResponse[ResumeParseData]:
+    """解析简历并抽取画像字段（**纯解析不落库**）：格式 / 体积 / 可解析性不符返回 10001。
+
+    返回 `{resume_text, extracted}`——用户核对修改后经 PUT /profile 保存；AI 未配 Key 或抽取
+    失败时 `extracted` 为 null、简历全文仍正常返回（前端此时只回填全文）。
+    """
+    content = await file.read()
+    return ApiResponse[ResumeParseData](
+        data=resume_service.parse_resume(
+            db,
+            user_id=current_user.id,
+            filename=file.filename or "",
+            content=content,
+            client=client,
+        )
+    )

@@ -62,6 +62,14 @@ class SessionStatus(StrEnum):
     FINISHED = "FINISHED"  # 已结束（已生成总结）
 
 
+class InterviewStage(StrEnum):
+    """面试阶段（interview_qa.stage、interview_session.stage_plan）：按固定顺序推进。"""
+
+    INTRO = "INTRO"  # 自我介绍（每场 1 题，开场）
+    TECH = "TECH"  # 技术问答（主体，八股与原理）
+    PROJECT = "PROJECT"  # 项目深挖（有简历时启用，基于简历项目经历提问）
+
+
 class ExperienceItemSource(StrEnum):
     """面经条目来源（experience_item.source_type）。"""
 

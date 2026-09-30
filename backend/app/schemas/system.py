@@ -48,6 +48,27 @@ class ProfileUpdateRequest(BaseModel):
     note: str | None = Field(default=None, description="备注，不限长度")
 
 
+class ResumeExtracted(BaseModel):
+    """简历 AI 抽取结果（POST /profile/resume 响应的 `extracted`；未配 Key 或抽取失败时为 null）。"""
+
+    name: str | None = Field(description="姓名")
+    school: str | None = Field(description="学校")
+    major: str | None = Field(description="专业")
+    degree: str | None = Field(description="学历（本科/硕士/博士）")
+    gpa: str | None = Field(description="GPA 文本")
+    english_level: str | None = Field(description="英语水平（如 CET-6 441）")
+    skills: list[str] | None = Field(description="技能关键词数组（前端填入时逗号拼接）")
+
+
+class ResumeParseData(BaseModel):
+    """简历解析响应（POST /profile/resume）：**纯解析不落库**，用户核对修改后经 PUT /profile 保存。"""
+
+    resume_text: str = Field(description="简历纯文本全文（PDF / Word 提取）")
+    extracted: ResumeExtracted | None = Field(
+        description="AI 抽取的画像字段；未配 Key 或抽取失败为 null（此时全文仍正常返回）"
+    )
+
+
 class SettingsDTO(BaseModel):
     """设置响应（GET /settings）：账号级偏好 + 系统级抓取配置；**LLM 相关字段已全部迁至 `/llm-providers`**。"""
 

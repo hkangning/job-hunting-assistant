@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     llm_base_url: str = ""  # 仅 custom 供应商填写
     llm_trust_env: bool = False  # AI 出网是否沿用系统代理；默认 false = 直连（系统代理多为代理软件遗留，工具没开时会直接连不通）
 
+    sse_pace_cps: float = 45.0  # SSE 文本输出节奏（字/秒）：把快模型的"块状喷射"缓释成打字机观感；<=0 关闭节奏直通（见 utils/sse.py 节奏器）
+
 
 def _ensure_secret_key(config: Settings) -> None:
     """主密钥缺失时生成随机值并写回 .env（系统设计 3.5）。

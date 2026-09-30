@@ -28,6 +28,13 @@ class SessionCreateRequest(BaseModel):
     question_count: int = Field(default=8, ge=3, le=15, description="题量 3~15，默认 8")
 
 
+class StagePlanItem(BaseModel):
+    """阶段计划条目（会话 DTO 的 `stages` 元素）：按数组顺序推进，题号落在哪段据此计算。"""
+
+    stage: str = Field(description="阶段枚举值：INTRO 自我介绍 / TECH 技术问答 / PROJECT 项目深挖")
+    count: int = Field(description="该阶段题量")
+
+
 class InterviewSessionDTO(BaseModel):
     """会话 DTO（建会话与详情共用）。"""
 
@@ -37,6 +44,9 @@ class InterviewSessionDTO(BaseModel):
     position: str = Field(description="岗位名（从投递带入或手填）")
     direction: str = Field(description="面试方向枚举值（GENERAL 或任一领域值）")
     question_count: int = Field(description="计划题量（3~15）")
+    stages: list[StagePlanItem] | None = Field(
+        description="阶段计划（自我介绍 / 技术问答 / 项目深挖的题量分配）；无简历或老会话为 null，前端降级为「第 N/M 题」"
+    )
     status: str = Field(description="会话状态：ACTIVE 进行中 / FINISHED 已结束")
     summary: str | None = Field(description="本场总结全文，未生成为 null")
     created_at: datetime = Field(description="创建时间")

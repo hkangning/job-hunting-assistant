@@ -13,7 +13,7 @@
 
 import json
 
-from app.models import AttackFace, QuestionType, UserProfile
+from app.models import AttackFace, InterviewStage, QuestionType, UserProfile
 
 # JD 分析五段结构与对应 section（接口文档 3.6）：关键词命中即判定该段，与下方模板的标题文案一一对应
 JD_ANALYSIS_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -422,14 +422,57 @@ INTERVIEW_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 INTERVIEW_JD_LIMIT = 3000  # JD 原文注入上限（字符）：够贴合岗位要求，同时控制 prefill 长度
+INTERVIEW_RESUME_LIMIT = 4000  # 简历注入上限（字符）：项目深挖阶段才注入，供模型抓项目细节
+
+# 阶段中文名（与前端 STAGE_LABELS 同口径）与各阶段指引：出题 / 点评 prompt 按阶段分派
+INTERVIEW_STAGE_LABELS: dict[str, str] = {
+    InterviewStage.INTRO.value: "自我介绍",
+    InterviewStage.TECH.value: "技术问答",
+    InterviewStage.PROJECT.value: "项目深挖",
+}
+
+INTERVIEW_STAGE_HINTS: dict[str, str] = {
+    InterviewStage.INTRO.value: "这是面试开场：请面试者做一次自我介绍，题干简短口语化，可点明「和这个岗位相关的经历」，不要在这一题里问技术细节。",
+    InterviewStage.TECH.value: "考察岗位方向的基础与原理，难度随进度递进——前期问基础与广度，往原理与取舍深挖，题干不超过 150 字。",
+    InterviewStage.PROJECT.value: "紧扣简历里的项目经历深挖：挑一个具体项目，追问「怎么做的、为什么这么做、有什么代价」，不要问宽泛的「介绍一下你的项目」。",
+}
+
+INTERVIEW_STAGE_REVIEW_HINTS: dict[str, str] = {
+    InterviewStage.INTRO.value: "自我介绍题侧重表达结构与「与岗位的相关性」——有没有讲清做过什么、擅长什么、为什么匹配这个岗位",
+    InterviewStage.TECH.value: "技术题侧重关键点是否答到、原理是否讲透",
+    InterviewStage.PROJECT.value: "项目题侧重细节与取舍——是不是真做过、有没有想过代价与边界",
+}
+
+
+def interview_stage_note(
+    stage: str, *, index: int, count: int, plan: list[dict] | None = None
+) -> str:
+    """出题 prompt 的阶段块：本场流程（有 `plan` 时）+ 当前阶段与阶段内进度 + 该阶段出题指引。"""
+    lines: list[str] = []
+    if plan:
+        steps = " → ".join(
+            f"{INTERVIEW_STAGE_LABELS.get(item['stage'], item['stage'])} {item['count']} 题" for item in plan
+        )
+        lines.append(f"【本场流程】\n{steps}\n")
+    label = INTERVIEW_STAGE_LABELS.get(stage, stage)
+    hint = INTERVIEW_STAGE_HINTS.get(stage, INTERVIEW_STAGE_HINTS[InterviewStage.TECH.value])
+    lines.append(f"【当前阶段】{label}（第 {index}/{count} 题）\n{hint}")
+    return "\n".join(lines) + "\n\n"
+
+
+def interview_review_stage_note(stage: str) -> str:
+    """点评 prompt 的阶段行：本题所处阶段 + 该阶段的点评侧重。"""
+    label = INTERVIEW_STAGE_LABELS.get(stage, stage)
+    hint = INTERVIEW_STAGE_REVIEW_HINTS.get(stage, INTERVIEW_STAGE_REVIEW_HINTS[InterviewStage.TECH.value])
+    return f"{label}（{hint}）"
 
 
 INTERVIEW_QUESTION_SYSTEM = """你是求职者的模拟面试官，正在主持一场技术面试。
 
 出题规则：
 - 一次只出一道题，用口语化的面试提问方式，像真人当面开口问；
-- 不要与已问过的题目重复或明显重叠，难度随进度递进——前期问基础与广度，中后段往原理、项目细节与取舍深挖；
-- 题干不超过 150 字；问项目经历时要具体到「怎么做的、有什么代价」，不要问宽泛的「介绍一下你的项目」。
+- 不要与已问过的题目重复或明显重叠；
+- 出题必须落在【当前阶段】指明的环节内，按该阶段的指引决定考什么，不要跨阶段（例：自我介绍环节不要问技术细节）。
 
 输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
 - 开头第一行固定为「## 下一题」，标题行原样保留；随后直接写题干；
@@ -443,7 +486,8 @@ INTERVIEW_REVIEW_SYSTEM = """你是求职者的模拟面试官，正在点评他
 - 评分 0~10 的整数，依据是「这题答到了多少关键点」，不因表达啰嗦、举例多少扣分；
 - 亮点要具体到他说的哪句话、哪个知识点，不要空夸；
 - 不足要指出漏掉或答错的关键点，并给出可操作的补充方向，禁止「回答不够全面」「再深入一些」这类空话；
-- 参考要点给出这题理想的回答骨架，不超过 150 字。
+- 参考要点给出这题理想的回答骨架，不超过 150 字；
+- 按【本题阶段】给出的侧重点评——自我介绍与项目题的评判标准不同于八股题。
 
 输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
 - 不要 markdown 表格、不要加粗与反引号，不要「①②③」类符号编号，分条一律用「- 」开头；
@@ -462,12 +506,18 @@ def _asked_brief(asked: list[str]) -> str:
     return "\n".join(lines)
 
 
-def build_interview_question_messages(*, context: str, asked: list[str]) -> list[dict]:
-    """出题轮（开场 / 跳过 / 续出下一题）：输出 = `next_question`。"""
+def build_interview_question_messages(
+    *, context: str, asked: list[str], stage_note: str = ""
+) -> list[dict]:
+    """出题轮（开场 / 跳过 / 续出下一题）：输出 = `next_question`。
+
+    `stage_note` 为阶段块（`interview_stage_note` 组装，含本场流程与当前阶段指引）；
+    老会话无阶段计划时传空串。
+    """
     user = f"""【面试背景】
 {context}
 
-【已经问过的题目】
+{stage_note}【已经问过的题目】
 {_asked_brief(asked)}
 
 请出下一题。"""
@@ -478,20 +528,35 @@ def build_interview_question_messages(*, context: str, asked: list[str]) -> list
 
 
 def build_interview_turn_messages(
-    *, context: str, asked: list[str], question: str, answer: str, last: bool
+    *,
+    context: str,
+    asked: list[str],
+    question: str,
+    answer: str,
+    last: bool,
+    stage_note: str = "",
+    next_stage_note: str = "",
 ) -> list[dict]:
-    """作答轮：点评 + 下一题；`last=True`（答满题量）只点评。输出 = `review`（+ `next_question`）。"""
+    """作答轮：点评 + 下一题；`last=True`（答满题量）只点评。输出 = `review`（+ `next_question`）。
+
+    `stage_note` / `next_stage_note` 分别为本题与下一题的阶段块：前者决定点评侧重，
+    后者决定下一题考什么（跨阶段时逐字告诉模型「进入项目深挖环节」）。
+    """
     structure = (
         "**这是本场最后一题，点评之后面试结束——不要输出「## 下一题」段。**"
         if last
-        else """## 下一题
-接着问下一题，不超过 150 字，按背景与进度自然递进。"""
+        else f"""## 下一题
+接着问下一题，不超过 150 字，按下述阶段指引自然递进。
+
+{next_stage_note}"""
     )
     user = f"""【面试背景】
 {context}
 
 【已经问过的题目】
 {_asked_brief(asked)}
+
+【本题阶段】{stage_note or "技术问答"}
 
 【本轮题目】
 {question}
@@ -507,5 +572,80 @@ def build_interview_turn_messages(
 {structure}"""
     return [
         {"role": "system", "content": INTERVIEW_REVIEW_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+INTERVIEW_SUMMARY_LIMIT = 8000  # 总结输入上限（字符）：整场问答回顾拼接后截断，控制 prefill 长度
+
+
+INTERVIEW_SUMMARY_SYSTEM = """你是求职者的模拟面试官，本场面试刚刚结束，请写一份面试总结报告。
+
+报告规则：
+- 覆盖整场表现：结合每题得分与作答质量，点出他的整体水平与最突出的短板；
+- 亮点与不足都要落到具体题目或知识点上，不要空泛评价；
+- 建议给 2~3 条可操作的下一步（补什么、怎么补），不要「继续加油」这类空话；
+- 全文 300 字以内。
+
+输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
+- 不要写以 # 开头的行（会被整行剥离）、不要表格、不要加粗与反引号、不要「①②③」类符号编号；
+- 开头 1~2 句自然承接整场表现，不要「本次面试结束」这类套话开场；
+- 随后按「- 亮点：」「- 不足：」「- 建议：」三个标签行分条输出，标签后直接写内容。"""
+
+
+def build_interview_summary_messages(*, context: str, turns: list[dict]) -> list[dict]:
+    """总结报告（整场问答回顾 → 报告全文）。
+
+    `turns` = `[{seq, question, answer, review, score, skipped}]`，只含已完成（作答或跳过）的条目。
+    """
+    parts = [f"【面试背景】\n{context}", "【整场问答回顾】"]
+    for turn in turns:
+        seq = turn.get("seq")
+        if turn.get("skipped"):
+            parts.append(f"第 {seq} 题（面试者跳过）：{_flat_clip(turn.get('question'), 120)}")
+            continue
+        score = turn.get("score")
+        head = f"第 {seq} 题" + (f"（得分 {score}/10）" if score is not None else "")
+        parts.append(
+            f"{head}：{_flat_clip(turn.get('question'), 150)}\n"
+            f"作答：{_flat_clip(turn.get('answer'), 300)}\n"
+            f"点评：{_flat_clip(turn.get('review'), 200)}"
+        )
+    user = "\n\n".join(parts)[:INTERVIEW_SUMMARY_LIMIT] + "\n\n请写总结报告。"
+    return [
+        {"role": "system", "content": INTERVIEW_SUMMARY_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+def _flat_clip(text: str | None, limit: int) -> str:
+    """压平空白并截断（问答回顾用）；空值给「（无）」占位。"""
+    return " ".join((text or "").split())[:limit] or "（无）"
+
+
+# ---- 简历解析（FR-012）：结构化抽取画像字段 ----
+
+
+RESUME_TEXT_LIMIT = 6000  # 简历原文注入上限（字符）：普通简历全文在此以内，控制 prefill 长度
+
+RESUME_EXTRACT_SYSTEM = """你是信息抽取助手，从求职者简历原文中抽取画像字段。
+
+抽取规则：
+- 只抽取原文中明确写出的信息，缺失或拿不准的字段一律记 null，**不要编造、不要推测**；
+- school / major 用原文写法；degree 只取「本科」「硕士」「博士」三者之一；
+- gpa 保留原文写法（如 3.20/4.00 或 88/100）；english_level 取最高一项（如 CET-6 441）；
+- skills 从技能栏与项目经历中提取技术关键词数组，3~10 项，去重、去掉「学习能力强」这类非技术描述。"""
+
+
+def build_resume_extract_messages(resume_text: str) -> list[dict]:
+    """简历字段抽取：输出 `{"name","school","major","degree","gpa","english_level","skills"}`（缺失为 null）。"""
+    user = f"""【简历原文】
+{resume_text[:RESUME_TEXT_LIMIT]}
+
+只输出一个 JSON 对象，不要包裹代码块、不要任何多余文字：
+{{"name": "姓名或 null", "school": "学校或 null", "major": "专业或 null", "degree": "学历或 null", "gpa": "GPA 文本或 null", "english_level": "英语水平或 null", "skills": ["技能关键词", "…"]}}
+"""
+    return [
+        {"role": "system", "content": RESUME_EXTRACT_SYSTEM},
         {"role": "user", "content": user},
     ]
