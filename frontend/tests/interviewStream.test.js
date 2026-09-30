@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildMessages, applyDelta, appendAnswer, insertSkipped, sealStreaming, splitReview, stageProgress
+  buildMessages, applyDelta, appendAnswer, insertSkipped, sealStreaming, splitReview, stageProgress,
+  INTENSITY_LABELS, parseCandidates
 } from '../src/utils/interviewStream.js'
 
 // ---------------- buildMessages：qa_list 展开 ----------------
@@ -213,4 +214,34 @@ test('stageProgress：越界与无计划返回 null（调用方降级为「第 N
   assert.equal(stageProgress(STAGES, 0), null)
   assert.equal(stageProgress(null, 3), null)
   assert.equal(stageProgress([], 3), null)
+})
+
+// ---------------- INTENSITY_LABELS：面试强度中文名 ----------------
+
+test('INTENSITY_LABELS：三档中文名齐全', () => {
+  assert.equal(INTENSITY_LABELS.LARGE, '大厂')
+  assert.equal(INTENSITY_LABELS.MEDIUM, '中厂')
+  assert.equal(INTENSITY_LABELS.SMALL, '小厂')
+})
+
+// ---------------- parseCandidates：总结流错题候选段 ----------------
+
+test('parseCandidates：正常 JSON 返回候选数组', () => {
+  const text = '{"candidates":[{"content":"JVM 分代回收","answer":"新生代…","direction":"JVM"}]}'
+  const list = parseCandidates(text)
+  assert.equal(list.length, 1)
+  assert.equal(list[0].content, 'JVM 分代回收')
+  assert.equal(list[0].direction, 'JVM')
+})
+
+test('parseCandidates：```json 围栏与前后杂文剥离', () => {
+  const text = '好的：\n```json\n{"candidates":[{"content":"A","answer":"B","direction":"GENERAL"}]}\n```\n以上。'
+  assert.equal(parseCandidates(text).length, 1)
+})
+
+test('parseCandidates：坏 JSON / 空 / 结构不符返回 []', () => {
+  assert.deepEqual(parseCandidates(''), [])
+  assert.deepEqual(parseCandidates('not json'), [])
+  assert.deepEqual(parseCandidates('{"foo":1}'), [])
+  assert.deepEqual(parseCandidates('{"candidates":[{"answer":"无题干"}]}'), [])
 })

@@ -26,7 +26,7 @@ const savingAccount = ref(false)
 const stats = ref(null)
 const appStats = ref(null) // 投递五状态计数（概览接口的 application_stats）
 const profile = reactive({
-  name: '', school: '', major: '', degree: '', gpa: '', english_level: '', resume_text: '',
+  name: '', school: '', major: '', degree: '', gpa: '', english_level: '', experiences: [],
   target_position: '', target_city: '', skills: '', weaknesses: '', note: ''
 })
 const savingProfile = ref(false)
@@ -48,6 +48,7 @@ onMounted(async () => {
   syncAccountForm()
 
   Object.assign(profile, await getProfileApi().catch(() => ({})))
+  if (!Array.isArray(profile.experiences)) profile.experiences = []
   const overview = await getOverviewApi().catch(() => null)
   stats.value = overview?.stats || null
   appStats.value = overview?.application_stats || null
@@ -167,10 +168,13 @@ async function onPickResume(uploadFile) {
   resumeParsing.value = true
   try {
     const data = await parseResumeApi(raw)
+    if (!data?.extracted) {
+      // 契约：未配 Key / 抽取失败时 extracted 为 null——提示手填，不报错
+      ElMessage.warning('未能自动解析简历内容，请在下方手动填写')
+      return
+    }
     const filled = applyResume(data)
-    ElMessage.success(
-      filled > 1 ? `已从简历解析并填入 ${filled} 项，请核对修改后保存` : '已填入简历内容，请核对修改后保存'
-    )
+    ElMessage.success(`已从简历解析并填入 ${filled} 项，请核对修改后保存`)
   } catch (error) {
     // 只透出可操作的两种：未配 Key 与通用失败——后端 message 在此场景可能误导
     ElMessage.error(
@@ -181,9 +185,47 @@ async function onPickResume(uploadFile) {
   }
 }
 
+/** 经历条目类型（接口文档 v1.36 §3.12）。 */
+const EXPERIENCE_TYPES = [
+  { value: 'PROJECT', label: '项目' },
+  { value: 'INTERNSHIP', label: '实习' },
+  { value: 'CAMPUS', label: '校园' }
+]
+const EXPERIENCE_LIMIT = 10
+const experiencesError = ref('')
+
+function addExperience() {
+  if (profile.experiences.length >= EXPERIENCE_LIMIT) return
+  profile.experiences.push({ type: 'PROJECT', title: '', org: '', role: '', period: '', description: '' })
+}
+
+function removeExperience(index) {
+  profile.experiences.splice(index, 1)
+}
+
+/** 提交前校验并归一：标题必填（契约 strip 后非空），空则定位到该条并拦截；空串字段转 null。 */
+function normalizeExperiences() {
+  for (const [i, e] of profile.experiences.entries()) {
+    if (!e.title?.trim()) {
+      experiencesError.value = `第 ${i + 1} 条经历的「名称」不能为空`
+      return null
+    }
+  }
+  experiencesError.value = ''
+  return profile.experiences.map((e) => ({
+    type: e.type || 'PROJECT',
+    title: e.title.trim(),
+    org: e.org?.trim() || null,
+    role: e.role?.trim() || null,
+    period: e.period?.trim() || null,
+    description: e.description?.trim() || null
+  }))
+}
+
 /**
  * 解析结果 → 表单：只填「有值」的字段（不动其他项，用户已填的不被空值覆盖）。
- * `extracted` 为 null（LLM 未提取，如未配 Key）时只填简历全文——部分成功也是成功。
+ * `extracted` 为 null（LLM 未提取，如未配 Key）时什么都不填，提示手填。
+ * 经历条目非空时**整体替换**（简历是经历的完整来源），空则不覆盖。
  */
 function applyResume(data) {
   if (!data) return 0
@@ -193,18 +235,32 @@ function applyResume(data) {
     profile[key] = Array.isArray(value) ? value.join(',') : value
     filled += 1
   }
-  fill('resume_text', data.resume_text)
   const extracted = data.extracted || {}
   for (const key of ['name', 'school', 'major', 'degree', 'gpa', 'english_level', 'skills']) {
     fill(key, extracted[key])
+  }
+  const list = Array.isArray(extracted.experiences) ? extracted.experiences : []
+  if (list.length) {
+    profile.experiences = list.slice(0, EXPERIENCE_LIMIT).map((e) => ({
+      type: EXPERIENCE_TYPES.some((t) => t.value === e?.type) ? e.type : 'PROJECT',
+      title: (e?.title || '').slice(0, 100),
+      org: (e?.org || '').slice(0, 100),
+      role: (e?.role || '').slice(0, 50),
+      period: (e?.period || '').slice(0, 50),
+      description: (e?.description || '').slice(0, 2000)
+    }))
+    filled += 1
   }
   return filled
 }
 
 async function saveProfile() {
+  const experiences = normalizeExperiences()
+  if (!experiences) return
   savingProfile.value = true
   try {
-    Object.assign(profile, await updateProfileApi({ ...profile }))
+    Object.assign(profile, await updateProfileApi({ ...profile, experiences }))
+    if (!Array.isArray(profile.experiences)) profile.experiences = []
     ElMessage.success('求职画像已保存')
   } finally {
     savingProfile.value = false
@@ -350,7 +406,7 @@ async function saveProfile() {
         <div class="resume__text">
           <p class="resume__title">上传简历，自动填充下方画像</p>
           <p class="resume__hint">
-            支持 PDF / Word（≤10MB）——解析结果填入表单，核对修改后保存；面试的「项目深挖」环节会依据简历出题
+            支持 PDF / Word（≤10MB）——解析结果填入表单，核对修改后保存；面试的「项目深挖」环节会依据经历出题
           </p>
         </div>
       </div>
@@ -380,8 +436,40 @@ async function saveProfile() {
         <el-form-item label="弱项">
           <el-input v-model="profile.weaknesses" placeholder="逗号分隔" />
         </el-form-item>
-        <el-form-item label="简历全文">
-          <el-input v-model="profile.resume_text" type="textarea" :rows="5" placeholder="JD 匹配分析的核心输入" />
+        <el-form-item label="经历">
+          <div class="exp">
+            <p v-if="!profile.experiences.length" class="exp__empty">
+              还没有经历条目——上传简历自动解析，或手动添加；面试的「项目深挖」环节会依据经历出题
+            </p>
+            <div v-for="(exp, i) in profile.experiences" :key="i" class="exp__item">
+              <div class="exp__row">
+                <el-select v-model="exp.type" style="width: 92px">
+                  <el-option v-for="t in EXPERIENCE_TYPES" :key="t.value" :label="t.label" :value="t.value" />
+                </el-select>
+                <el-input v-model="exp.title" maxlength="100" class="exp__title" placeholder="名称（必填），如：企业管理系统开发" />
+                <el-button link type="danger" class="exp__remove" @click="removeExperience(i)">删除</el-button>
+              </div>
+              <div class="exp__row">
+                <el-input v-model="exp.org" maxlength="100" placeholder="公司 / 组织（选填）" />
+                <el-input v-model="exp.role" maxlength="50" placeholder="角色（选填）" />
+                <el-input v-model="exp.period" maxlength="50" placeholder="时间（选填），如 2026-07 ~ 2026-09" />
+              </div>
+              <el-input
+                v-model="exp.description"
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 5 }"
+                maxlength="2000"
+                placeholder="做了什么、用到什么（选填）"
+              />
+            </div>
+            <div class="exp__foot">
+              <el-button :disabled="profile.experiences.length >= EXPERIENCE_LIMIT" @click="addExperience">
+                添加经历
+              </el-button>
+              <span class="exp__limit">最多 {{ EXPERIENCE_LIMIT }} 条</span>
+            </div>
+            <p v-if="experiencesError" class="profile__error">{{ experiencesError }}</p>
+          </div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="profile.note" type="textarea" :rows="2" />
@@ -428,6 +516,42 @@ async function saveProfile() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0 18px;
+}
+
+/* 经历条目：一张卡片一条，行内分组（身份行 / 组织行 / 描述） */
+.exp__empty {
+  margin: 0 0 10px;
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+}
+.exp__item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+}
+.exp__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.exp__title {
+  flex: 1;
+}
+.exp__remove {
+  flex: none;
+}
+.exp__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.exp__limit {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
 }
 
 /* 上传简历：画像卡的引导条——低干扰但一眼可见 */

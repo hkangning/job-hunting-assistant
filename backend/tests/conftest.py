@@ -50,6 +50,10 @@ def _derive_test_database_url() -> str:
 
 os.environ["DATABASE_URL"] = _derive_test_database_url()
 
+# SSE 输出节奏器（协议层按 45 字/秒切 delta）会让「delta 条数」类断言随机失败——测试里关掉，
+# 恢复「原样转发」；须在导入 app.* 之前设置（Settings 在模块导入时读环境变量）。
+os.environ.setdefault("SSE_PACE_CPS", "0")
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.database import Base, SessionLocal, engine  # noqa: E402

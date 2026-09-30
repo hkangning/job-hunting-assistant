@@ -13,6 +13,7 @@ import { useRouter } from 'vue-router'
 import { getPracticeMeta } from '../api/practice'
 import { listInterviewSessions } from '../api/interview'
 import { directionLabelMap } from '../utils/practiceMeta'
+import { INTENSITY_LABELS } from '../utils/interviewStream'
 import { shortDateTime } from '../utils/datetime'
 import InterviewCreateDialog from '../components/interview/InterviewCreateDialog.vue'
 import AppEmpty from '../components/AppEmpty.vue'
@@ -27,6 +28,20 @@ const total = ref(0)
 const loading = ref(false)
 const meta = ref(null)
 const createVisible = ref(false)
+const stats = ref({ active: 0, finished: 0 })
+
+/** 概览条数据：两次轻量查询只取 total（page_size=1 不带回列表）。 */
+async function loadStats() {
+  try {
+    const [active, finished] = await Promise.all([
+      listInterviewSessions({ status: 'ACTIVE', page: 1, page_size: 1 }),
+      listInterviewSessions({ status: 'FINISHED', page: 1, page_size: 1 })
+    ])
+    stats.value = { active: active.total || 0, finished: finished.total || 0 }
+  } catch {
+    stats.value = { active: 0, finished: 0 } // 拉不到不显示概览条，不阻塞列表
+  }
+}
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部' },
@@ -94,6 +109,7 @@ function onCreated(session) {
 
 onMounted(() => {
   load()
+  loadStats()
   // 方向中文名用同一份元数据；拉不到就显示枚举值兜底
   getPracticeMeta()
     .then((data) => (meta.value = data))
@@ -119,6 +135,26 @@ onMounted(() => {
       <el-button type="primary" @click="createVisible = true">发起面试</el-button>
     </header>
 
+    <!-- 概览带：有记录时显示——统计数字 + 完整流程，让主页不至于只有一条列表 -->
+    <div v-if="stats.active + stats.finished > 0" class="interview__overview">
+      <div class="interview__stats">
+        <span class="interview__stat"><b>{{ stats.active }}</b>场进行中</span>
+        <span class="interview__stat"><b>{{ stats.finished }}</b>场已结束</span>
+        <span class="interview__stat interview__stat--total">共 {{ stats.active + stats.finished }} 场</span>
+      </div>
+      <div class="interview__flow">
+        <span class="interview__flow-label">完整流程</span>
+        <span class="interview__flow-step">自我介绍</span>
+        <span class="interview__flow-arrow">→</span>
+        <span class="interview__flow-step">技术问答</span>
+        <span class="interview__flow-arrow">→</span>
+        <span class="interview__flow-step">项目深挖</span>
+        <span class="interview__flow-arrow">→</span>
+        <span class="interview__flow-step">总结报告</span>
+        <span class="interview__flow-hint">关联投递发起会自动带入 JD 与岗位背景；画像填写经历后出现「项目深挖」</span>
+      </div>
+    </div>
+
     <AppEmpty
       v-if="!loading && !items.length"
       type="interview"
@@ -141,6 +177,7 @@ onMounted(() => {
             <span class="interview__title">{{ item.company }} · {{ item.position }}</span>
             <div class="interview__meta">
               <span class="interview__dir">{{ directionLabel(item) }}</span>
+              <span class="interview__intensity">{{ INTENSITY_LABELS[item.intensity] || '中厂' }}</span>
               <span>{{ countText(item) }}</span>
               <span v-if="item.summary" class="interview__summary-mark">已生成总结</span>
               <span>{{ shortDateTime(item.created_at) }}</span>
@@ -195,6 +232,59 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: var(--card-gap);
+}
+
+/* 概览带：左统计右流程——记录少时补足信息密度 */
+.interview__overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: var(--card-gap);
+  background: var(--c-bg);
+  border-radius: var(--r-control);
+}
+.interview__stats {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.interview__stat {
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+}
+.interview__stat b {
+  margin-right: 3px;
+  font-size: 18px;
+  color: var(--m-interview);
+}
+.interview__stat--total {
+  color: var(--c-text-3);
+}
+.interview__flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.interview__flow-label {
+  margin-right: 2px;
+  color: var(--c-text-2);
+}
+.interview__flow-step {
+  padding: 1px 6px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-mark);
+}
+.interview__flow-arrow {
+  color: var(--c-text-3);
+}
+.interview__flow-hint {
+  margin-left: 8px;
 }
 
 /* 分段控件：与错题本 / 准备台同一形态（选中态实底） */
@@ -267,6 +357,12 @@ onMounted(() => {
   padding: 1px 6px;
   color: var(--m-interview);
   background: color-mix(in srgb, var(--m-interview) 12%, var(--c-card));
+  border-radius: var(--r-mark);
+}
+/* 强度：中性标签——与方向（模块色）区分，不抢注意力 */
+.interview__intensity {
+  padding: 1px 6px;
+  background: var(--c-bg);
   border-radius: var(--r-mark);
 }
 .interview__badge {

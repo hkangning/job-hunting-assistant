@@ -94,7 +94,10 @@ function stopWaitTimer() {
 }
 
 const sectionLabel = computed(() => SECTION_LABELS[currentSection.value] || '')
-const canStart = computed(() => !streaming.value && jdText.value.trim().length > 0)
+/** 选了投递时 JD 可不填（后端自动取该投递的 jd_text）；未选投递则必填。 */
+const canStart = computed(
+  () => !streaming.value && (jdText.value.trim().length > 0 || !!applicationId.value)
+)
 const overLimit = computed(() => jdText.value.length > JD_MAX)
 
 /** 耗时行文案：本次耗时（首字 · 字数）——供使用者横向对比不同模型的响应速度。 */
@@ -151,8 +154,12 @@ function start() {
 
   controller = streamSSE(
     '/stream/jd-analysis',
-    // 未选投递时不传该字段（后端按未关联处理；传 null 会被判成非法值）
-    { jd_text: jdText.value, ...(applicationId.value ? { application_id: applicationId.value } : {}) },
+    // jd_text 条件必填：选了投递且未手填时不传该字段（后端自动取投递的 JD）；
+    // 未选投递时不传 application_id（后端按未关联处理；传 null 会被判成非法值）
+    {
+      ...(jdText.value.trim() ? { jd_text: jdText.value } : {}),
+      ...(applicationId.value ? { application_id: applicationId.value } : {})
+    },
     {
       onStart: (d) => {
         startMessage.value = d.message
@@ -232,7 +239,7 @@ onUnmounted(() => {
           :maxlength="JD_MAX"
           show-word-limit
           :disabled="streaming"
-          placeholder="把岗位描述整段粘进来，AI 会给出五段匹配分析"
+          placeholder="把岗位描述整段粘进来；关联投递后可留空（自动取该投递的 JD）"
         />
         <el-select
           v-model="applicationId"
@@ -240,7 +247,7 @@ onUnmounted(() => {
           clearable
           filterable
           :disabled="streaming"
-          placeholder="关联投递（可选）"
+          placeholder="关联投递（可选；选了可不填 JD）"
         >
           <el-option
             v-for="item in applications"

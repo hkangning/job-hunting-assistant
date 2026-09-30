@@ -80,7 +80,7 @@ const headPlan = computed(() => {
         v-else
         v-model="answer"
         type="textarea"
-        :rows="4"
+        :autosize="{ minRows: 4, maxRows: 10 }"
         :disabled="busy || !!result"
         placeholder="写下你的答案"
       />
@@ -98,7 +98,8 @@ const headPlan = computed(() => {
         <el-button link class="review__remove" :disabled="busy" @click="emit('remove', item)">
           删除
         </el-button>
-        <el-button v-if="!result" type="primary" :disabled="!canSubmit" @click="submit">
+        <span v-if="busy" class="review__pending">AI 判定中…</span>
+        <el-button v-if="!result" type="primary" :disabled="!canSubmit" :loading="busy" @click="submit">
           提交
         </el-button>
         <el-button v-else-if="hasNext" type="primary" @click="emit('next')">
@@ -184,6 +185,10 @@ const headPlan = computed(() => {
 .review__finished {
   font-size: var(--fs-sm);
   color: var(--c-text-2);
+}
+.review__pending {
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
 }
 .review__explain {
   margin: 8px 0 0;

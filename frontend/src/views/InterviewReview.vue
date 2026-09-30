@@ -11,12 +11,14 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { Back } from '@element-plus/icons-vue'
 import { getInterviewSession, interviewSummaryStream } from '../api/interview'
+import { addWrongQuestion } from '../api/wrongQuestions'
 import { getPracticeMeta } from '../api/practice'
 import { directionLabelMap } from '../utils/practiceMeta'
 import { toPlainText } from '../utils/practiceStream'
-import { buildMessages } from '../utils/interviewStream'
+import { buildMessages, INTENSITY_LABELS, parseCandidates } from '../utils/interviewStream'
 import { shortDateTime } from '../utils/datetime'
 import InterviewMessages from '../components/interview/InterviewMessages.vue'
 import ReviewBody from '../components/interview/ReviewBody.vue'
@@ -37,6 +39,10 @@ const summary = ref('')
 const summaryStreaming = ref(false)
 const summaryError = ref('')
 let summaryStream = null
+
+/** 错题候选（契约：仅在本次流下发、不落库；缺席与回放无候选均为正常态）。 */
+const candidates = ref([])
+let candidateBuf = '' // wrong_candidates 段累积——契约是一次性 JSON，累积同样抗网络拆帧
 
 const directionText = computed(() => {
   if (!session.value) return ''
@@ -70,19 +76,35 @@ function startSummary() {
   summaryStreaming.value = true
   summaryError.value = ''
   summary.value = ''
+  candidateBuf = ''
+  candidates.value = []
   summaryStream = interviewSummaryStream(
     { session_id: Number(sessionId) },
     {
       onDelta: (d) => {
+        if (d?.section === 'wrong_candidates') {
+          candidateBuf += d.text || ''
+          return
+        }
         if (!d?.section || d.section === 'summary') summary.value += d.text || ''
       },
       onDone: () => {
         summaryStreaming.value = false
         // 总结生成即会话结束（契约行为）——本地状态同步，页头徽章即时变化
         if (session.value) session.value.status = 'FINISHED'
+        candidates.value = parseCandidates(candidateBuf).slice(0, 5).map((c) => ({
+          content: c.content,
+          answer: c.answer || '',
+          direction: c.direction || 'GENERAL',
+          expanded: false,
+          joined: false,
+          joining: false
+        }))
+        candidateBuf = ''
       },
       onError: (e) => {
         summaryStreaming.value = false
+        candidateBuf = ''
         // 只透出可操作的两种：未配 Key 与通用失败——后端 message 在此场景可能误导
         // （端点未就绪时统一异常处理器会把它包成「会话不存在」）
         summaryError.value =
@@ -96,6 +118,37 @@ function startSummary() {
 
 function retrySummary() {
   if (!summaryStreaming.value) startSummary()
+}
+
+/** 候选方向的中文名——`GENERAL` 不在 meta 领域表里，单独兜底。 */
+function candidateDirection(dir) {
+  const map = { GENERAL: '通用', ...directionLabelMap(meta.value) }
+  return map[dir] || dir
+}
+
+/** 逐条确认入本（知识点形态）；10003 = 已在错题本，属正常结果、渲染为非错误态。 */
+async function joinWrong(item) {
+  if (item.joined || item.joining) return
+  item.joining = true
+  try {
+    await addWrongQuestion({
+      content: item.content,
+      answer: item.answer,
+      direction: item.direction,
+      source_type: 'INTERVIEW'
+    })
+    item.joined = true
+    ElMessage.success('已加入错题本')
+  } catch (e) {
+    if (e?.code === 10003) {
+      item.joined = true
+      ElMessage.info('该知识点已在错题本')
+    } else {
+      ElMessage.error(e?.message || '加入失败，请重试')
+    }
+  } finally {
+    item.joining = false
+  }
 }
 
 function backToList() {
@@ -122,6 +175,9 @@ onUnmounted(() => {
         {{ session ? `${session.company} · ${session.position}` : '加载中…' }}
       </span>
       <span v-if="session" class="review-page__dir">{{ directionText }}</span>
+      <span v-if="session" class="review-page__intensity">
+        {{ INTENSITY_LABELS[session.intensity] || '中厂' }}
+      </span>
       <span v-if="session" class="review-page__meta">
         共 {{ session.question_count }} 题 · {{ shortDateTime(session.created_at) }}
       </span>
@@ -145,6 +201,7 @@ onUnmounted(() => {
         <h3 class="review-page__section-title">总结报告</h3>
 
         <div v-if="summaryStreaming" class="review-page__summary-text">
+          <p v-if="!summary" class="review-page__generating">正在生成总结…</p>
           <StreamText :text="toPlainText(summary)" :streaming="true" />
         </div>
 
@@ -162,6 +219,38 @@ onUnmounted(() => {
         </template>
 
         <p v-else class="review-page__summary-hint">本场还没有已作答的题目，暂无总结。</p>
+
+        <!-- 错题候选：本次流专属（不落库），刷新/回放不再出现属正常 -->
+        <div v-if="candidates.length" class="review-page__candidates">
+          <div class="review-page__candidates-head">
+            <span class="review-page__candidates-title">错题候选</span>
+            <span class="review-page__candidates-hint">
+              从本场点评的「不足」中提取，确认后加入错题本（仅本次可见）
+            </span>
+          </div>
+          <div v-for="(c, i) in candidates" :key="i" class="review-page__candidate">
+            <div class="review-page__candidate-top">
+              <span class="review-page__candidate-dir">{{ candidateDirection(c.direction) }}</span>
+              <span class="review-page__candidate-content">{{ c.content }}</span>
+            </div>
+            <p v-if="c.expanded" class="review-page__candidate-answer">{{ c.answer }}</p>
+            <div class="review-page__candidate-actions">
+              <el-button link size="small" @click="c.expanded = !c.expanded">
+                {{ c.expanded ? '收起参考答案' : '查看参考答案' }}
+              </el-button>
+              <el-button
+                size="small"
+                type="primary"
+                plain
+                :disabled="c.joined"
+                :loading="c.joining"
+                @click="joinWrong(c)"
+              >
+                {{ c.joined ? '已加入' : '加入错题本' }}
+              </el-button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- 完整回顾 -->
@@ -204,6 +293,14 @@ onUnmounted(() => {
   font-size: var(--fs-xs);
   color: var(--m-interview);
   background: color-mix(in srgb, var(--m-interview) 12%, var(--c-card));
+  border-radius: var(--r-mark);
+}
+.review-page__intensity {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  background: var(--c-bg);
   border-radius: var(--r-mark);
 }
 .review-page__meta {
@@ -265,6 +362,11 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.review-page__generating {
+  margin: 0 0 6px;
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+}
 .review-page__summary-hint {
   margin: 0 0 10px;
   font-size: var(--fs-sm);
@@ -276,5 +378,63 @@ onUnmounted(() => {
 
 .review-page__history {
   padding-top: 4px;
+}
+
+/* 错题候选：总结卡内的产出区——虚线分隔「报告正文」与「可操作候选」 */
+.review-page__candidates {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed color-mix(in srgb, var(--m-interview) 35%, var(--c-card));
+}
+.review-page__candidates-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.review-page__candidates-title {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--c-text);
+}
+.review-page__candidates-hint {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.review-page__candidate {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+}
+.review-page__candidate-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.review-page__candidate-dir {
+  flex: none;
+  padding: 1px 6px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  background: var(--c-bg);
+  border-radius: var(--r-mark);
+}
+.review-page__candidate-content {
+  font-size: var(--fs-sm);
+  color: var(--c-text);
+}
+.review-page__candidate-answer {
+  margin: 8px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+  white-space: pre-wrap;
+}
+.review-page__candidate-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
 }
 </style>

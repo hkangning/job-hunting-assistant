@@ -9,12 +9,12 @@ import { ElMessage } from 'element-plus'
 import { getSettingsApi, updateSettingsApi } from '../api/settings'
 import { useAppStore } from '../stores/app'
 
-// 音色列表：GET /tts/voices 属步骤 22（尚未实现），本步用 SRS §3.12 列举的三个音色过渡；
-// 步骤 22 落地后改为从接口拉取并删除本常量
+// 音色列表：GET /tts/voices 属步骤 24（尚未实现），本步用 SRS §3.12 列举的三个音色过渡；
+// 步骤 24 落地后改为从接口拉取并删除本常量。描述按音色实际听感归纳（试听待步骤 24）。
 const TTS_VOICES = [
-  { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓' },
-  { id: 'zh-CN-YunxiNeural', name: '云希' },
-  { id: 'zh-CN-YunyangNeural', name: '云扬' }
+  { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', desc: '女声 · 亲切自然，适合点评与讲解' },
+  { id: 'zh-CN-YunxiNeural', name: '云希', desc: '男声 · 清朗年轻，适合轻松对话' },
+  { id: 'zh-CN-YunyangNeural', name: '云扬', desc: '男声 · 沉稳专业，适合正式播报' }
 ]
 
 // 参与 diff 的字段（asr_app_id / asr_api_key 不在其中：留空 = 不修改，不是"清空"）
@@ -49,9 +49,9 @@ let snapshot = {} // 加载时的原始值，用于 diff
 
 // 已存音色不在过渡列表中时补一项，避免回显被静默清空（同投递表单城市字段的兜底思路）
 const voiceOptions = computed(() => {
-  const options = TTS_VOICES.map((v) => ({ value: v.id, label: `${v.name}（${v.id}）` }))
+  const options = TTS_VOICES.map((v) => ({ value: v.id, name: v.name, desc: v.desc }))
   if (form.tts_voice && !options.some((o) => o.value === form.tts_voice)) {
-    options.unshift({ value: form.tts_voice, label: `${form.tts_voice}（当前已存）` })
+    options.unshift({ value: form.tts_voice, name: form.tts_voice, desc: '当前已存音色' })
   }
   return options
 })
@@ -138,13 +138,24 @@ onMounted(load)
           <el-switch v-model="form.tts_enabled" />
         </el-form-item>
         <el-form-item label="播报音色">
-          <el-select
+          <el-radio-group
             v-model="form.tts_voice"
             :disabled="!form.tts_enabled"
-            style="width: 280px"
+            class="settings__voices"
           >
-            <el-option v-for="o in voiceOptions" :key="o.value" :value="o.value" :label="o.label" />
-          </el-select>
+            <el-radio
+              v-for="o in voiceOptions"
+              :key="o.value"
+              :value="o.value"
+              class="settings__voice"
+            >
+              <span class="settings__voice-name">{{ o.name }}</span>
+              <span class="settings__voice-desc">{{ o.desc }}</span>
+              <el-tooltip content="语音播报功能上线后可用" placement="top">
+                <span class="settings__voice-try" @click.stop.prevent>试听</span>
+              </el-tooltip>
+            </el-radio>
+          </el-radio-group>
         </el-form-item>
       </el-form>
     </el-card>
@@ -196,6 +207,33 @@ onMounted(load)
   font-size: var(--fs-sm);
   color: var(--c-text-2);
   margin: 0 0 12px;
+}
+/* 音色：场景化单选——名称 + 听感描述 + 试听占位（步骤 24 接通） */
+.settings__voices {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.settings__voice {
+  height: auto;
+  margin-right: 0;
+  padding: 4px 0;
+}
+.settings__voice-name {
+  margin-right: 8px;
+  font-weight: 600;
+}
+.settings__voice-desc {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.settings__voice-try {
+  margin-left: 10px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  border-bottom: 1px dashed var(--c-border);
+  cursor: not-allowed;
 }
 .settings__footer {
   display: flex;

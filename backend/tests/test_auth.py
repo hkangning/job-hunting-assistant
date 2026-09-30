@@ -270,7 +270,7 @@ def test_body_user_id_is_ignored(client, account, make_account):
 
     created = client.post(
         f"{API}/applications",
-        json={"company": "浩鲸科技", "position": "Java 开发", "user_id": other["id"]},
+        json={"company": "浩鲸科技", "position": "Java 开发", "jd_text": "岗位职责：测试 JD", "user_id": other["id"]},
     )
     assert created.json()["code"] == 0
     app_id = created.json()["data"]["id"]
@@ -287,12 +287,12 @@ def test_cross_account_access_returns_404(client, account, make_account):
     """TC-59：A 创建的投递，B 用自己的 Token 查/改/流转/删一律 404 + 10002；A 的列表不含 B 的。"""
     other = make_account("other_user")
     app_id = client.post(
-        f"{API}/applications", json={"company": "云器科技", "position": "后端开发"}
+        f"{API}/applications", json={"company": "云器科技", "position": "后端开发", "jd_text": "岗位职责：测试 JD"}
     ).json()["data"]["id"]
 
     attempts = [
         ("get", f"/applications/{app_id}", None),
-        ("put", f"/applications/{app_id}", {"company": "篡改", "position": "篡改"}),
+        ("put", f"/applications/{app_id}", {"company": "篡改", "position": "篡改", "jd_text": "岗位职责：测试 JD"}),
         ("patch", f"/applications/{app_id}/status", {"status": "WRITTEN"}),
         ("delete", f"/applications/{app_id}", None),
     ]
@@ -372,3 +372,24 @@ def test_avatar_downscaled_to_256(client: TestClient, avatar_dir: Path):
     ).json()
     with Image.open(avatar_dir / Path(uploaded["data"]["avatar"]).name) as image:
         assert max(image.size) == 256
+
+
+def test_experiences_limit_and_clear(client: TestClient):
+    """TC-124：经历条目上限 10；title 全空白 / 非法 type → 10001；空数组清空。"""
+    one = {"type": "PROJECT", "title": "项目 A"}
+    over = [{"type": "PROJECT", "title": f"项目{i}"} for i in range(11)]
+    resp = client.put(f"{API}/profile", json={"experiences": over})
+    assert resp.status_code == 400 and resp.json()["code"] == 10001
+
+    resp = client.put(f"{API}/profile", json={"experiences": [dict(one, title="  ")]})
+    assert resp.status_code == 400 and resp.json()["code"] == 10001
+
+    client.put(f"{API}/profile", json={"experiences": [one]})
+    # 回读为完整字段结构（未传字段为 None，与契约的条目结构一致）
+    expected = {"type": "PROJECT", "title": "项目 A", "org": None, "role": None, "period": None, "description": None}
+    assert client.get(f"{API}/profile").json()["data"]["experiences"] == [expected]
+    client.put(f"{API}/profile", json={"experiences": []})
+    assert client.get(f"{API}/profile").json()["data"]["experiences"] in ([], None)
+
+    resp = client.put(f"{API}/profile", json={"experiences": [{"type": "BAD", "title": "x"}]})
+    assert resp.status_code == 400 and resp.json()["code"] == 10001

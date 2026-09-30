@@ -145,3 +145,26 @@ export function stageProgress(stages, seq) {
   }
   return null
 }
+
+/** 面试强度三档的中文名（会话 DTO 的 `intensity`；存量会话后端按 MEDIUM 兜底，不返回 null）。 */
+export const INTENSITY_LABELS = { LARGE: '大厂', MEDIUM: '中厂', SMALL: '小厂' }
+
+/**
+ * 解析总结流末的「错题候选」段（接口文档 v1.36 §3.7）——`data.text` 为完整 JSON：
+ * `{"candidates":[{"content","answer","direction"}]}`。
+ * 容忍 ```json 围栏与前后杂文；无法解析 / 结构不符返回 `[]`（该段可缺席，不得依赖其存在）。
+ */
+export function parseCandidates(text) {
+  if (!text) return []
+  let raw = String(text).trim()
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fence) raw = fence[1].trim()
+  try {
+    const data = JSON.parse(raw)
+    const list = Array.isArray(data) ? data : data?.candidates
+    if (!Array.isArray(list)) return []
+    return list.filter((c) => c && typeof c.content === 'string' && c.content.trim())
+  } catch {
+    return []
+  }
+}

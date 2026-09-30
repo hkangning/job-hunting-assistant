@@ -133,7 +133,7 @@ class TestCreateSession:
     def test_with_application_brings_company_and_position(self, client: TestClient, account):
         app = client.post(
             APP_API,
-            json={"company": "浩鲸科技", "position": "Java 开发"},
+            json={"company": "浩鲸科技", "position": "Java 开发", "jd_text": "岗位职责：测试 JD"},
             headers=_auth(account),
         ).json()["data"]
         data = _create(client, account, application_id=app["id"])
@@ -161,7 +161,7 @@ class TestCreateSession:
         for bad in (2, 16):
             resp = client.post(
                 API,
-                json={"company": "A", "position": "B", "question_count": bad},
+                json={"company": "A", "position": "B", "jd_text": "岗位职责：测试 JD", "question_count": bad},
                 headers=_auth(account),
             )
             assert resp.status_code == 400
@@ -181,7 +181,7 @@ class TestCreateSession:
         other = make_account("interview_other")
         app = client.post(
             APP_API,
-            json={"company": "某公司", "position": "某岗位"},
+            json={"company": "某公司", "position": "某岗位", "jd_text": "岗位职责：测试 JD"},
             headers={"Authorization": f"Bearer {other['token']}"},
         ).json()["data"]
         _create(client, account, company="A", position="B")  # 端点必须在（未实现时此处即失败）
@@ -409,3 +409,104 @@ class TestChatGuards:
         )
         assert resp.status_code == 404
         assert resp.json()["code"] == 10002
+
+
+# ================================================================ TC-122~123 强度与阶段化
+
+PROFILE_API = "/api/v1/profile"
+
+
+class TestIntensityAndStages:
+    def test_create_session_intensity(self, client: TestClient, account):
+        """TC-122：强度三档建会话回传；不传默认中厂；非法值 → 400 + 10001。"""
+        large = _create(
+            client,
+            account,
+            company="云器科技",
+            position="后端开发",
+            question_count=5,
+            intensity="LARGE",
+        )
+        assert large["intensity"] == "LARGE"
+        default = _create(client, account, company="云器科技", position="后端开发")
+        assert default["intensity"] == "MEDIUM"
+        bad = client.post(
+            API,
+            json={"company": "云器科技", "position": "后端开发", "intensity": "HUGE"},
+            headers=_auth(account),
+        )
+        assert bad.status_code == 400 and bad.json()["code"] == 10001
+
+    def test_create_session_stages_plan(self, client: TestClient, account):
+        """TC-123：无经历 → stages 仅 INTRO + TECH；有经历 → 含 PROJECT 且总题量守恒。"""
+        data = _create(client, account, company="云器科技", position="后端开发", question_count=8)
+        assert data["stages"] == [{"stage": "INTRO", "count": 1}, {"stage": "TECH", "count": 7}]
+
+        client.put(
+            PROFILE_API,
+            json={"experiences": [{"type": "PROJECT", "title": "企业管理系统开发", "role": "后端"}]},
+            headers=_auth(account),
+        )
+        with_project = _create(
+            client, account, company="云器科技", position="后端开发", question_count=8
+        )
+        stages = {s["stage"]: s["count"] for s in with_project["stages"]}
+        assert stages["INTRO"] == 1 and stages["PROJECT"] >= 1
+        assert sum(stages.values()) == 8
+
+    def test_stage_recorded_per_qa(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """TC-123 补充：逐题 stage 落库（首题 INTRO）。"""
+        session = _create(client, account, company="云器科技", position="后端开发", question_count=3)
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+        rows = _qa_rows(session["id"])
+        assert rows[0].stage == "INTRO"
+
+
+# ================================================================ TC-125~126 总结与错题候选
+
+SUMMARY_STREAM = "/api/v1/stream/interview-summary"
+
+
+def _summary(client: TestClient, account, session_id: int) -> list[tuple[str, dict]]:
+    """走一轮 `/stream/interview-summary`，返回事件序列。"""
+    resp = client.post(SUMMARY_STREAM, json={"session_id": session_id}, headers=_auth(account))
+    assert resp.status_code == 200, resp.text
+    return _sse_events(resp.text)
+
+
+class TestSummary:
+    def test_summary_with_wrong_candidates(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """TC-125：正文后候选段一次性下发、正文不含候选；回放只有 summary 段。"""
+        session = _create(client, account, company="云器科技", position="后端开发", question_count=3)
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+        _answer_turn(fake_llm_client, client, account, session["id"], answer="第一题作答")
+
+        fake_llm_client.chunks = [
+            "## 总结\n整体表现稳健。\n\n## 错题候选\n",
+            '{"candidates":[{"content":"JVM 分代回收","answer":"新生代 / 老年代…","direction":"JVM"}]}',
+        ]
+        events = _summary(client, account, session["id"])
+        deltas = [d for name, d in events if name == "delta"]
+        assert any(d.get("section") == "wrong_candidates" for d in deltas)
+        body = "".join(d["text"] for d in deltas if d.get("section") == "summary")
+        assert "错题候选" not in body
+
+        replay = _summary(client, account, session["id"])
+        assert _sections(replay) == ["summary"]
+
+    def test_summary_candidates_bad_json_skipped(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """TC-126：候选段坏 JSON → 静默跳过（不发该段、正文照常、无 error）。"""
+        session = _create(client, account, company="云器科技", position="后端开发", question_count=3)
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+        _answer_turn(fake_llm_client, client, account, session["id"], answer="第一题作答")
+
+        fake_llm_client.chunks = ["## 总结\n正文照常。\n\n## 错题候选\n", "这不是 JSON"]
+        events = _summary(client, account, session["id"])
+        assert _sections(events) == ["summary"]
+        assert all(name != "error" for name, _ in events)

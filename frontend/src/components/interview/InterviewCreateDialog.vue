@@ -23,15 +23,23 @@ const router = useRouter()
 
 const formRef = ref(null)
 const submitting = ref(false)
-/** 画像是否有简历——决定面试是否会出现「项目深挖」环节（后端按简历分配项目题）。 */
+/** 画像是否填写了经历条目——决定面试是否会出现「项目深挖」环节（后端按经历分配项目题）。 */
 const hasResume = ref(false)
 const form = reactive({
   applicationId: null,
   company: '',
   position: '',
   direction: 'GENERAL',
-  questionCount: 8
+  questionCount: 8,
+  intensity: 'MEDIUM'
 })
+
+/** 三档差异说明（接口文档 v1.36 §3.7 的强度表）；强度随会话固定，中途不可改。 */
+const INTENSITY_OPTIONS = [
+  { value: 'LARGE', label: '大厂', desc: '偏原理与系统设计，追问更深、评分更严' },
+  { value: 'MEDIUM', label: '中厂', desc: '兼顾原理与工程实操（默认）' },
+  { value: 'SMALL', label: '小厂', desc: '偏基础与实用，追问浅、评分宽' }
+]
 
 const rules = {
   company: [
@@ -100,13 +108,14 @@ watch(
       company: '',
       position: '',
       direction: 'GENERAL',
-      questionCount: 8
+      questionCount: 8,
+      intensity: 'MEDIUM'
     })
     formRef.value?.clearValidate()
     searchApplications('')
     getProfileApi()
-      .then((data) => (hasResume.value = !!(data?.resume_text || '').trim()))
-      .catch(() => (hasResume.value = false)) // 拉不到按"无简历"提示，不阻塞发起
+      .then((data) => (hasResume.value = Array.isArray(data?.experiences) && data.experiences.length > 0))
+      .catch(() => (hasResume.value = false)) // 拉不到按"无经历"提示，不阻塞发起
   }
 )
 
@@ -133,6 +142,7 @@ async function submit() {
       : { company: form.company.trim(), position: form.position.trim() }
     payload.direction = form.direction
     payload.question_count = form.questionCount
+    payload.intensity = form.intensity
 
     const session = await createInterviewSession(payload)
     ElMessage.success('面试已创建')
@@ -196,6 +206,19 @@ async function submit() {
         <el-input-number v-model="form.questionCount" :min="3" :max="15" />
         <span class="create__hint">3~15 题，默认 8 题</span>
       </el-form-item>
+      <el-form-item label="面试强度">
+        <el-radio-group v-model="form.intensity" class="create__intensity">
+          <el-radio
+            v-for="opt in INTENSITY_OPTIONS"
+            :key="opt.value"
+            :value="opt.value"
+            class="create__intensity-item"
+          >
+            <span class="create__intensity-name">{{ opt.label }}</span>
+            <span class="create__intensity-desc">{{ opt.desc }}</span>
+          </el-radio>
+        </el-radio-group>
+      </el-form-item>
     </el-form>
 
     <!-- 面试流程说明：让「完整流程」在发起前就可知可预期 -->
@@ -212,10 +235,10 @@ async function submit() {
         <span class="create__flow-step">总结报告</span>
       </div>
       <p v-if="!hasResume" class="create__flow-hint">
-        完善简历后可得「项目深挖」环节——去
-        <a href="#" @click.prevent="openProfile">个人中心</a>上传或填写
+        完善经历后可得「项目深挖」环节——去
+        <a href="#" @click.prevent="openProfile">个人中心</a>上传简历或添加经历
       </p>
-      <p v-else class="create__flow-hint">「项目深挖」将依据你画像中的简历出题</p>
+      <p v-else class="create__flow-hint">「项目深挖」将依据你画像中的经历出题</p>
     </div>
 
     <template #footer>
@@ -229,6 +252,26 @@ async function submit() {
 .create__hint {
   margin-left: 10px;
   font-size: 12px;
+  color: var(--c-text-3);
+}
+/* 强度三档：竖排单选，每档带一句差异说明 */
+.create__intensity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.create__intensity-item {
+  height: auto;
+  margin-right: 0;
+  padding: 4px 0;
+}
+.create__intensity-name {
+  margin-right: 8px;
+  font-weight: 600;
+}
+.create__intensity-desc {
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
 .create__flow {
