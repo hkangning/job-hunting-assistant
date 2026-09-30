@@ -1,5 +1,5 @@
 /**
- * 错题本接口封装（接口文档 v1.29 §3.9）。
+ * 错题本接口封装（接口文档 v1.32 §3.9）。
  *
  * 4 个端点：列表 / 添加 / 删除 / 复习判定。响应由 `request.js` 拦截器解包，调用方直接拿 `data`。
  */
@@ -7,8 +7,9 @@ import request from './request'
 
 /**
  * 错题列表。
- * params: { status?: 'PENDING' | 'MASTERED', page?, page_size? }
- * 排序由后端给（未掌握优先 → 到期先后 → id 升序），前端不再排。
+ * params: { status?: 'PENDING' | 'MASTERED', keyword?, direction?, page?, page_size? }
+ * 排序由后端给（未掌握优先 → 到期先后 → id 升序），前端不再排；
+ * `keyword` 按题干模糊匹配、`direction` 按领域精确筛选，与 `status` 可叠加。
  */
 export function listWrongQuestions(params) {
   return request.get('/wrong-questions', { params })

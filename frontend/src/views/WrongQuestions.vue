@@ -3,8 +3,9 @@
  * 错题本（FR-010 / 开发计划步骤 14）：列表 → 复习 的主区切换，同陪练页。
  *
  * 列表排序、到期口径、档位推进都由后端定；本页只负责取数与呈现。
+ * 列表筛选（状态 / 关键字 / 领域）随请求下发、count 与列表同条件过滤（接口文档 v1.32 §3.9）。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getPracticeMeta } from '../api/practice'
@@ -15,14 +16,17 @@ import WrongAddDialog from '../components/wrong/WrongAddDialog.vue'
 
 const meta = ref(null)
 
-// 列表
+// 列表（keyword / direction 为列表筛选，与 status 可叠加；接口文档 §3.9）
 const items = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
 const status = ref('')
+const keyword = ref('')
+const direction = ref('')
 const loading = ref(false)
 const counts = reactive({ pending: 0, mastered: 0 })
+let keywordTimer = null
 
 // 复习
 const phase = ref('list') // list | review
@@ -32,15 +36,17 @@ const reviewing = ref(false)
 
 const addVisible = ref(false)
 
-const emptyText = computed(() =>
-  status.value === 'MASTERED'
-    ? '还没有已掌握的错题——答对满四档就会在这里'
-    : '错题本还是空的，去八股陪练练一场吧'
-)
+const emptyText = computed(() => {
+  if (keyword.value || direction.value) return '没有匹配的错题——换个关键字或领域试试'
+  if (status.value === 'MASTERED') return '还没有已掌握的错题——答对满四档就会在这里'
+  return '错题本还是空的，去八股陪练练一场吧'
+})
 
 onMounted(async () => {
   await Promise.allSettled([loadMeta(), load(), loadCounts()])
 })
+
+onUnmounted(() => clearTimeout(keywordTimer)) // 防抖定时器不能留到组件外
 
 async function loadMeta() {
   meta.value = await getPracticeMeta()
@@ -53,6 +59,8 @@ async function load({ append = false } = {}) {
   try {
     const data = await listWrongQuestions({
       status: status.value || undefined,
+      keyword: keyword.value || undefined,
+      direction: direction.value || undefined,
       page: targetPage,
       page_size: pageSize.value
     })
@@ -80,6 +88,21 @@ async function refresh() {
 
 function changeStatus(value) {
   status.value = value
+  page.value = 1
+  load()
+}
+
+/** 关键字输入防抖 300ms（同投递页），回车不清空——输入即筛。 */
+function onKeywordInput(value) {
+  keyword.value = value || ''
+  page.value = 1
+  clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(load, 300)
+}
+
+/** 领域筛选（下拉即时生效）。 */
+function onDirectionChange(value) {
+  direction.value = value || ''
   page.value = 1
   load()
 }
@@ -132,9 +155,17 @@ async function goNextReview() {
   reviewFinished.value = true
 }
 
-/** 侧栏「开始复习」：切到待复习筛选后打开第一条（后端排序：未掌握优先 → 到期先后）。 */
+/**
+ * 侧栏「开始复习」：切到待复习筛选后打开第一条（后端排序：未掌握优先 → 到期先后）。
+ *
+ * 一并清掉浏览用的搜索 / 领域筛选——这个按钮是**全局复习队列**的入口，
+ * 语义是「按到期顺序过一遍」，不该被列表上停留的筛选条件缩窄。
+ */
 async function startReview() {
-  if (status.value !== 'PENDING') {
+  const hadFilter = !!keyword.value || !!direction.value
+  keyword.value = ''
+  direction.value = ''
+  if (status.value !== 'PENDING' || hadFilter) {
     status.value = 'PENDING'
     page.value = 1
     await load()
@@ -224,6 +255,8 @@ async function removeItem(item) {
         :page="page"
         :page-size="pageSize"
         :status="status"
+        :keyword="keyword"
+        :direction="direction"
         :loading="loading"
         :meta="meta"
         :empty-text="emptyText"
@@ -231,6 +264,8 @@ async function removeItem(item) {
         @remove="removeItem"
         @page-change="changePage"
         @status-change="changeStatus"
+        @keyword-change="onKeywordInput"
+        @direction-change="onDirectionChange"
       />
     </main>
 

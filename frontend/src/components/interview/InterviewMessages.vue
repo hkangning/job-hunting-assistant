@@ -7,8 +7,22 @@
  *
  * **打字机只给流式中的消息**：`streaming` 为真才走 `StreamText`，历史消息（恢复路径）
  * 直接渲染纯文本——否则刷新后整屏历史会逐字重打一遍，像重播。
+ *
+ * **文本统一过 `toPlainText`**：后端按段落组织文本、标题行随 `delta` 原样下发，
+ * 且落库文本恒等于拼接结果（接口文档 §3.7 实现口径 6）——恢复与流式两条路径的
+ * 题干 / 点评都带「## 下一题」「## 点评」标题行，版式已由前端标签承担，渲染时剥掉；
+ * 行内强调标记（`**` / 反引号）同批去掉，与陪练页同一口径。
+ *
+ * 点评正文再去掉首行的「评分 X/10」——分数已由点评卡片的徽章承担（与陪练页一致），
+ * 正文里再留一行就是重复信息。
  */
 import StreamText from '../StreamText.vue'
+import { parseRoundScore, toPlainText } from '../../utils/practiceStream'
+
+/** 点评正文：剥标题行 / 行内标记，并去掉首行评分（格式不符时原样返回，剥不掉也无害）。 */
+function reviewBody(text) {
+  return parseRoundScore(text).note
+}
 
 defineProps({
   /** `{ kind, seq?, text, skipped?, score?, streaming? }[]` */
@@ -26,8 +40,8 @@ defineProps({
             <span class="msgs__who msgs__who--interviewer">面试官</span>
             <span v-if="m.seq != null" class="msgs__seq">第 {{ m.seq }} 题</span>
           </div>
-          <StreamText v-if="m.streaming" :text="m.text" :streaming="true" />
-          <span v-else class="msgs__static">{{ m.text }}</span>
+          <StreamText v-if="m.streaming" :text="toPlainText(m.text)" :streaming="true" />
+          <span v-else class="msgs__static">{{ toPlainText(m.text) }}</span>
         </div>
       </div>
 
@@ -49,8 +63,8 @@ defineProps({
           <span v-if="m.score != null" class="msgs__score">{{ m.score }}<i>分</i></span>
         </div>
         <div class="msgs__review-body">
-          <StreamText v-if="m.streaming" :text="m.text" :streaming="true" />
-          <span v-else class="msgs__static">{{ m.text }}</span>
+          <StreamText v-if="m.streaming" :text="reviewBody(m.text)" :streaming="true" />
+          <span v-else class="msgs__static">{{ reviewBody(m.text) }}</span>
         </div>
       </div>
     </template>

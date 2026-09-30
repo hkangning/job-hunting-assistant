@@ -8,6 +8,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { addWrongQuestion } from '../../api/wrongQuestions'
+import { directionOptions } from '../../utils/practiceMeta'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -25,16 +26,8 @@ const rules = {
   direction: [{ required: true, message: '请选领域', trigger: 'change' }]
 }
 
-/** 领域选项：摊平 meta 的「栈 → 领域」，与陪练页同一份元数据。 */
-const directionOptions = computed(() => {
-  const options = []
-  for (const stack of props.meta?.stacks || []) {
-    for (const domain of stack.domains || []) {
-      options.push({ value: domain.value, label: `${stack.label} · ${domain.label}` })
-    }
-  }
-  return options
-})
+/** 领域选项：与错题本筛选共用一份（`practiceMeta.js`），来自 `GET /practice/meta`。 */
+const domainOptions = computed(() => directionOptions(props.meta))
 
 /** 每次打开重置表单，避免上次的残留。 */
 watch(
@@ -101,7 +94,7 @@ async function submit() {
       <el-form-item label="领域" prop="direction">
         <el-select v-model="form.direction" placeholder="选择知识领域" style="width: 100%">
           <el-option
-            v-for="opt in directionOptions"
+            v-for="opt in domainOptions"
             :key="opt.value"
             :label="opt.label"
             :value="opt.value"

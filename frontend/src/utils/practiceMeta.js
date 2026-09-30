@@ -20,3 +20,19 @@ export const QTYPE_LABELS = {
   SUBJECTIVE: '主观题',
   SCENARIO: '场景题'
 }
+
+/**
+ * 把 meta 的「栈 → 领域」摊平成下拉选项 `[{value, label}]`。
+ *
+ * label 带栈前缀：领域名在跨栈语境下容易失去上下文（「并发编程」是哪一块的），
+ * 下拉里一眼能看清归属。错题本的领域筛选与添加弹窗共用同一份。
+ */
+export function directionOptions(meta) {
+  const options = []
+  for (const stack of meta?.stacks || []) {
+    for (const domain of stack.domains || []) {
+      options.push({ value: domain.value, label: `${stack.label} · ${domain.label}` })
+    }
+  }
+  return options
+}

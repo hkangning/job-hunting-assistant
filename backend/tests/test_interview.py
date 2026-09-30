@@ -1,32 +1,33 @@
-"""模拟面试（FR-007）：会话与问答的用例——测试计划 TC-05~07、TC-33。
+"""模拟面试（FR-007）：会话与问答的用例——测试计划 TC-05~07、TC-33、TC-118~119。
 
-**后端 interview 服务层与端点尚未实现**（ORM 模型与枚举已随步骤 2 就位）。
-本文件全部断言走 TestClient 的 HTTP 层、不 import 服务层——服务层不存在会让文件在
-收集期报错，而 HTTP 层此刻稳定返回 404，用例按预期失败、xfail 生效。
-后端落地后本文件转 XPASS，届时摘除标记并做真联调校准（尤其 LLM 输出格式相关的
-断言：契约只定 `section` 序列，未定模型输出的切段格式）。
+后端服务层与 `/stream/interview-chat` 已于 2026-09-30 落地，本文件不再是契约先行的
+占位用例：FakeLLM 输出按契约的**切段格式**（`## 点评` / `## 下一题` 标题行）构造，
+断言逐条核对接口文档 **v1.33 §3.7** 的实现口径。
 """
 
 import json
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.models.interview import InterviewQa
 
-pytestmark = pytest.mark.xfail(
-    reason="后端 interview 服务层与端点未实现（步骤 15 后端未开工）；落地后转 XPASS 摘标",
-    strict=False,
-)
-
 API = "/api/v1/interview-sessions"
 STREAM = "/api/v1/stream/interview-chat"
 APP_API = "/api/v1/applications"
 
-# FakeLLM 的首轮输出：契约未定切段格式，用最朴素的「评分 X/10 + 正文」文本，
-# 后端落地后若要求结构化输出再校准。
-CHUNKS = ["评分 8/10，", "亮点：术语准确。", "不足：缺少量化。", "下一题：说说 GC 算法。"]
+# FakeLLM 的两组输出，按轮次类型分（接口文档 v1.33 §3.7 实现口径 6 的切段格式）：
+# 出题 / 跳过轮只产「## 下一题」段；作答轮产「## 点评」+「## 下一题」两段。
+# 标题行随 `delta` 原样下发，并计入落库文本（「落库全文 == delta 拼接」）。
+QUESTION_CHUNKS = ["## 下一题\n", "说说 JVM 的内存结构。"]
+ANSWER_CHUNKS = [
+    "## 点评\n",
+    "评分 8/10\n",
+    "- 亮点：术语准确。\n",
+    "- 不足：缺少量化。\n",
+    "## 下一题\n",
+    "说说 GC 算法。",
+]
 
 
 def _auth(account) -> dict[str, str]:
@@ -47,6 +48,20 @@ def _chat(client: TestClient, account, session_id: int, **payload) -> list[tuple
     return _sse_events(resp.text)
 
 
+def _ask_turn(fake, client: TestClient, account, session_id: int, **payload) -> list[tuple[str, dict]]:
+    """出题 / 跳过轮：FakeLLM 输出只有「## 下一题」段。"""
+    fake.chunks = list(QUESTION_CHUNKS)
+    return _chat(client, account, session_id, **payload)
+
+
+def _answer_turn(
+    fake, client: TestClient, account, session_id: int, **payload
+) -> list[tuple[str, dict]]:
+    """作答轮：FakeLLM 输出「## 点评 + ## 下一题」两段（答满轮时下一题段被服务端丢弃）。"""
+    fake.chunks = list(ANSWER_CHUNKS)
+    return _chat(client, account, session_id, **payload)
+
+
 def _sse_events(body: str) -> list[tuple[str, dict]]:
     """解析响应体里的 SSE 事件序列（`event: <名>` 与 `data: <JSON>` 两行一块）。"""
     events = []
@@ -59,8 +74,19 @@ def _sse_events(body: str) -> list[tuple[str, dict]]:
 
 
 def _sections(events: list[tuple[str, dict]]) -> list[str]:
-    """事件流里 `delta` 的 `section` 序列（按到达顺序）。"""
-    return [data.get("section") for name, data in events if name == "delta"]
+    """事件流里 `delta` 的 `section` 序列（相邻去重保序）。
+
+    同一段会有多条 delta——标题行与正文各成一块、块边界取决于模型输出，
+    这里断言的是**段落序列**而非 delta 条数。
+    """
+    sections: list[str | None] = []
+    for name, data in events:
+        if name != "delta":
+            continue
+        section = data.get("section")
+        if not sections or sections[-1] != section:
+            sections.append(section)
+    return sections
 
 
 def _done(events: list[tuple[str, dict]]) -> dict:
@@ -79,6 +105,23 @@ def _qa_rows(session_id: int) -> list[InterviewQa]:
             .order_by(InterviewQa.seq)
             .all()
         )
+
+
+def _settle_pending(session_id: int, answer: str = "已作答") -> None:
+    """把会话最后一条 qa 直接标记为已作答——构造「ACTIVE 且无待答题」的中间态用例。
+
+    正常链路一轮一次性落库，不会出现该态；这里是在测防御性校验分支
+    （接口文档 v1.33 §3.7 实现口径 2 的「answer 非空但当前无待作答的题」）。
+    """
+    with SessionLocal() as db:
+        qa = (
+            db.query(InterviewQa)
+            .filter(InterviewQa.session_id == session_id)
+            .order_by(InterviewQa.seq.desc())
+            .first()
+        )
+        qa.answer = answer
+        db.commit()
 
 
 # ================================================================ TC-05 创建会话
@@ -157,11 +200,10 @@ class TestAnswerPersists:
     def test_first_question_then_answer_lands(
         self, client: TestClient, account, fake_llm_client, llm_configured
     ):
-        fake_llm_client.chunks = list(CHUNKS)
         session = _create(client, account, company="浩鲸科技", position="Java 开发")
 
         # 首题：空 answer 触发开场提问，落一条「有 question、无 answer」的 qa
-        events = _chat(client, account, session["id"], answer="")
+        events = _ask_turn(fake_llm_client, client, account, session["id"], answer="")
         assert events[0][0] == "start"
         assert "next_question" in _sections(events)
         assert _done(events)["record_id"]
@@ -169,34 +211,41 @@ class TestAnswerPersists:
         rows = _qa_rows(session["id"])
         assert len(rows) == 1
         assert rows[0].seq == 1
-        assert rows[0].question
+        # 落库全文 == delta 拼接：段标题行计入（前端渲染时剥离）
+        assert rows[0].question.startswith("## 下一题")
         assert not rows[0].answer and rows[0].score is None
 
         # 作答：review + next_question，首条补全、落第二条
-        events = _chat(client, account, session["id"], answer="堆分新生代与老年代")
+        events = _answer_turn(
+            fake_llm_client, client, account, session["id"], answer="堆分新生代与老年代"
+        )
         assert _sections(events) == ["review", "next_question"]
 
         rows = _qa_rows(session["id"])
         assert len(rows) == 2
         first, second = rows
         assert first.answer == "堆分新生代与老年代"
-        assert first.review and "亮点" in first.review
-        assert first.score is not None  # 分数由点评输出解析/结构化获得，具体值待实现校准
-        assert second.seq == 2 and second.question and not second.answer
+        assert first.review.startswith("## 点评")
+        assert "亮点" in first.review
+        assert first.score == 8  # 从点评首行「评分 8/10」解析
+        assert second.seq == 2 and second.question.startswith("## 下一题")
+        assert not second.answer
 
     def test_answer_into_closed_session_rejected(
         self, client: TestClient, account, fake_llm_client, llm_configured
     ):
-        """会话已结束（40001）后继续作答被拒。"""
-        fake_llm_client.chunks = list(CHUNKS)
+        """会话已结束（40001 → HTTP 409）后继续作答被拒。"""
         session = _create(client, account, company="A", position="B", question_count=3)
-        _chat(client, account, session["id"], answer="")
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
         for i in range(3):
-            _chat(client, account, session["id"], answer=f"第 {i + 1} 题作答")
+            _answer_turn(
+                fake_llm_client, client, account, session["id"], answer=f"第 {i + 1} 题作答"
+            )
 
         resp = client.post(
             STREAM, json={"session_id": session["id"], "answer": "再来一题"}, headers=_auth(account)
         )
+        assert resp.status_code == 409
         assert resp.json()["code"] == 40001
 
 
@@ -209,12 +258,12 @@ class TestSkip:
     def test_skip_marks_skipped_and_advances(
         self, client: TestClient, account, fake_llm_client, llm_configured
     ):
-        fake_llm_client.chunks = list(CHUNKS)
         session = _create(client, account, company="A", position="B")
-        _chat(client, account, session["id"], answer="")  # 首题
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")  # 首题
 
-        events = _chat(client, account, session["id"], skip=True)
+        events = _ask_turn(fake_llm_client, client, account, session["id"], skip=True)
         assert _done(events)
+        assert "review" not in _sections(events)  # 跳过轮不出点评（口径 4）
 
         rows = _qa_rows(session["id"])
         assert len(rows) == 2
@@ -235,10 +284,9 @@ class TestStream:
         self, client: TestClient, account, fake_llm_client, llm_configured
     ):
         """首题（空 answer）：start 第一 → delta(next_question) → done（含 record_id 与 seq）。"""
-        fake_llm_client.chunks = list(CHUNKS)
         session = _create(client, account, company="A", position="B")
 
-        events = _chat(client, account, session["id"], answer="")
+        events = _ask_turn(fake_llm_client, client, account, session["id"], answer="")
         assert events[0][0] == "start"
         assert _sections(events) == ["next_question"]
         done = _done(events)
@@ -247,25 +295,117 @@ class TestStream:
     def test_answer_turn_has_review_then_next(
         self, client: TestClient, account, fake_llm_client, llm_configured
     ):
-        fake_llm_client.chunks = list(CHUNKS)
         session = _create(client, account, company="A", position="B")
-        _chat(client, account, session["id"], answer="")
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
 
-        events = _chat(client, account, session["id"], answer="我的作答")
+        events = _answer_turn(fake_llm_client, client, account, session["id"], answer="我的作答")
         assert _sections(events) == ["review", "next_question"]
 
     def test_session_finished_when_count_reached(
         self, client: TestClient, account, fake_llm_client, llm_configured
     ):
         """答满题量：末次 done 带 `extra.session_finished=true`，且不再出下一题。"""
-        fake_llm_client.chunks = list(CHUNKS)
         session = _create(client, account, company="A", position="B", question_count=3)
 
-        _chat(client, account, session["id"], answer="")
-        _chat(client, account, session["id"], answer="第 1 题作答")
-        _chat(client, account, session["id"], answer="第 2 题作答")
-        events = _chat(client, account, session["id"], answer="第 3 题作答")
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+        _answer_turn(fake_llm_client, client, account, session["id"], answer="第 1 题作答")
+        _answer_turn(fake_llm_client, client, account, session["id"], answer="第 2 题作答")
+        events = _answer_turn(
+            fake_llm_client, client, account, session["id"], answer="第 3 题作答"
+        )
 
         done = _done(events)
         assert done["extra"]["session_finished"] is True
         assert "next_question" not in _sections(events)
+
+    def test_unstructured_output_reports_error_and_persists_nothing(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """TC-118：模型未按切段格式输出（无标题行）→ `error 10011`、本轮不落库（口径 6）。"""
+        fake_llm_client.chunks = ["评分 8/10，", "下一题：说说 GC 算法。"]  # 没有标题行
+        session = _create(client, account, company="A", position="B")
+
+        events = _chat(client, account, session["id"], answer="")
+        names = [name for name, _ in events]
+        assert names[0] == "start" and "done" not in names
+        error = next(data for name, data in events if name == "error")
+        assert error["code"] == 10011
+
+        assert not _qa_rows(session["id"])  # 本轮不落库（落库只在流正常结束后一次性执行）
+
+
+# ================================================================ TC-119 作答前置校验
+
+
+class TestChatGuards:
+    """TC-119：`/stream/interview-chat` 的前置校验——均为 SSE 建立前的普通 JSON 响应（口径 2）。"""
+
+    def test_stale_answer_without_pending_rejected(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """`answer` 非空但当前无待作答的题（如流中断后携带旧答案重试）→ 409 + 40001。"""
+        session = _create(client, account, company="A", position="B")
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+        _settle_pending(session["id"])  # 构造「ACTIVE 且无待答题」的防御分支态
+
+        resp = client.post(
+            STREAM,
+            json={"session_id": session["id"], "answer": "重试的旧作答"},
+            headers=_auth(account),
+        )
+        assert resp.status_code == 409
+        assert resp.json()["code"] == 40001
+
+    def test_skip_with_answer_conflict_rejected(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """`skip` 与 `answer` 同时提交 → 400 + 10001。"""
+        session = _create(client, account, company="A", position="B")
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+
+        resp = client.post(
+            STREAM,
+            json={"session_id": session["id"], "answer": "作答", "skip": True},
+            headers=_auth(account),
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 10001
+
+    def test_skip_without_pending_rejected(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """`skip=true` 但当前无未作答的题 → 400 + 10001。"""
+        session = _create(client, account, company="A", position="B")
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+        _settle_pending(session["id"])
+
+        resp = client.post(
+            STREAM, json={"session_id": session["id"], "skip": True}, headers=_auth(account)
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 10001
+
+    def test_empty_answer_resends_pending_question(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """空 `answer` = 请出当前该出的题——待答题原样重发：不调 LLM、不落库（口径 3）。"""
+        session = _create(client, account, company="A", position="B")
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")
+        calls_before = len(fake_llm_client.stream_calls)
+
+        events = _chat(client, account, session["id"], answer="")
+        assert _sections(events) == ["next_question"]
+        assert _done(events)["seq"] == 1
+        assert len(_qa_rows(session["id"])) == 1  # 不落新条目
+        assert len(fake_llm_client.stream_calls) == calls_before  # 不调 LLM
+
+    def test_stream_cross_account_not_found(self, client: TestClient, account, make_account):
+        """跨账号作答：会话不可见 → 404 + 10002（校验先于流式建立）。"""
+        other = make_account("interview_other2")
+        session = _create(client, account, company="A", position="B")
+
+        resp = client.post(
+            STREAM, json={"session_id": session["id"], "answer": "我的作答"}, headers=_auth(other)
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 10002

@@ -1,5 +1,5 @@
 /**
- * 模拟面试接口封装（接口文档 v1.31 §3.7）。
+ * 模拟面试接口封装（接口文档 v1.33 §3.7）。
  *
  * 3 个 REST + 1 个 SSE 出口；响应由 `request.js` 拦截器解包，调用方直接拿 `data`。
  * 总结与回看（`/stream/interview-summary`）属步骤 16，本文件不含。
@@ -12,7 +12,7 @@ export function createInterviewSession(payload) {
   return request.post('/interview-sessions', payload)
 }
 
-/** 会话列表。params: { status?, page?, page_size? } */
+/** 会话列表。params: { status?, page?, page_size? }；items 含 `qa_count`（已落库条数，供进度显示）。 */
 export function listInterviewSessions(params) {
   return request.get('/interview-sessions', { params })
 }

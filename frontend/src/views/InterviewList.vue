@@ -1,9 +1,12 @@
 <script setup>
 /**
- * 模拟面试列表（FR-007 / 开发计划步骤 15；接口文档 v1.31 §3.7）。
+ * 模拟面试列表（FR-007 / 开发计划步骤 15；接口文档 v1.33 §3.7）。
  *
  * 列表只做两件事：把会话呈现出来、把用户送进进行页。回看属步骤 16，
  * 已结束的会话此处**只标状态、不给入口**（不做假入口）。
+ *
+ * 进行中的会话显示 `qa_count/question_count` 进度（接口文档 v1.32 列表项字段，
+ * 含尚未作答的当前题——即「问到第几题」，与进行页页头同一口径）。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -36,6 +39,13 @@ const directionLabels = computed(() => ({ GENERAL: '通用', ...directionLabelMa
 
 function directionLabel(item) {
   return directionLabels.value[item.direction] || item.direction
+}
+
+/** 进行中显示进度（`qa_count` 含尚未作答的当前题 → 即当前题号）；其余显示总题量。 */
+function countText(item) {
+  return item.status === 'ACTIVE' && item.qa_count
+    ? `第 ${item.qa_count}/${item.question_count} 题`
+    : `共 ${item.question_count} 题`
 }
 
 const emptyText = computed(() =>
@@ -131,7 +141,7 @@ onMounted(() => {
             <span class="interview__title">{{ item.company }} · {{ item.position }}</span>
             <div class="interview__meta">
               <span class="interview__dir">{{ directionLabel(item) }}</span>
-              <span>共 {{ item.question_count }} 题</span>
+              <span>{{ countText(item) }}</span>
               <span>{{ shortDateTime(item.created_at) }}</span>
             </div>
           </div>

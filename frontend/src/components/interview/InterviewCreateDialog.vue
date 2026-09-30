@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 发起面试（接口文档 v1.31 §3.7 `POST /interview-sessions`）。
+ * 发起面试（接口文档 v1.33 §3.7 `POST /interview-sessions`）。
  *
  * 两条路径二选一：选一条投递记录（公司/岗位由后端带入）或手填；
  * 方向不硬编码 19 项——取自 `GET /practice/meta` 的「栈 → 领域」，最前放「通用」（待改问题 #33）。

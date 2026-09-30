@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 面试进行页（FR-007 / 开发计划步骤 15；接口文档 v1.31 §3.7）。
+ * 面试进行页（FR-007 / 开发计划步骤 15；接口文档 v1.33 §3.7）。
  *
  * 消息序列由 `utils/interviewStream.js` 构建——刷新恢复（qa_list 展开）与流式
  * （delta 归段）共用同一份渲染。本页负责三件事：加载恢复（tail 分流）、
@@ -8,6 +8,7 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { Back, CircleCheck } from '@element-plus/icons-vue'
 import { getInterviewSession, interviewChatStream } from '../api/interview'
 import { getPracticeMeta } from '../api/practice'
@@ -111,6 +112,14 @@ function requestNext(payload) {
         streaming.value = false
         thinking.value = ''
         errorCode.value = e?.code ?? null
+        // 会话状态已变（已结束 / 题量答满 / 被其他端消费）：本地已过时，
+        // 直接重新拉取回到真实状态，而不是让用户对着重试按钮反复撞 409
+        if (e?.code === 40001) {
+          errorMsg.value = ''
+          ElMessage.warning('会话状态已更新，已为你重新加载')
+          load()
+          return
+        }
         errorMsg.value =
           e?.code === 10012
             ? '未配置 AI 密钥，请前往 AI 配置页配置后重试'

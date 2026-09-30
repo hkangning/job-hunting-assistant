@@ -1,12 +1,14 @@
 <script setup>
 /**
- * 错题列表：状态筛选 + 条目（题干 / 领域 / 档位 / 到期标记）+ 分页 + 删除入口。
+ * 错题列表：筛选（状态 / 题干关键字 / 领域）+ 条目（题干 / 领域 / 档位 / 到期标记）
+ * + 分页 + 删除入口。
  *
- * 排序由后端给（未掌握优先 → 到期先后 → id），本组件不再排。
+ * 排序由后端给（未掌握优先 → 到期先后 → id），本组件不再排；筛选条件由父页持有，
+ * 本组件只发事件（防抖与取数在父页）。
  */
 import { computed } from 'vue'
 import { Delete } from '@element-plus/icons-vue'
-import { QTYPE_LABELS, directionLabelMap } from '../../utils/practiceMeta'
+import { QTYPE_LABELS, directionLabelMap, directionOptions } from '../../utils/practiceMeta'
 import { dueText } from '../../utils/reviewPlan'
 import AppEmpty from '../AppEmpty.vue'
 
@@ -16,11 +18,25 @@ const props = defineProps({
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 10 },
   status: { type: String, default: '' },
+  keyword: { type: String, default: '' },
+  direction: { type: String, default: '' },
   loading: { type: Boolean, default: false },
   meta: { type: Object, default: null },
   emptyText: { type: String, default: '错题本还是空的' }
 })
-const emit = defineEmits(['open', 'remove', 'page-change', 'status-change'])
+const emit = defineEmits([
+  'open',
+  'remove',
+  'page-change',
+  'status-change',
+  'keyword-change',
+  'direction-change'
+])
+
+const domainOptions = computed(() => directionOptions(props.meta))
+
+/** 筛选行显隐：有内容可筛、或已设条件（筛选后为空时仍要能看到并清除条件）时显示。 */
+const showFilters = computed(() => !!props.items.length || !!props.keyword || !!props.direction)
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部' },
@@ -42,6 +58,15 @@ function toDate(text) {
 function isDue(item) {
   return !item.mastered_at && toDate(item.next_review_at) <= new Date()
 }
+
+/**
+ * 进入复习。**已掌握的条目不进入**——后端对已掌握条目复习返回 30002
+ * （「错题不存在或已掌握」），放进去只会在提交时才报错，不如在入口就拦住。
+ */
+function openItem(item) {
+  if (item.mastered_at) return
+  emit('open', item)
+}
 </script>
 
 <template>
@@ -62,6 +87,31 @@ function isDue(item) {
       </div>
     </header>
 
+    <div v-if="showFilters" class="wrong__filters">
+      <el-input
+        class="wrong__search"
+        :model-value="keyword"
+        placeholder="搜索题干关键字"
+        clearable
+        @update:model-value="emit('keyword-change', $event)"
+      />
+      <el-select
+        class="wrong__direction"
+        :model-value="direction"
+        placeholder="全部领域"
+        clearable
+        filterable
+        @update:model-value="emit('direction-change', $event)"
+      >
+        <el-option
+          v-for="opt in domainOptions"
+          :key="opt.value"
+          :label="opt.label"
+          :value="opt.value"
+        />
+      </el-select>
+    </div>
+
     <AppEmpty
       v-if="!loading && !items.length"
       type="wrong"
@@ -71,7 +121,14 @@ function isDue(item) {
 
     <template v-else>
       <ul v-loading="loading" class="wrong__list">
-        <li v-for="item in items" :key="item.id" class="wrong__item" @click="emit('open', item)">
+        <li
+          v-for="item in items"
+          :key="item.id"
+          class="wrong__item"
+          :class="{ 'wrong__item--mastered': !!item.mastered_at }"
+          :title="item.mastered_at ? '已掌握，无需复习' : ''"
+          @click="openItem(item)"
+        >
           <div class="wrong__main">
             <span class="wrong__content">{{ item.content }}</span>
             <div class="wrong__meta">
@@ -82,7 +139,7 @@ function isDue(item) {
               <span v-else class="wrong__later">{{ dueText(item.next_review_at) }}</span>
             </div>
           </div>
-          <span class="wrong__arrow">›</span>
+          <span v-if="!item.mastered_at" class="wrong__arrow">›</span>
           <el-button
             link
             class="wrong__remove"
@@ -154,6 +211,19 @@ function isDue(item) {
   font-weight: 600;
 }
 
+.wrong__filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--card-gap);
+}
+.wrong__search {
+  width: 220px;
+}
+.wrong__direction {
+  width: 190px;
+}
+
 .wrong__list {
   display: grid;
   gap: 8px;
@@ -174,6 +244,13 @@ function isDue(item) {
 }
 .wrong__item:hover {
   border-color: var(--m-wrong);
+}
+/* 已掌握：不再是复习入口——指针与悬停反馈都按「静态行」处理 */
+.wrong__item--mastered {
+  cursor: default;
+}
+.wrong__item--mastered:hover {
+  border-color: var(--c-border);
 }
 .wrong__main {
   flex: 1;
