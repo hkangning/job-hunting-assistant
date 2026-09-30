@@ -86,6 +86,19 @@ const routes = [
     }
   },
   {
+    // 回看页（总结 + 完整回顾，步骤 16 前端部分）
+    path: '/interview/:sessionId/review',
+    name: 'InterviewReview',
+    component: () => import('../views/InterviewReview.vue'),
+    meta: {
+      title: '面试回顾',
+      group: '求职流程',
+      color: 'var(--m-interview)',
+      hidden: true,
+      activeMenu: '/interview'
+    }
+  },
+  {
     path: '/practice',
     name: 'Practice',
     component: () => import('../views/Practice.vue'),

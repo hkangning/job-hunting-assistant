@@ -5,8 +5,13 @@
  * 只认 `utils/interviewStream.js` 产出的消息序列——恢复与流式两条路径共用同一份渲染。
  * 滚动与高度由页面控制（这里只管内容）。
  *
+ * **三种内容三种形态**（原版全用同款「白底细边框」，扫一眼分不清角色与层次）：
+ *   提问 —— 角色徽标 + 白底气泡（模块色左条）；作答 —— 右对齐、中性浅底 + 「我」徽标；
+ *   点评 —— 模块色浅底卡 + 大号分数 + **分段落色**（亮点 / 不足 / 参考要点）。
+ *
  * **打字机只给流式中的消息**：`streaming` 为真才走 `StreamText`，历史消息（恢复路径）
- * 直接渲染纯文本——否则刷新后整屏历史会逐字重打一遍，像重播。
+ * 直接渲染纯文本——否则刷新后整屏历史会逐字重打一遍，像重播。点评在流式期间按整段
+ * 走打字机、定稿后再切分段排版（避免逐段打字机的多实例节奏差）。
  *
  * **文本统一过 `toPlainText`**：后端按段落组织文本、标题行随 `delta` 原样下发，
  * 且落库文本恒等于拼接结果（接口文档 §3.7 实现口径 6）——恢复与流式两条路径的
@@ -17,17 +22,18 @@
  * 正文里再留一行就是重复信息。
  */
 import StreamText from '../StreamText.vue'
+import ReviewBody from './ReviewBody.vue'
 import { parseRoundScore, toPlainText } from '../../utils/practiceStream'
-
-/** 点评正文：剥标题行 / 行内标记，并去掉首行评分（格式不符时原样返回，剥不掉也无害）。 */
-function reviewBody(text) {
-  return parseRoundScore(text).note
-}
 
 defineProps({
   /** `{ kind, seq?, text, skipped?, score?, streaming? }[]` */
   messages: { type: Array, default: () => [] }
 })
+
+/** 点评正文：剥标题行 / 行内标记，并去掉首行评分（格式不符时原样返回，剥不掉也无害）。 */
+function reviewBody(text) {
+  return parseRoundScore(text).note
+}
 </script>
 
 <template>
@@ -35,6 +41,7 @@ defineProps({
     <template v-for="(m, i) in messages" :key="i">
       <!-- 面试官提问 -->
       <div v-if="m.kind === 'question'" class="msgs__row">
+        <span class="msgs__avatar msgs__avatar--iv">面</span>
         <div class="msgs__bubble msgs__bubble--question">
           <div class="msgs__meta">
             <span class="msgs__who msgs__who--interviewer">面试官</span>
@@ -48,12 +55,10 @@ defineProps({
       <!-- 我的作答 -->
       <div v-else-if="m.kind === 'answer'" class="msgs__row msgs__row--right">
         <div class="msgs__bubble msgs__bubble--answer">
-          <div class="msgs__meta msgs__meta--right">
-            <span class="msgs__who msgs__who--me">我</span>
-          </div>
           <span v-if="m.skipped" class="msgs__skipped">已跳过本题</span>
           <span v-else class="msgs__answer-text">{{ m.text }}</span>
         </div>
+        <span class="msgs__avatar msgs__avatar--me">我</span>
       </div>
 
       <!-- 点评卡片 -->
@@ -63,8 +68,9 @@ defineProps({
           <span v-if="m.score != null" class="msgs__score">{{ m.score }}<i>分</i></span>
         </div>
         <div class="msgs__review-body">
+          <!-- 流式期间整段打字机；定稿后切分段着色（与回看页的总结卡共用 ReviewBody） -->
           <StreamText v-if="m.streaming" :text="reviewBody(m.text)" :streaming="true" />
-          <span v-else class="msgs__static">{{ reviewBody(m.text) }}</span>
+          <ReviewBody v-else :text="reviewBody(m.text)" />
         </div>
       </div>
     </template>
@@ -75,96 +81,123 @@ defineProps({
 .msgs {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .msgs__row {
   display: flex;
+  align-items: flex-start;
+  gap: 10px;
 }
 .msgs__row--right {
   justify-content: flex-end;
 }
+
+/* 角色徽标：圆形、模块色浅底——让「谁在说话」一眼可辨（原来只有一行小字） */
+.msgs__avatar {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  border-radius: 50%;
+  user-select: none;
+}
+.msgs__avatar--iv {
+  color: var(--m-interview);
+  background: color-mix(in srgb, var(--m-interview) 14%, var(--c-card));
+  border: 1px solid color-mix(in srgb, var(--m-interview) 30%, var(--c-card));
+}
+.msgs__avatar--me {
+  color: var(--c-text-2);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+}
+
 .msgs__bubble {
-  max-width: 78%;
+  max-width: 76%;
   padding: 10px 14px;
   border-radius: 10px;
-  border: 1px solid var(--c-border);
-  background: #fff;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.7;
   color: var(--c-text);
 }
 .msgs__bubble--question {
-  border-top-left-radius: 2px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
   border-left: 3px solid var(--m-interview);
+  border-top-left-radius: 3px;
+  box-shadow: 0 1px 2px rgba(42, 39, 64, 0.04);
 }
 .msgs__bubble--answer {
-  border-top-right-radius: 2px;
   background: var(--c-bg);
+  border: 1px solid var(--c-divider);
+  border-top-right-radius: 3px;
 }
+
 .msgs__meta {
   display: flex;
   align-items: baseline;
   gap: 8px;
   margin-bottom: 4px;
 }
-.msgs__meta--right {
-  justify-content: flex-end;
-}
 .msgs__who {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .msgs__who--interviewer {
   color: var(--m-interview);
-}
-.msgs__who--me {
-  color: var(--c-text-3);
+  font-weight: 600;
 }
 .msgs__seq {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
+
 .msgs__skipped {
   color: var(--c-text-3);
 }
 /* 静态文本：与 StreamText 的排版口径一致（历史消息不走打字机） */
-.msgs__static {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
+.msgs__static,
 .msgs__answer-text {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* 点评：独立形态——模块色浅底 + 模块色描边，与白底气泡分开层次 */
 .msgs__review {
-  border: 1px solid var(--c-border);
+  border: 1px solid color-mix(in srgb, var(--m-interview) 30%, var(--c-card));
   border-radius: 10px;
-  background: #fff;
-  padding: 12px 16px;
+  background: color-mix(in srgb, var(--m-interview) 6%, var(--c-card));
+  padding: 12px 16px 14px;
+  box-shadow: 0 1px 2px rgba(42, 39, 64, 0.04);
 }
 .msgs__review-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .msgs__review-title {
-  font-size: 12px;
-  color: var(--m-interview);
-}
-.msgs__score {
-  font-size: 18px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--m-interview);
 }
+.msgs__score {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--m-interview);
+}
 .msgs__score i {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-style: normal;
   font-weight: 400;
   margin-left: 2px;
 }
+
 .msgs__review-body {
-  font-size: 14px;
-  line-height: 1.8;
   color: var(--c-text);
 }
 </style>

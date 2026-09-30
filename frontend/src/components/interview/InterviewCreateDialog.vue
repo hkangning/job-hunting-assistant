@@ -6,9 +6,11 @@
  * 方向不硬编码 19 项——取自 `GET /practice/meta` 的「栈 → 领域」，最前放「通用」（待改问题 #33）。
  */
 import { computed, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { listApplications } from '../../api/applications'
 import { createInterviewSession } from '../../api/interview'
+import { getProfileApi } from '../../api/profile'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -17,8 +19,12 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'created'])
 
+const router = useRouter()
+
 const formRef = ref(null)
 const submitting = ref(false)
+/** 画像是否有简历——决定面试是否会出现「项目深挖」环节（后端按简历分配项目题）。 */
+const hasResume = ref(false)
 const form = reactive({
   applicationId: null,
   company: '',
@@ -98,11 +104,20 @@ watch(
     })
     formRef.value?.clearValidate()
     searchApplications('')
+    getProfileApi()
+      .then((data) => (hasResume.value = !!(data?.resume_text || '').trim()))
+      .catch(() => (hasResume.value = false)) // 拉不到按"无简历"提示，不阻塞发起
   }
 )
 
 function close() {
   emit('update:modelValue', false)
+}
+
+/** 「去个人中心」：关掉弹窗再跳（避免弹窗残留在新页面上层）。 */
+function openProfile() {
+  close()
+  router.push('/profile')
 }
 
 async function submit() {
@@ -183,6 +198,26 @@ async function submit() {
       </el-form-item>
     </el-form>
 
+    <!-- 面试流程说明：让「完整流程」在发起前就可知可预期 -->
+    <div class="create__flow">
+      <div class="create__flow-steps">
+        <span class="create__flow-step">自我介绍</span>
+        <span class="create__flow-arrow">→</span>
+        <span class="create__flow-step">技术问答</span>
+        <template v-if="hasResume">
+          <span class="create__flow-arrow">→</span>
+          <span class="create__flow-step">项目深挖</span>
+        </template>
+        <span class="create__flow-arrow">→</span>
+        <span class="create__flow-step">总结报告</span>
+      </div>
+      <p v-if="!hasResume" class="create__flow-hint">
+        完善简历后可得「项目深挖」环节——去
+        <a href="#" @click.prevent="openProfile">个人中心</a>上传或填写
+      </p>
+      <p v-else class="create__flow-hint">「项目深挖」将依据你画像中的简历出题</p>
+    </div>
+
     <template #footer>
       <el-button :disabled="submitting" @click="close">取消</el-button>
       <el-button type="primary" :loading="submitting" @click="submit">开始面试</el-button>
@@ -195,5 +230,35 @@ async function submit() {
   margin-left: 10px;
   font-size: 12px;
   color: var(--c-text-3);
+}
+.create__flow {
+  padding: 10px 14px;
+  background: var(--c-bg);
+  border-radius: var(--r-control);
+}
+.create__flow-steps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  color: var(--c-text);
+}
+.create__flow-step {
+  padding: 1px 8px;
+  background: var(--c-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-mark);
+}
+.create__flow-arrow {
+  color: var(--c-text-3);
+}
+.create__flow-hint {
+  margin: 8px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+}
+.create__flow-hint a {
+  color: var(--brand);
+  text-decoration: none;
 }
 </style>

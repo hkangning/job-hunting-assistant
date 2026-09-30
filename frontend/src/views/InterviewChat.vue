@@ -19,7 +19,8 @@ import {
   applyDelta,
   buildMessages,
   insertSkipped,
-  sealStreaming
+  sealStreaming,
+  stageProgress
 } from '../utils/interviewStream'
 import InterviewMessages from '../components/interview/InterviewMessages.vue'
 
@@ -58,6 +59,21 @@ const currentSeq = computed(() => {
 })
 
 const isFinished = computed(() => tail.value === 'finished' || session.value?.status === 'FINISHED')
+
+/** 进度（当前题号 / 题量），供页头进度条。 */
+const progressPct = computed(() => {
+  const total = session.value?.question_count || 0
+  return total ? Math.min(100, Math.round((currentSeq.value / total) * 100)) : 0
+})
+
+/**
+ * 面试阶段（自我介绍 / 技术问答 / 项目深挖）——计划表 `stages` 由后端随会话下发。
+ * 后端未落地该字段时 `stageInfo` 为 null，页头降级为「第 N/M 题」（不显示阶段标签）。
+ */
+const stageInfo = computed(() => stageProgress(session.value?.stages, currentSeq.value))
+
+/** 作答过至少一条（含跳过）——「结束本场」的可用条件（总结要求 ≥1 条已完成问答）。 */
+const hasAnswer = computed(() => messages.value.some((m) => m.kind === 'answer'))
 
 const canSubmit = computed(
   () => !streaming.value && !isFinished.value && input.value.trim().length > 0
@@ -170,6 +186,14 @@ function backToList() {
 }
 
 /**
+ * 去回看页。总结的生成与会话置 FINISHED 都在回看页完成（单一入口）：
+ * 「结束本场」与完成态的「查看总结报告」都只是跳转，不在本页发起请求。
+ */
+function goReview() {
+  router.push(`/interview/${sessionId}/review`)
+}
+
+/**
  * 粘性底部：只跟随、不拉扯。
  *
  * `stick` = 用户是否处在底部附近——内容变化（流式 delta、**打字机逐字增长**）时
@@ -219,14 +243,22 @@ onUnmounted(() => {
 <template>
   <section class="chat">
     <header class="chat__head">
-      <el-button link :icon="Back" @click="backToList">返回列表</el-button>
+      <el-button link :icon="Back" class="chat__back" @click="backToList">返回列表</el-button>
       <span class="chat__title">
         {{ session ? `${session.company} · ${session.position}` : '加载中…' }}
       </span>
       <span v-if="session" class="chat__dir">{{ directionText }}</span>
-      <span v-if="session" class="chat__progress">
-        第 {{ currentSeq }}/{{ session.question_count }} 题
-      </span>
+      <span v-if="stageInfo" class="chat__stage">{{ stageInfo.label }}</span>
+      <div v-if="session" class="chat__progress">
+        <span class="chat__progress-text">
+          {{
+            stageInfo
+              ? `第 ${stageInfo.index}/${stageInfo.count} 题`
+              : `第 ${currentSeq}/${session.question_count} 题`
+          }}
+        </span>
+        <span class="chat__progress-bar"><i :style="{ width: progressPct + '%' }" /></span>
+      </div>
     </header>
 
     <div ref="scroller" v-loading="loading" class="chat__stream" @scroll.passive="onStreamScroll">
@@ -272,6 +304,24 @@ onUnmounted(() => {
         />
         <div class="chat__actions">
           <el-popconfirm
+            title="结束本场并生成总结报告？已作答的题目会保留"
+            confirm-button-text="确认结束"
+            cancel-button-text="继续作答"
+            width="260"
+            @confirm="goReview"
+          >
+            <template #reference>
+              <el-button
+                link
+                class="chat__finish"
+                :disabled="streaming || !hasAnswer"
+                title="提前结束本场面试，生成总结报告"
+              >
+                结束本场
+              </el-button>
+            </template>
+          </el-popconfirm>
+          <el-popconfirm
             title="跳过本题？不计分，直接进入下一题"
             confirm-button-text="跳过"
             cancel-button-text="取消"
@@ -292,10 +342,11 @@ onUnmounted(() => {
     <div v-else class="chat__done">
       <el-icon class="chat__done-icon"><CircleCheck /></el-icon>
       <div class="chat__done-text">
-        <p class="chat__done-title">本场面试已完成 · 共 {{ session?.question_count }} 题</p>
-        <p class="chat__done-sub">本场记录已保存，可随时回到列表查看</p>
+        <p class="chat__done-title">本场面试已完成</p>
+        <p class="chat__done-sub">共 {{ session?.question_count }} 题 · 本场记录已保存</p>
       </div>
-      <el-button type="primary" @click="backToList">返回列表</el-button>
+      <el-button type="primary" @click="goReview">查看总结报告</el-button>
+      <el-button @click="backToList">返回列表</el-button>
     </div>
   </section>
 </template>
@@ -318,11 +369,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px var(--card-padding);
+  padding: 13px var(--card-padding);
   border-bottom: 1px solid var(--c-divider);
+  /* 页头一层模块色微渐变：和「面试进行中」的状态呼应，不做其他装饰 */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--m-interview) 6%, var(--c-card)),
+    var(--c-card) 90%
+  );
 }
 .chat__title {
-  font-size: var(--fs-body);
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--c-text);
   overflow: hidden;
@@ -337,12 +394,42 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--m-interview) 12%, var(--c-card));
   border-radius: var(--r-mark);
 }
+/* 阶段标签：与方向标签区分——阶段是「流程位置」，用主色；方向是「面试范围」，用模块色 */
+.chat__stage {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 10%, var(--c-card));
+  border-radius: var(--r-mark);
+}
 .chat__progress {
   margin-left: auto;
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chat__progress-text {
   font-size: var(--fs-sm);
   color: var(--c-text-2);
   font-variant-numeric: tabular-nums;
+}
+/* 进度条：一眼知道「还有几题」，比纯数字更有推进感 */
+.chat__progress-bar {
+  width: 110px;
+  height: 4px;
+  border-radius: var(--r-bar);
+  background: var(--c-divider);
+  overflow: hidden;
+}
+.chat__progress-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-bar);
+  background: var(--m-interview);
+  transition: width 0.3s ease;
 }
 
 .chat__stream {
@@ -374,8 +461,18 @@ onUnmounted(() => {
 .chat__actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
+}
+/* 「结束本场」推到最左并弱化：低频且有代价的动作，别和「提交」抢注意力 */
+.chat__finish.el-button {
+  margin-right: auto;
+  color: var(--c-text-3);
+  font-size: var(--fs-sm);
+}
+.chat__finish.el-button:hover:not(.is-disabled) {
+  color: var(--c-text-2);
 }
 .chat__preparing {
   margin: 0;
@@ -383,17 +480,22 @@ onUnmounted(() => {
   font-size: var(--fs-sm);
   color: var(--c-text-2);
 }
-/* 完成卡：让「答满」有完成感与出口，而不只是一行灰字 */
+/* 完成卡：答满后的落点——完成感 + 明确的下一步（总结报告），而不只是一行灰字 */
 .chat__done {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px var(--card-padding);
+  gap: 14px;
+  padding: 18px var(--card-padding);
   border-top: 1px solid var(--c-divider);
+  background: linear-gradient(
+    180deg,
+    var(--c-card),
+    color-mix(in srgb, var(--m-interview) 7%, var(--c-card))
+  );
 }
 .chat__done-icon {
-  font-size: 26px;
-  color: var(--m-practice);
+  font-size: 30px;
+  color: var(--m-interview);
 }
 .chat__done-text {
   flex: 1;
@@ -401,7 +503,7 @@ onUnmounted(() => {
 }
 .chat__done-title {
   margin: 0;
-  font-size: var(--fs-body);
+  font-size: var(--fs-title);
   font-weight: 600;
   color: var(--c-text);
 }

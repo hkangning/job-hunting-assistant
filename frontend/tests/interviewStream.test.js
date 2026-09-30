@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildMessages, applyDelta, appendAnswer, insertSkipped, sealStreaming
+  buildMessages, applyDelta, appendAnswer, insertSkipped, sealStreaming, splitReview, stageProgress
 } from '../src/utils/interviewStream.js'
 
 // ---------------- buildMessages：qa_list 展开 ----------------
@@ -145,4 +145,72 @@ test('appendAnswer / insertSkipped：两种作答消息形态', () => {
   insertSkipped(messages)
   assert.deepEqual(messages[0], { kind: 'answer', text: '我的作答', skipped: false })
   assert.deepEqual(messages[1], { kind: 'answer', text: '', skipped: true })
+})
+
+// ---------------- splitReview：点评正文分段 ----------------
+
+test('splitReview：标准三节解析为 亮点 / 不足 / 参考要点', () => {
+  const parts = splitReview(
+    '亮点：说清了线程私有区域。\n不足：没提直接内存。\n参考要点：线程私有 —— 程序计数器、虚拟机栈；共享 —— 堆、方法区。'
+  )
+  assert.deepEqual(parts, [
+    { kind: 'good', label: '亮点', text: '说清了线程私有区域。' },
+    { kind: 'bad', label: '不足', text: '没提直接内存。' },
+    { kind: 'note', label: '参考要点', text: '线程私有 —— 程序计数器、虚拟机栈；共享 —— 堆、方法区。' }
+  ])
+})
+
+test('splitReview：容忍 `- ` 前缀、半角冒号与「参考答案」措辞', () => {
+  const parts = splitReview('- 亮点: 有个好细节\n- 参考答案: 骨架如下')
+  assert.equal(parts[0].kind, 'good')
+  assert.equal(parts[0].text, '有个好细节')
+  assert.equal(parts[1].label, '参考要点')
+  assert.equal(parts[1].text, '骨架如下')
+})
+
+test('splitReview：无前缀的续行并入上一段（长段落换行不断段）', () => {
+  const parts = splitReview('- 不足：没有提到直接内存，\n它在 NIO 场景下很关键。\n- 参考要点：略。')
+  assert.equal(parts.length, 2)
+  assert.equal(parts[0].text, '没有提到直接内存，\n它在 NIO 场景下很关键。')
+})
+
+test('splitReview：无结构文本原样返回单段（含段内空行）', () => {
+  const parts = splitReview('这是一段没有分节的点评。\n\n第二段。')
+  assert.deepEqual(parts, [{ kind: 'plain', label: null, text: '这是一段没有分节的点评。\n\n第二段。' }])
+})
+
+test('splitReview：总结报告的「建议」归指导类（note）', () => {
+  const parts = splitReview('- 建议：补 JVM 第 2、3 章。')
+  assert.deepEqual(parts, [{ kind: 'note', label: '建议', text: '补 JVM 第 2、3 章。' }])
+})
+
+// ---------------- stageProgress：面试阶段进度 ----------------
+
+const STAGES = [
+  { stage: 'INTRO', count: 1 },
+  { stage: 'TECH', count: 5 },
+  { stage: 'PROJECT', count: 2 }
+]
+
+test('stageProgress：按题号定位阶段与阶段内进度', () => {
+  assert.deepEqual(stageProgress(STAGES, 1), { stage: 'INTRO', label: '自我介绍', index: 1, count: 1 })
+  assert.deepEqual(stageProgress(STAGES, 2), { stage: 'TECH', label: '技术问答', index: 1, count: 5 })
+  assert.deepEqual(stageProgress(STAGES, 6), { stage: 'TECH', label: '技术问答', index: 5, count: 5 })
+  assert.deepEqual(stageProgress(STAGES, 7), { stage: 'PROJECT', label: '项目深挖', index: 1, count: 2 })
+})
+
+test('stageProgress：无简历的计划（不含项目段）', () => {
+  const plan = [
+    { stage: 'INTRO', count: 1 },
+    { stage: 'TECH', count: 7 }
+  ]
+  assert.equal(stageProgress(plan, 5).index, 4)
+  assert.equal(stageProgress(plan, 8).stage, 'TECH')
+})
+
+test('stageProgress：越界与无计划返回 null（调用方降级为「第 N/M 题」）', () => {
+  assert.equal(stageProgress(STAGES, 9), null)
+  assert.equal(stageProgress(STAGES, 0), null)
+  assert.equal(stageProgress(null, 3), null)
+  assert.equal(stageProgress([], 3), null)
 })

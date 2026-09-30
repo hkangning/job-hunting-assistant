@@ -2,8 +2,8 @@
 /**
  * 模拟面试列表（FR-007 / 开发计划步骤 15；接口文档 v1.33 §3.7）。
  *
- * 列表只做两件事：把会话呈现出来、把用户送进进行页。回看属步骤 16，
- * 已结束的会话此处**只标状态、不给入口**（不做假入口）。
+ * 两种状态的出口：**进行中** → 进行页继续作答；**已结束** → 回看页（总结报告 + 完整回顾，
+ * 步骤 16 前端部分）。整卡可点击，右侧按钮跟随状态。
  *
  * 进行中的会话显示 `qa_count/question_count` 进度（接口文档 v1.32 列表项字段，
  * 含尚未作答的当前题——即「问到第几题」，与进行页页头同一口径）。
@@ -82,9 +82,10 @@ function changePage(value) {
   load()
 }
 
+/** 进行中 → 进行页；已结束 → 回看页（两种状态都有出口）。 */
 function openSession(item) {
-  if (item.status !== 'ACTIVE') return
-  router.push(`/interview/${item.id}`)
+  if (item.status === 'ACTIVE') router.push(`/interview/${item.id}`)
+  else router.push(`/interview/${item.id}/review`)
 }
 
 function onCreated(session) {
@@ -134,7 +135,6 @@ onMounted(() => {
           v-for="item in items"
           :key="item.id"
           class="interview__item"
-          :class="{ 'interview__item--active': item.status === 'ACTIVE' }"
           @click="openSession(item)"
         >
           <div class="interview__main">
@@ -142,17 +142,26 @@ onMounted(() => {
             <div class="interview__meta">
               <span class="interview__dir">{{ directionLabel(item) }}</span>
               <span>{{ countText(item) }}</span>
+              <span v-if="item.summary" class="interview__summary-mark">已生成总结</span>
               <span>{{ shortDateTime(item.created_at) }}</span>
             </div>
           </div>
 
-          <template v-if="item.status === 'ACTIVE'">
-            <span class="interview__badge">进行中</span>
-            <el-button type="primary" plain @click.stop="openSession(item)">继续面试</el-button>
-          </template>
-          <el-tooltip v-else content="回看功能后续提供" placement="top">
-            <span class="interview__badge interview__badge--done">已结束</span>
-          </el-tooltip>
+          <span
+            class="interview__badge"
+            :class="{ 'interview__badge--done': item.status !== 'ACTIVE' }"
+          >
+            {{ item.status === 'ACTIVE' ? '进行中' : '已结束' }}
+          </span>
+          <el-button
+            v-if="item.status === 'ACTIVE'"
+            type="primary"
+            plain
+            @click.stop="openSession(item)"
+          >
+            继续面试
+          </el-button>
+          <el-button v-else plain @click.stop="openSession(item)">查看回顾</el-button>
         </li>
       </ul>
 
@@ -228,12 +237,10 @@ onMounted(() => {
   padding: 12px 14px;
   border: 1px solid var(--c-border);
   border-radius: var(--r-control);
+  cursor: pointer;
   transition: border-color 0.15s;
 }
-.interview__item--active {
-  cursor: pointer;
-}
-.interview__item--active:hover {
+.interview__item:hover {
   border-color: var(--m-interview);
 }
 .interview__main {
@@ -264,11 +271,18 @@ onMounted(() => {
 }
 .interview__badge {
   flex: 0 0 auto;
+  padding: 1px 8px;
   font-size: var(--fs-xs);
   color: var(--m-interview);
+  background: color-mix(in srgb, var(--m-interview) 12%, var(--c-card));
+  border-radius: var(--r-mark);
 }
 .interview__badge--done {
   color: var(--c-text-3);
+  background: var(--c-bg);
+}
+.interview__summary-mark {
+  color: var(--m-interview);
 }
 
 .interview__pager {

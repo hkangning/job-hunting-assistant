@@ -80,3 +80,68 @@ export function insertSkipped(messages) {
 export function sealStreaming(messages) {
   for (const m of messages) if (m.streaming) m.streaming = false
 }
+
+/**
+ * 点评 / 总结正文分段（渲染用）：把「亮点 / 不足 / 参考要点（建议）」解析成可着色的段落。
+ *
+ * prompt 固定了这些节的输出格式（`- ` 开头 + 中文冒号），但模型输出会有偏差——
+ * 容忍无 `- ` 前缀与全/半角冒号；认不出前缀的行**并入上一段**（长段落换行不断段）；
+ * 整段都没有结构时按普通文本返回（渲染层原样显示，不丢内容）。
+ * 总结报告复用同一套规则（「建议」归指导类，与「参考要点」同色）。
+ */
+const REVIEW_SECTIONS = [
+  { pattern: /^亮点\s*[：:]/, kind: 'good', label: '亮点' },
+  { pattern: /^不足\s*[：:]/, kind: 'bad', label: '不足' },
+  { pattern: /^参考(?:要点|答案)\s*[：:]/, kind: 'note', label: '参考要点' },
+  { pattern: /^建议\s*[：:]/, kind: 'note', label: '建议' }
+]
+
+export function splitReview(text) {
+  const parts = []
+  for (const raw of String(text ?? '').split('\n')) {
+    const line = raw.trim()
+    if (!line) {
+      // 空行只在普通文本段内保留（结构段的空行由分段本身表达）
+      if (parts.length && parts[parts.length - 1].kind === 'plain') parts[parts.length - 1].text += '\n'
+      continue
+    }
+    const body = line.replace(/^[-•]\s*/, '')
+    const hit = REVIEW_SECTIONS.find((s) => s.pattern.test(body))
+    if (hit) {
+      parts.push({ kind: hit.kind, label: hit.label, text: body.replace(hit.pattern, '').trim() })
+    } else if (parts.length) {
+      parts[parts.length - 1].text += '\n' + body
+    } else {
+      parts.push({ kind: 'plain', label: null, text: body })
+    }
+  }
+  return parts
+}
+
+/** 面试阶段的中文名（`stages` 里给的是枚举值）。 */
+export const STAGE_LABELS = { INTRO: '自我介绍', TECH: '技术问答', PROJECT: '项目深挖' }
+
+/**
+ * 阶段进度：给定题号返回所处阶段与阶段内进度；**越界 / 无计划返回 null**。
+ *
+ * 阶段计划 `stages = [{stage, count}]` 由后端随会话下发——分配算法（自我介绍 1 题、
+ * 项目深挖按简历题量折算等）留在后端，前端不复刻；后端未落地该字段时调用方
+ * 降级为「第 N/M 题」（本函数返回 null）。
+ */
+export function stageProgress(stages, seq) {
+  if (!Array.isArray(stages) || !seq) return null
+  let start = 0
+  for (const item of stages) {
+    const count = item?.count || 0
+    if (seq > start && seq <= start + count) {
+      return {
+        stage: item.stage,
+        label: STAGE_LABELS[item.stage] || item.stage,
+        index: seq - start,
+        count
+      }
+    }
+    start += count
+  }
+  return null
+}

@@ -26,3 +26,11 @@ export function getInterviewSession(id) {
 export function interviewChatStream(payload, handlers, options) {
   return streamSSE('/stream/interview-chat', payload, handlers, options)
 }
+
+/**
+ * 生成 / 获取本场总结（SSE）。payload: { session_id }
+ * `delta` 仅 section=`summary`；done 时会话置 FINISHED；重复调用返回已有 summary。
+ */
+export function interviewSummaryStream(payload, handlers, options) {
+  return streamSSE('/stream/interview-summary', payload, handlers, options)
+}

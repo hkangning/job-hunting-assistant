@@ -6,10 +6,12 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Upload } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { changePasswordApi } from '../api/auth'
-import { getProfileApi, updateProfileApi } from '../api/profile'
+import { getProfileApi, parseResumeApi, updateProfileApi } from '../api/profile'
 import { getOverviewApi } from '../api/overview'
+import { APPLICATION_STATUSES } from '../constants/application'
 import { compressTo256 } from '../utils/avatar'
 
 const ROLE_LABEL = { ADMIN: '管理员', USER: '普通用户' }
@@ -22,6 +24,7 @@ const avatarUploading = ref(false)
 const savingAccount = ref(false)
 
 const stats = ref(null)
+const appStats = ref(null) // 投递五状态计数（概览接口的 application_stats）
 const profile = reactive({
   name: '', school: '', major: '', degree: '', gpa: '', english_level: '', resume_text: '',
   target_position: '', target_city: '', skills: '', weaknesses: '', note: ''
@@ -47,6 +50,19 @@ onMounted(async () => {
   Object.assign(profile, await getProfileApi().catch(() => ({})))
   const overview = await getOverviewApi().catch(() => null)
   stats.value = overview?.stats || null
+  appStats.value = overview?.application_stats || null
+})
+
+/** 投递进展：非零状态的分段（宽 = 占比）——与投递页统计条同一视觉语言。 */
+const appSegments = computed(() => {
+  const counts = appStats.value || {}
+  const total = Object.values(counts).reduce((sum, n) => sum + (n || 0), 0)
+  if (!total) return []
+  return APPLICATION_STATUSES.filter((s) => (counts[s.value] || 0) > 0).map((s) => ({
+    ...s,
+    count: counts[s.value],
+    percent: (counts[s.value] / total) * 100
+  }))
 })
 
 // ---------- 账号信息 ----------
@@ -131,6 +147,60 @@ async function savePassword() {
 
 // ---------- 求职画像 ----------
 
+const resumeParsing = ref(false)
+const RESUME_EXTS = ['.pdf', '.docx']
+const RESUME_MAX_MB = 10
+
+/** 上传简历：解析后**填入表单**（不直接落库），用户核对修改后自行保存。 */
+async function onPickResume(uploadFile) {
+  const raw = uploadFile?.raw
+  if (!raw) return
+  const name = (raw.name || '').toLowerCase()
+  if (!RESUME_EXTS.some((ext) => name.endsWith(ext))) {
+    ElMessage.warning('仅支持 PDF 或 Word（.docx）格式')
+    return
+  }
+  if (raw.size > RESUME_MAX_MB * 1024 * 1024) {
+    ElMessage.warning(`文件不能超过 ${RESUME_MAX_MB}MB`)
+    return
+  }
+  resumeParsing.value = true
+  try {
+    const data = await parseResumeApi(raw)
+    const filled = applyResume(data)
+    ElMessage.success(
+      filled > 1 ? `已从简历解析并填入 ${filled} 项，请核对修改后保存` : '已填入简历内容，请核对修改后保存'
+    )
+  } catch (error) {
+    // 只透出可操作的两种：未配 Key 与通用失败——后端 message 在此场景可能误导
+    ElMessage.error(
+      error?.code === 10012 ? '未配置 AI 密钥，请前往 AI 配置页配置后重试' : '简历解析失败，请稍后重试'
+    )
+  } finally {
+    resumeParsing.value = false
+  }
+}
+
+/**
+ * 解析结果 → 表单：只填「有值」的字段（不动其他项，用户已填的不被空值覆盖）。
+ * `extracted` 为 null（LLM 未提取，如未配 Key）时只填简历全文——部分成功也是成功。
+ */
+function applyResume(data) {
+  if (!data) return 0
+  let filled = 0
+  const fill = (key, value) => {
+    if (!value) return
+    profile[key] = Array.isArray(value) ? value.join(',') : value
+    filled += 1
+  }
+  fill('resume_text', data.resume_text)
+  const extracted = data.extracted || {}
+  for (const key of ['name', 'school', 'major', 'degree', 'gpa', 'english_level', 'skills']) {
+    fill(key, extracted[key])
+  }
+  return filled
+}
+
 async function saveProfile() {
   savingProfile.value = true
   try {
@@ -196,19 +266,43 @@ async function saveProfile() {
       <el-card shadow="never" class="profile__card">
         <h3 class="profile__title dot-title">数据概览</h3>
         <div class="stats">
-          <div class="stats__item">
+          <div class="stats__item" @click="router.push('/applications')">
             <span class="stats__num">{{ stats ? stats.application_count : '—' }}</span>
             <span class="stats__label">投递</span>
           </div>
-          <div class="stats__item">
+          <div class="stats__item" @click="router.push('/wrong-questions')">
             <span class="stats__num">{{ stats ? stats.wrong_question_count : '—' }}</span>
             <span class="stats__label">错题</span>
           </div>
-          <div class="stats__item">
+          <div class="stats__item" @click="router.push('/interview')">
             <span class="stats__num">{{ stats ? stats.interview_count : '—' }}</span>
             <span class="stats__label">面试</span>
           </div>
         </div>
+
+        <!-- 投递进展：五个状态的分布——比三个总数更有信息量，也让卡片不再空半截 -->
+        <div v-if="appSegments.length" class="board">
+          <div class="board__head">
+            <span class="board__title">投递进展</span>
+            <span class="board__total">共 {{ stats?.application_count ?? 0 }} 条</span>
+          </div>
+          <div class="board__bar">
+            <div
+              v-for="seg in appSegments"
+              :key="seg.value"
+              class="board__seg"
+              :style="{ width: seg.percent + '%', background: seg.color }"
+              :title="`${seg.label} ${seg.count} 条`"
+            />
+          </div>
+          <div class="board__legend">
+            <span v-for="seg in appSegments" :key="seg.value" class="board__legend-item">
+              <span class="board__dot" :style="{ background: seg.color }" />{{ seg.label }}
+              <b>{{ seg.count }}</b>
+            </span>
+          </div>
+        </div>
+        <p v-else class="board__empty">还没有投递记录——去投递管理记一笔吧</p>
       </el-card>
 
       <!-- 修改密码 -->
@@ -240,6 +334,27 @@ async function saveProfile() {
     <!-- 求职画像 -->
     <el-card shadow="never" class="profile__card">
       <h3 class="profile__title dot-title">求职画像</h3>
+
+      <!-- 上传简历：解析结果只填入表单，核对修改后由用户自行保存 -->
+      <div class="resume">
+        <el-upload
+          :auto-upload="false"
+          :show-file-list="false"
+          accept=".pdf,.docx"
+          :on-change="onPickResume"
+        >
+          <el-button type="primary" plain :icon="Upload" :loading="resumeParsing">
+            {{ resumeParsing ? '解析中…' : '上传简历' }}
+          </el-button>
+        </el-upload>
+        <div class="resume__text">
+          <p class="resume__title">上传简历，自动填充下方画像</p>
+          <p class="resume__hint">
+            支持 PDF / Word（≤10MB）——解析结果填入表单，核对修改后保存；面试的「项目深挖」环节会依据简历出题
+          </p>
+        </div>
+      </div>
+
       <el-form :model="profile" label-width="82px" @submit.prevent="saveProfile">
         <div class="profile__form-grid">
           <el-form-item label="姓名"><el-input v-model="profile.name" /></el-form-item>
@@ -313,6 +428,32 @@ async function saveProfile() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0 18px;
+}
+
+/* 上传简历：画像卡的引导条——低干扰但一眼可见 */
+.resume {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: var(--c-bg);
+  border-radius: var(--r-control);
+}
+.resume__text {
+  flex: 1;
+  min-width: 0;
+}
+.resume__title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text);
+}
+.resume__hint {
+  margin: 3px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
 }
 
 /* 账号信息卡 */
@@ -391,6 +532,11 @@ async function saveProfile() {
   padding: 12px 0;
   background: var(--c-bg);
   border-radius: var(--r-control);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.stats__item:hover {
+  background: var(--c-divider);
 }
 .stats__num {
   font-size: 22px;
@@ -400,5 +546,64 @@ async function saveProfile() {
 .stats__label {
   font-size: var(--fs-xs);
   color: var(--c-text-2);
+}
+
+/* 投递进展：与投递页统计条同一视觉语言（堆叠条 + 圆点图例） */
+.board {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-divider);
+}
+.board__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.board__title {
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+}
+.board__total {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.board__bar {
+  display: flex;
+  height: 6px;
+  border-radius: var(--r-bar);
+  overflow: hidden;
+  background: var(--c-divider);
+}
+.board__seg {
+  height: 100%;
+  transition: width 0.25s ease;
+}
+.board__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+}
+.board__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+}
+.board__legend-item b {
+  color: var(--c-text);
+}
+.board__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.board__empty {
+  margin: 12px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
 }
 </style>
