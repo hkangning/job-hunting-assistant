@@ -117,6 +117,19 @@ const routes = [
     meta: { title: '面经整理', group: '能力提升', color: 'var(--m-experience)' }
   },
   {
+    // 详情页（步骤 17）：原文 + 结构化条目；`?item=<id>` 从检索结果跳转定位、`?extract=1` 自动提取
+    path: '/experiences/:id',
+    name: 'ExperienceDetail',
+    component: () => import('../views/ExperienceDetail.vue'),
+    meta: {
+      title: '面经详情',
+      group: '能力提升',
+      color: 'var(--m-experience)',
+      hidden: true,
+      activeMenu: '/experiences'
+    }
+  },
+  {
     // 设置迁入右上角用户菜单，不进侧栏（设计文档 v1.5 §4.4）
     path: '/settings',
     name: 'Settings',
