@@ -77,7 +77,7 @@ class UserProfile(Base):
     degree: Mapped[str | None] = mapped_column(String(20))  # 学历（本科/硕士）
     gpa: Mapped[str | None] = mapped_column(String(20))  # GPA 文本
     english_level: Mapped[str | None] = mapped_column(String(50))  # 英语水平（如 CET-6 441）
-    resume_text: Mapped[str | None] = mapped_column(Text)  # 简历全文（JD 分析核心输入）
+    experiences: Mapped[str | None] = mapped_column(Text)  # 结构化经历条目（JSON 数组，元素含 type/title/org/role/period/description；JD 分析与面试项目深挖的核心输入）
     target_position: Mapped[str | None] = mapped_column(String(100))  # 目标岗位
     target_city: Mapped[str | None] = mapped_column(String(50))  # 目标城市
     skills: Mapped[str | None] = mapped_column(Text)  # 技能栈标签（逗号分隔）

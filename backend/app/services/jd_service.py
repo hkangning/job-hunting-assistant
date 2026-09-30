@@ -39,6 +39,25 @@ def ensure_application(db: Session, user_id: int, application_id: int | None) ->
         raise BizException(ErrorCode.NOT_FOUND, "投递记录不存在")
 
 
+def resolve_jd_text(db: Session, user_id: int, jd_text: str | None, application_id: int | None) -> str:
+    """确定本次分析的 JD 原文（接口文档 3.6）:显式传入优先，其次取关联投递已填的岗位 JD；两者都取不到返回 10001。
+
+    调用前须先 `ensure_application` 完成归属校验，避免把「投递不存在」与「投递没填 JD」混为一谈。
+    """
+    text = (jd_text or "").strip()
+    if text:
+        return text
+    if application_id is not None:
+        stored = db.scalar(
+            select(Application.jd_text).where(
+                Application.id == application_id, Application.user_id == user_id
+            )
+        )
+        if stored and stored.strip():
+            return stored.strip()
+    raise BizException(ErrorCode.PARAM_INVALID, "未提供 JD 原文：请粘贴 JD，或选择已填写岗位 JD 的投递记录")
+
+
 def extract_score(report_text: str) -> int | None:
     """从报告全文提取综合匹配度（TC-20 口径）；未按格式输出或越界时为 null，不算失败。"""
     match = _SCORE_PATTERN.search(report_text)

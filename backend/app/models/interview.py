@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
-from app.models.enums import Direction, InterviewStage, SessionStatus
+from app.models.enums import Direction, InterviewIntensity, InterviewStage, SessionStatus
 
 
 class InterviewSession(Base):
@@ -27,6 +27,9 @@ class InterviewSession(Base):
         String(20), default=Direction.GENERAL
     )  # 面试方向，枚举 Direction
     question_count: Mapped[int] = mapped_column(Integer, default=8)  # 计划题量（3~15）
+    intensity: Mapped[str | None] = mapped_column(
+        String(20), default=InterviewIntensity.MEDIUM
+    )  # 面试强度，枚举 InterviewIntensity（存量会话为空，接口按 MEDIUM 兜底）
     stage_plan: Mapped[str | None] = mapped_column(Text)  # 阶段计划 JSON：[{stage, count}]，老会话为空
     status: Mapped[str] = mapped_column(
         String(20), default=SessionStatus.ACTIVE

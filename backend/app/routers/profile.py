@@ -45,8 +45,8 @@ async def parse_resume(
 ) -> ApiResponse[ResumeParseData]:
     """解析简历并抽取画像字段（**纯解析不落库**）：格式 / 体积 / 可解析性不符返回 10001。
 
-    返回 `{resume_text, extracted}`——用户核对修改后经 PUT /profile 保存；AI 未配 Key 或抽取
-    失败时 `extracted` 为 null、简历全文仍正常返回（前端此时只回填全文）。
+    返回 `{extracted}`（含结构化经历条目）——用户核对修改后经 PUT /profile 保存；AI 未配 Key
+    或抽取失败时 `extracted` 为 null（不报错，前端提示手填画像）。
     """
     content = await file.read()
     return ApiResponse[ResumeParseData](

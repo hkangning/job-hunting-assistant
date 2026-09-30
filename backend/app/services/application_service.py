@@ -68,6 +68,7 @@ CLOSE_REASON_LABELS: dict[CloseReason, str] = {
 IMPORT_HEADER_LABELS: dict[str, str] = {
     "公司": "company",
     "岗位": "position",
+    "岗位JD": "jd_text",
     "城市": "city",
     "投递日期": "applied_at",
     "渠道": "channel",
@@ -79,7 +80,10 @@ STATUS_BY_LABEL: dict[str, ApplicationStatus] = {label: status for status, label
 REQUIRED_HEADERS = ("company", "position")
 # 模板示例行：首列带标记，导入时按标记跳过，避免示例数据被误当记录导入
 TEMPLATE_SAMPLE_FLAG = "【示例】"
-TEMPLATE_SAMPLE_ROW = ("【示例】某某科技", "Java 后端开发", "南京", "2026-09-01", "官网", "已投递", "示例行，导入时自动跳过")
+TEMPLATE_SAMPLE_ROW = (
+    "【示例】某某科技", "Java 后端开发", "岗位 JD 原文粘贴在此列（可选填）",
+    "南京", "2026-09-01", "官网", "已投递", "示例行，导入时自动跳过",
+)
 IMPORTABLE_SUFFIXES = (".xlsx", ".csv")
 MAX_IMPORT_BYTES = 2 * 1024 * 1024  # 上传文件上限 2MB（接口文档 3.3）
 
@@ -154,6 +158,7 @@ def create_application(db: Session, user_id: int, payload: ApplicationCreate) ->
         user_id=user_id,
         company=payload.company,
         position=payload.position,
+        jd_text=payload.jd_text,
         city=payload.city,
         expected_salary=payload.expected_salary,
         applied_at=to_datetime(payload.applied_at or date.today()),
@@ -185,6 +190,7 @@ def update_application(
         raise BizException(ErrorCode.PARAM_INVALID, "仅已结束的投递可修改结束原因")
     app.company = payload.company
     app.position = payload.position
+    app.jd_text = payload.jd_text
     app.city = payload.city
     app.expected_salary = payload.expected_salary
     app.applied_at = to_datetime(payload.applied_at or date.today())
@@ -411,6 +417,9 @@ def _validate_row(raw: dict[str, str]) -> str | None:
         if len(raw.get(field, "").strip()) > 50:
             return f"{label}超过 50 字"
 
+    if len(raw.get("jd_text", "").strip()) > 10000:
+        return "岗位JD超过 10000 字"
+
     applied_at = raw.get("applied_at", "").strip()
     if applied_at:
         try:
@@ -438,6 +447,7 @@ def _build_import_record(user_id: int, raw: dict[str, str]) -> Application:
         company=raw["company"].strip(),
         position=raw["position"].strip(),
         city=raw.get("city", "").strip() or None,
+        jd_text=raw.get("jd_text", "").strip() or None,
         applied_at=to_datetime(_parse_import_date(applied_at)) if applied_at else to_datetime(date.today()),
         channel=raw.get("channel", "").strip() or None,
         status=_parse_import_status(status) if status else ApplicationStatus.APPLIED,
@@ -477,6 +487,7 @@ def _to_dto(app: Application) -> ApplicationDTO:
         id=app.id,
         company=app.company,
         position=app.position,
+        jd_text=app.jd_text,
         city=app.city,
         expected_salary=app.expected_salary,
         applied_at=app.applied_at.date(),

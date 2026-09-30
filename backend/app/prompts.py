@@ -13,7 +13,14 @@
 
 import json
 
-from app.models import AttackFace, InterviewStage, QuestionType, UserProfile
+from app.models import (
+    AttackFace,
+    ExperienceType,
+    InterviewIntensity,
+    InterviewStage,
+    QuestionType,
+    UserProfile,
+)
 
 # JD 分析五段结构与对应 section（接口文档 3.6）：关键词命中即判定该段，与下方模板的标题文案一一对应
 JD_ANALYSIS_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -67,8 +74,44 @@ _PROFILE_LABELS: tuple[tuple[str, str], ...] = (
     ("weaknesses", "自述短板"),
 )
 
-# 简历全文截断上限（字符）：画像注入控制在 500 token 口径（系统设计 5.3），防超长简历拖慢首字
-RESUME_LIMIT = 2000
+# 画像经历渲染上限（字符）：JD 分析整份画像摘要控制在 500 token 口径（系统设计 5.3），防超长经历拖慢首字
+EXPERIENCE_JD_LIMIT = 2000
+
+# 画像经历类型的中文标签（渲染注入文本用）
+EXPERIENCE_TYPE_LABELS: dict[str, str] = {
+    ExperienceType.PROJECT.value: "项目",
+    ExperienceType.INTERNSHIP.value: "实习",
+    ExperienceType.CAMPUS.value: "校园",
+}
+
+
+def build_experience_digest(experiences: str | None, limit: int) -> str:
+    """把画像的结构化经历条目（落库 JSON 字符串）渲染成注入用文本（FR-006 / FR-007）。
+
+    解析失败 / 无有效条目返回空串；渲染结果按 `limit` 字符截断
+    （JD 分析 2000 字、面试项目深挖 4000 字，见系统设计 5.3）。
+    """
+    try:
+        items = json.loads(experiences) if experiences else []
+    except ValueError:
+        return ""
+    if not isinstance(items, list):
+        return ""
+    blocks: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        label = EXPERIENCE_TYPE_LABELS.get(str(item.get("type") or ""), "经历")
+        meta = " · ".join(
+            part for key in ("org", "role", "period") if (part := str(item.get(key) or "").strip())
+        )
+        head = f"[{label}] {title}" + (f"（{meta}）" if meta else "")
+        description = str(item.get("description") or "").strip()
+        blocks.append(f"{head}\n{description}" if description else head)
+    return "\n\n".join(blocks)[:limit].strip()
 
 
 def build_profile_digest(profile: UserProfile | None) -> str:
@@ -76,9 +119,11 @@ def build_profile_digest(profile: UserProfile | None) -> str:
     lines = [
         f"{label}：{value}" for field, label in _PROFILE_LABELS if (value := getattr(profile, field, None))
     ]
-    resume = (profile.resume_text or "").strip() if profile is not None else ""
-    if resume:
-        lines.append(f"简历全文：\n{resume[:RESUME_LIMIT]}")
+    experiences = build_experience_digest(
+        profile.experiences if profile is not None else None, limit=EXPERIENCE_JD_LIMIT
+    )
+    if experiences:
+        lines.append(f"经历条目（岗位匹配与面试提问的依据）：\n{experiences}")
     if not lines:
         return "（求职者尚未填写画像；请基于 JD 本身给出通用分析，并提示其补充画像可提升准确度。）"
     return "\n".join(lines)
@@ -422,7 +467,7 @@ INTERVIEW_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 INTERVIEW_JD_LIMIT = 3000  # JD 原文注入上限（字符）：够贴合岗位要求，同时控制 prefill 长度
-INTERVIEW_RESUME_LIMIT = 4000  # 简历注入上限（字符）：项目深挖阶段才注入，供模型抓项目细节
+INTERVIEW_EXPERIENCE_LIMIT = 4000  # 画像经历渲染上限（字符）：项目深挖阶段才注入，供模型抓经历细节
 
 # 阶段中文名（与前端 STAGE_LABELS 同口径）与各阶段指引：出题 / 点评 prompt 按阶段分派
 INTERVIEW_STAGE_LABELS: dict[str, str] = {
@@ -442,6 +487,27 @@ INTERVIEW_STAGE_REVIEW_HINTS: dict[str, str] = {
     InterviewStage.TECH.value: "技术题侧重关键点是否答到、原理是否讲透",
     InterviewStage.PROJECT.value: "项目题侧重细节与取舍——是不是真做过、有没有想过代价与边界",
 }
+
+# 面试强度中文名与考察口径（数据库设计 §5）：注入面试背景，校准出题深度与评分严格度
+INTERVIEW_INTENSITY_LABELS: dict[str, str] = {
+    InterviewIntensity.LARGE.value: "大厂",
+    InterviewIntensity.MEDIUM.value: "中厂",
+    InterviewIntensity.SMALL.value: "小厂",
+}
+
+INTERVIEW_INTENSITY_HINTS: dict[str, str] = {
+    InterviewIntensity.LARGE.value: "深挖原理与底层机制、追问系统设计与取舍、关注边界条件，评分从严",
+    InterviewIntensity.MEDIUM.value: "基础与常用框架原理并重、项目问真实细节，评分适中",
+    InterviewIntensity.SMALL.value: "重基础概念与实际落地，少问底层源码与复杂设计，评分以「能干活」为准",
+}
+
+
+def interview_intensity_note(intensity: str | None) -> str:
+    """面试强度行：本场强度 + 该档考察口径（存量会话 NULL 按中厂兜底）。"""
+    key = intensity or InterviewIntensity.MEDIUM.value
+    label = INTERVIEW_INTENSITY_LABELS.get(key, INTERVIEW_INTENSITY_LABELS[InterviewIntensity.MEDIUM.value])
+    hint = INTERVIEW_INTENSITY_HINTS.get(key, INTERVIEW_INTENSITY_HINTS[InterviewIntensity.MEDIUM.value])
+    return f"面试强度：{label}（{hint}）"
 
 
 def interview_stage_note(
@@ -634,16 +700,17 @@ RESUME_EXTRACT_SYSTEM = """你是信息抽取助手，从求职者简历原文�
 - 只抽取原文中明确写出的信息，缺失或拿不准的字段一律记 null，**不要编造、不要推测**；
 - school / major 用原文写法；degree 只取「本科」「硕士」「博士」三者之一；
 - gpa 保留原文写法（如 3.20/4.00 或 88/100）；english_level 取最高一项（如 CET-6 441）；
-- skills 从技能栏与项目经历中提取技术关键词数组，3~10 项，去重、去掉「学习能力强」这类非技术描述。"""
+- skills 从技能栏与项目经历中提取技术关键词数组，3~10 项，去重、去掉「学习能力强」这类非技术描述；
+- experiences 按原文分条提取项目 / 实习 / 校园经历，最多 10 条：type 只取 PROJECT（项目）/ INTERNSHIP（实习）/ CAMPUS（社团、竞赛、课程实践）之一，title 用原文的经历名称（必填，拿不到名称的条目整条舍弃），org / role / period / description 取原文内容、没有记 null，description 概括该经历的主要工作与成果（不超过 200 字）。"""
 
 
 def build_resume_extract_messages(resume_text: str) -> list[dict]:
-    """简历字段抽取：输出 `{"name","school","major","degree","gpa","english_level","skills"}`（缺失为 null）。"""
+    """简历字段抽取：输出画像字段 JSON（含 experiences 经历条目数组，缺失字段为 null）。"""
     user = f"""【简历原文】
 {resume_text[:RESUME_TEXT_LIMIT]}
 
 只输出一个 JSON 对象，不要包裹代码块、不要任何多余文字：
-{{"name": "姓名或 null", "school": "学校或 null", "major": "专业或 null", "degree": "学历或 null", "gpa": "GPA 文本或 null", "english_level": "英语水平或 null", "skills": ["技能关键词", "…"]}}
+{{"name": "姓名或 null", "school": "学校或 null", "major": "专业或 null", "degree": "学历或 null", "gpa": "GPA 文本或 null", "english_level": "英语水平或 null", "skills": ["技能关键词", "…"], "experiences": [{{"type": "PROJECT", "title": "经历名称", "org": "组织或 null", "role": "角色或 null", "period": "时间区间或 null", "description": "主要工作与成果，200 字内或 null"}}]}}
 """
     return [
         {"role": "system", "content": RESUME_EXTRACT_SYSTEM},

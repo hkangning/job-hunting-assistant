@@ -98,10 +98,11 @@ def jd_analysis_stream(
     客户端中途断开时，已生成的内容同样落库并标记为未完成（接口文档 3.6），前端重新发起即可再次分析。
     """
     user_id = current_user.id
-    jd_text = payload.jd_text
     application_id = payload.application_id
     # 关联投递的归属校验必须在流式响应建立之前完成（系统设计 5.1：入参校验先于流式建立）
     jd_service.ensure_application(db, user_id, application_id)
+    # JD 原文：显式传入优先，其次取关联投递已填的岗位 JD；两者都取不到返回 10001
+    jd_text = jd_service.resolve_jd_text(db, user_id, payload.jd_text, application_id)
     started = time.perf_counter()
 
     def _run(stream_db: Session) -> Iterator[str]:

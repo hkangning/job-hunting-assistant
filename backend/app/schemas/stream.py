@@ -15,7 +15,11 @@ class DemoChatRequest(BaseModel):
 class JdAnalysisRequest(BaseModel):
     """JD 匹配分析请求体（POST /stream/jd-analysis，接口文档 3.6）。"""
 
-    jd_text: str = Field(min_length=1, max_length=10000, description="JD 原文（1~10000 字），分析后作为快照随报告落库")
+    jd_text: str | None = Field(
+        default=None,
+        max_length=10000,
+        description="JD 原文（≤10000 字），可选；传 application_id 时省略则取该投递已填的岗位 JD，显式传入则覆盖；两者都取不到返回 10001",
+    )
     application_id: int | None = Field(default=None, description="关联的投递记录 id，可选；传入时须属当前账号，否则 10002")
 
 

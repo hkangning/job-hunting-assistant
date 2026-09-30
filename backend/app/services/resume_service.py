@@ -2,8 +2,8 @@
 
 **纯解析不落库**——解析结果回给前端填入表单，用户核对修改后走 `PUT /profile` 保存。
 
-AI 抽取失败（未配 Key / 调用失败 / 输出异常）**不报错**：仍返回简历全文、`extracted` 记 null
-（「部分成功也是成功」——报错会让用户连全文都拿不到）。文件本身解析失败或提取不到文字才报 10001。
+AI 抽取失败（未配 Key / 调用失败 / 输出异常）**不报错**：`extracted` 记 null、响应 200（前端提示
+手填画像，而不是整个上传失败）。文件本身解析失败或提取不到文字才报 10001。
 """
 
 import io
@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.clients.llm_client import LLMClient, resolve_config
 from app.exceptions import BizException, ErrorCode
+from app.models.enums import ExperienceType
 from app.prompts import build_resume_extract_messages
-from app.schemas.system import ResumeExtracted, ResumeParseData
+from app.schemas.system import ProfileExperience, ResumeExtracted, ResumeParseData
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ RESUME_EXTS = (".pdf", ".docx")
 _FIELD_LIMITS = {"name": 50, "school": 100, "major": 100, "degree": 20, "gpa": 20, "english_level": 50}
 _SKILL_LIMIT = 30  # 单个技能词长度上限
 _SKILLS_MAX = 20  # 技能项数上限（prompt 要求 3~10 项，此处放宽做兜底）
+_EXPERIENCE_LIMITS = {"title": 100, "org": 100, "role": 50, "period": 50, "description": 2000}
+_EXPERIENCE_MAX = 10  # 经历条数上限（与 ProfileUpdateRequest.experiences 一致，接口文档 3.12）
 
 
 def parse_resume(
@@ -49,10 +52,7 @@ def parse_resume(
     text = _tidy(text)
     if not text:
         raise BizException(ErrorCode.PARAM_INVALID, "未能从文件中提取到文字，若为扫描件 PDF 请改用文字版")
-    return ResumeParseData(
-        resume_text=text,
-        extracted=_extract_fields(db, user_id=user_id, text=text, client=client),
-    )
+    return ResumeParseData(extracted=_extract_fields(db, user_id=user_id, text=text, client=client))
 
 
 def _extract_pdf(content: bytes) -> str:
@@ -98,19 +98,19 @@ def _tidy(text: str) -> str:
 def _extract_fields(
     db: Session, *, user_id: int, text: str, client: LLMClient
 ) -> ResumeExtracted | None:
-    """AI 结构化抽取：任何失败（未配 Key / 调用失败 / 输出异常）都返回 null，不阻断全文返回。"""
+    """AI 结构化抽取：任何失败（未配 Key / 调用失败 / 输出异常）都返回 null，让前端提示手填。"""
     try:
         config = resolve_config(db, user_id)
         result = client.chat_json(config, build_resume_extract_messages(text))
     except Exception:
-        # 含未配 Key（10012）与模型输出异常（10011）：降级为「只给全文」，前端据此不填表单
-        logger.warning("简历字段抽取失败（账号 %s），降级为仅返回全文", user_id, exc_info=True)
+        # 含未配 Key（10012）与模型输出异常（10011）：降级为 extracted=null，前端提示手填画像
+        logger.warning("简历字段抽取失败（账号 %s），extracted 记 null", user_id, exc_info=True)
         return None
     return _clean(result)
 
 
 def _clean(result: dict) -> ResumeExtracted | None:
-    """字段清洗：按画像字段长度上限截断、skills 归一为去重字符串数组；全空时返回 null。"""
+    """字段清洗：按画像字段长度上限截断、skills 归一为去重字符串数组、经历条目按上限清洗；全空时返回 null。"""
     values: dict = {}
     for field, limit in _FIELD_LIMITS.items():
         values[field] = _as_text(result.get(field))[:limit] or None
@@ -122,9 +122,34 @@ def _clean(result: dict) -> ResumeExtracted | None:
             if name and name not in cleaned:
                 cleaned.append(name)
     values["skills"] = cleaned[:_SKILLS_MAX] or None
+    values["experiences"] = _clean_experiences(result.get("experiences"))
     if not any(values.values()):
         return None
     return ResumeExtracted(**values)
+
+
+def _clean_experiences(raw: object) -> list[ProfileExperience] | None:
+    """经历条目清洗：type 非法或 title 缺失的条目整条丢弃，字段按画像上限截断，最多 10 条。"""
+    if not isinstance(raw, list):
+        return None
+    cleaned: list[ProfileExperience] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            type_ = ExperienceType(str(item.get("type") or "").strip().upper())
+        except ValueError:
+            continue
+        title = _as_text(item.get("title"))[:_EXPERIENCE_LIMITS["title"]]
+        if not title:
+            continue
+        fields = {"type": type_, "title": title}
+        for field in ("org", "role", "period", "description"):
+            fields[field] = _as_text(item.get(field))[:_EXPERIENCE_LIMITS[field]] or None
+        cleaned.append(ProfileExperience(**fields))
+        if len(cleaned) >= _EXPERIENCE_MAX:
+            break
+    return cleaned or None
 
 
 def _as_text(value: object) -> str:

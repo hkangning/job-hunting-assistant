@@ -5,7 +5,7 @@
 断连或中途失败不落任何记录，前端重试即整轮重发（`GeneratorExit` 沿 `yield from` 传播，
 落库语句不会执行——与 JD 分析「断连落半成品」的口径相反，见接口文档 3.7 实现口径 1）。
 
-面试按**阶段化流程**推进（FR-007）：自我介绍 1 题 → 技术问答余量 →（有简历时）项目深挖——
+面试按**阶段化流程**推进（FR-007）：自我介绍 1 题 → 技术问答余量 →（画像有经历条目时）项目深挖——
 计划在建会话时算好存 `interview_session.stage_plan`，每题的阶段由计划推出、落在 `interview_qa.stage`，
 prompt 按阶段分派。总结报告见 `run_summary`（全文随流落库、会话置 FINISHED）。
 """
@@ -21,14 +21,16 @@ from sqlalchemy.orm import Session
 from app.clients.llm_client import LLMClient, LLMConfig, resolve_config
 from app.exceptions import BizException, ErrorCode
 from app.models import Application, InterviewQa, InterviewSession, JdAnalysisReport, UserProfile
-from app.models.enums import Direction, InterviewStage, SessionStatus
+from app.models.enums import Direction, InterviewIntensity, InterviewStage, SessionStatus
 from app.prompts import (
+    INTERVIEW_EXPERIENCE_LIMIT,
     INTERVIEW_JD_LIMIT,
-    INTERVIEW_RESUME_LIMIT,
     INTERVIEW_SECTION_RULES,
+    build_experience_digest,
     build_interview_question_messages,
     build_interview_summary_messages,
     build_interview_turn_messages,
+    interview_intensity_note,
     interview_review_stage_note,
     interview_stage_note,
 )
@@ -55,8 +57,8 @@ _SCORE_RE = re.compile(r"评分[^\d]{0,6}(\d{1,2})")
 def create_session(db: Session, *, user_id: int, payload: SessionCreateRequest) -> InterviewSessionDTO:
     """建会话：传投递则公司 / 岗位从中带入（越权 / 不存在 404 + 10002），否则手填两者必填。
 
-    同时按「是否已有简历」定阶段计划（FR-007）：自我介绍 1 题 + 技术问答余量，有简历再加
-    项目深挖段。计划在创建时算好落库，后续每题的阶段由它推出（模型只管出题内容）。
+    同时按「画像是否已填经历条目」定阶段计划（FR-007）：自我介绍 1 题 + 技术问答余量，有经历
+    再加项目深挖段。计划在创建时算好落库，后续每题的阶段由它推出（模型只管出题内容）。
     """
     if payload.application_id is not None:
         application = db.get(Application, payload.application_id)
@@ -68,7 +70,7 @@ def create_session(db: Session, *, user_id: int, payload: SessionCreateRequest) 
         position = (payload.position or "").strip()
         if not company or not position:
             raise BizException(ErrorCode.PARAM_INVALID, "公司名与岗位名必填")
-    plan = _build_stage_plan(payload.question_count, has_resume=bool(_resume_text(db, user_id)))
+    plan = _build_stage_plan(payload.question_count, has_experience=bool(_experience_text(db, user_id)))
     session = InterviewSession(
         user_id=user_id,
         application_id=payload.application_id,
@@ -76,6 +78,7 @@ def create_session(db: Session, *, user_id: int, payload: SessionCreateRequest) 
         position=position,
         direction=payload.direction.value,
         question_count=payload.question_count,
+        intensity=payload.intensity.value,
         stage_plan=json.dumps(plan, ensure_ascii=False),
         status=SessionStatus.ACTIVE.value,
     )
@@ -283,14 +286,14 @@ def _question_round(
 ) -> Iterator[str]:
     """出题轮（开场 / 跳过 / 续出下一题）：流正常结束后落新题（跳过轮同时把被跳题置 skipped）。
 
-    新题的阶段由会话的阶段计划推出；项目深挖轮把简历一并送进背景（其余阶段不送，省 prefill）。
+    新题的阶段由会话的阶段计划推出；项目深挖轮把画像经历一并送进背景（其余阶段不送，省 prefill）。
     """
     seq = len(qas) + 1
     plan = _stage_plan_of(session)
     stage, index, count = _stage_for_seq(plan, seq)
     config = resolve_config(db, session.user_id)
     messages = build_interview_question_messages(
-        context=_build_context(db, session, include_resume=_needs_resume(stage)),
+        context=_build_context(db, session, include_experience=_needs_experience(stage)),
         asked=asked,
         stage_note=interview_stage_note(stage, index=index, count=count, plan=plan) if plan else "",
     )
@@ -324,7 +327,7 @@ def _answer_round(
     """作答轮：点评 + 下一题；答满题量轮只点评并同事务置会话 FINISHED。
 
     点评按本题阶段定侧重（自我介绍 / 技术 / 项目的评判标准不同），下一题按阶段计划推进——
-    进入项目深挖段时逐字告诉模型「接下来问什么」，并注入简历供其抓项目细节。
+    进入项目深挖段时逐字告诉模型「接下来问什么」，并注入画像经历供其抓项目细节。
     """
     last = pending.seq >= session.question_count
     plan = _stage_plan_of(session)
@@ -333,7 +336,7 @@ def _answer_round(
     config = resolve_config(db, session.user_id)
     messages = build_interview_turn_messages(
         context=_build_context(
-            db, session, include_resume=_needs_resume(pending.stage, next_stage)
+            db, session, include_experience=_needs_experience(pending.stage, next_stage)
         ),
         asked=asked,
         question=pending.question,
@@ -412,12 +415,12 @@ INTERVIEW_INTRO_COUNT = 1  # 自我介绍固定 1 题（开场）
 INTERVIEW_PROJECT_MAX = 4  # 项目深挖题量上限
 
 
-def _build_stage_plan(question_count: int, *, has_resume: bool) -> list[dict]:
-    """阶段计划：自我介绍 1 题 + 技术问答余量（有简历再含项目深挖段）。
+def _build_stage_plan(question_count: int, *, has_experience: bool) -> list[dict]:
+    """阶段计划：自我介绍 1 题 + 技术问答余量（画像有经历条目再含项目深挖段）。
 
-    项目深挖按题量约 1/4 折算、上限 4 题；无简历时不设该段——没有项目素材可问。
+    项目深挖按题量约 1/4 折算、上限 4 题；无经历条目不设该段——没有项目素材可问。
     """
-    project = min(INTERVIEW_PROJECT_MAX, max(1, round(question_count / 4))) if has_resume else 0
+    project = min(INTERVIEW_PROJECT_MAX, max(1, round(question_count / 4))) if has_experience else 0
     tech = question_count - INTERVIEW_INTRO_COUNT - project
     plan = [
         {"stage": InterviewStage.INTRO.value, "count": INTERVIEW_INTRO_COUNT},
@@ -453,14 +456,15 @@ def _stage_for_seq(plan: list[dict] | None, seq: int) -> tuple[str, int, int]:
     return str(last.get("stage")), seq - start, int(last.get("count") or 0)
 
 
-def _needs_resume(*stages: str) -> bool:
-    """轮次涉及项目深挖时才注入简历（其余阶段注入只增 prefill、不起作用）。"""
+def _needs_experience(*stages: str) -> bool:
+    """轮次涉及项目深挖时才注入画像经历（其余阶段注入只增 prefill、不起作用）。"""
     return InterviewStage.PROJECT.value in stages
 
 
-def _resume_text(db: Session, user_id: int) -> str:
-    """账号画像里的简历全文（未填写返回空串）。"""
-    return db.scalar(select(UserProfile.resume_text).where(UserProfile.user_id == user_id)) or ""
+def _experience_text(db: Session, user_id: int) -> str:
+    """账号画像的经历条目渲染文本（未填写返回空串；已按 INTERVIEW_EXPERIENCE_LIMIT 截断）。"""
+    raw = db.scalar(select(UserProfile.experiences).where(UserProfile.user_id == user_id))
+    return build_experience_digest(raw, limit=INTERVIEW_EXPERIENCE_LIMIT)
 
 
 def _build_context(
@@ -468,12 +472,12 @@ def _build_context(
     session: InterviewSession,
     *,
     include_jd: bool = True,
-    include_resume: bool = False,
+    include_experience: bool = False,
 ) -> str:
-    """出题 / 点评 / 总结共用的背景：公司、岗位、方向（领域中文名），按需附 JD 与简历节选。
+    """出题 / 点评 / 总结共用的背景：公司、岗位、方向（领域中文名）、强度，按需附 JD 与画像经历。
 
     总结场景传 `include_jd=False`——报告是回顾整场表现，JD 原文只增 prefill 长度、不起作用；
-    简历只在项目深挖轮注入（`_needs_resume` 判定）。
+    画像经历只在项目深挖轮注入（`_needs_experience` 判定）。
     """
     lines = [f"公司：{session.company}", f"岗位：{session.position}"]
     if session.direction == Direction.GENERAL.value:
@@ -481,21 +485,23 @@ def _build_context(
     else:
         label = _DIRECTION_LABELS.get(session.direction, session.direction)
         lines.append(f"方向：{label}（题目须落在该方向内）")
+    lines.append(interview_intensity_note(session.intensity))
     if include_jd and session.application_id is not None:
         jd = _latest_jd_text(db, session.application_id)
         if jd:
             lines.append(f"岗位 JD（节选，供出题贴合岗位要求）：\n{jd[:INTERVIEW_JD_LIMIT]}")
-    if include_resume:
-        resume = _resume_text(db, session.user_id)
-        if resume:
-            lines.append(
-                f"简历（节选，项目深挖据此提问，不要问简历里没写过的项目）：\n{resume[:INTERVIEW_RESUME_LIMIT]}"
-            )
+    if include_experience:
+        experience = _experience_text(db, session.user_id)
+        if experience:
+            lines.append(f"画像经历（项目深挖据此提问，不要问经历里没写过的项目）：\n{experience}")
     return "\n".join(lines)
 
 
 def _latest_jd_text(db: Session, application_id: int) -> str:
-    """该投递最近一次 JD 分析的原文快照（投递表不存 JD，原文随分析报告落库）。"""
+    """该投递的 JD 原文：优先读投递记录已填的岗位 JD，回退最近一次 JD 分析的快照（老数据兼容）。"""
+    stored = db.scalar(select(Application.jd_text).where(Application.id == application_id))
+    if stored and stored.strip():
+        return stored.strip()
     return (
         db.execute(
             select(JdAnalysisReport.jd_text)
@@ -583,6 +589,8 @@ def _session_fields(session: InterviewSession) -> dict:
         "position": session.position,
         "direction": session.direction,
         "question_count": session.question_count,
+        # 存量会话（强度上线前创建）为 NULL，按 MEDIUM 兜底下发，不返回 null（接口文档 3.7）
+        "intensity": session.intensity or InterviewIntensity.MEDIUM.value,
         "stages": _stages_of(session),
         "status": session.status,
         "summary": session.summary,
