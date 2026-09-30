@@ -13,6 +13,7 @@ from app.exceptions import register_exception_handlers
 from app.routers import (
     applications,
     auth,
+    experiences,
     health,
     interview,
     jd_analysis,
@@ -62,6 +63,7 @@ app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(profile.router, prefix=settings.api_prefix)
 app.include_router(applications.router, prefix=settings.api_prefix)
+app.include_router(experiences.router, prefix=settings.api_prefix)
 app.include_router(jd_analysis.router, prefix=settings.api_prefix)
 app.include_router(interview.router, prefix=settings.api_prefix)
 app.include_router(overview.router, prefix=settings.api_prefix)

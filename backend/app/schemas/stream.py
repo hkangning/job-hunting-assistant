@@ -41,3 +41,9 @@ class InterviewSummaryRequest(BaseModel):
     """面试总结请求体（POST /stream/interview-summary，接口文档 3.7）。"""
 
     session_id: int = Field(description="会话 id，须属当前账号且含 ≥1 条已完成问答，否则 404+10002 / 400+10001")
+
+
+class ExperienceExtractRequest(BaseModel):
+    """面经结构化提取请求体（POST /stream/experience-extract，接口文档 3.10）。"""
+
+    experience_id: int = Field(description="面经 id，须属当前账号，否则 404+10002；原文为空或提取失败时原文保留，可重试")
