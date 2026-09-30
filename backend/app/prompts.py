@@ -21,6 +21,7 @@ from app.models import (
     QuestionType,
     UserProfile,
 )
+from app.services.practice_service import STACKS
 
 # JD 分析五段结构与对应 section（接口文档 3.6）：关键词命中即判定该段，与下方模板的标题文案一一对应
 JD_ANALYSIS_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -644,6 +645,16 @@ def build_interview_turn_messages(
 
 INTERVIEW_SUMMARY_LIMIT = 8000  # 总结输入上限（字符）：整场问答回顾拼接后截断，控制 prefill 长度
 
+# 错题候选的 direction 可选值菜单（18 领域 + GENERAL）：写进 prompt 供模型照抄，杜绝自由发挥出非法值
+_DIRECTION_MENU = (
+    "、".join(f"{d}（{label}）" for _, _, domains in STACKS for d, label in domains)
+    + "、GENERAL（通用）"
+)
+
+# 总结正文之后的错题候选段（接口文档 3.7）：标题行命中即切入该段，整段缓冲不发、流末校验后一次性下发
+INTERVIEW_SUMMARY_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("错题候选",), "wrong_candidates"),
+)
 
 INTERVIEW_SUMMARY_SYSTEM = """你是求职者的模拟面试官，本场面试刚刚结束，请写一份面试总结报告。
 
@@ -656,11 +667,16 @@ INTERVIEW_SUMMARY_SYSTEM = """你是求职者的模拟面试官，本场面试�
 输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
 - 不要写以 # 开头的行（会被整行剥离）、不要表格、不要加粗与反引号、不要「①②③」类符号编号；
 - 开头 1~2 句自然承接整场表现，不要「本次面试结束」这类套话开场；
-- 随后按「- 亮点：」「- 不足：」「- 建议：」三个标签行分条输出，标签后直接写内容。"""
+- 随后按「- 亮点：」「- 不足：」「- 建议：」三个标签行分条输出，标签后直接写内容。
+
+最后另起一段「## 错题候选」（该段由程序解析、不展示给用户，正文里不要提它）：
+- 从「不足」中提炼具体的八股知识点缺口（如 JVM 垃圾回收、MySQL 索引失效场景），0~5 条、宁缺毋滥——没有明确的知识点缺口就只写标题行加空数组；
+- 每条三个字段：content 写知识点问句、answer 用 2~4 句写清参考要点、direction 只从下列取值中选一个（{direction_menu}）；
+- 该段只包含标题行与一个 JSON 代码块，形如：{{"candidates": [{{"content": "知识点问句", "answer": "参考要点", "direction": "JVM"}}]}}，除 JSON 外不要写任何其他内容。"""
 
 
 def build_interview_summary_messages(*, context: str, turns: list[dict]) -> list[dict]:
-    """总结报告（整场问答回顾 → 报告全文）。
+    """总结报告（整场问答回顾 → 报告全文 + 末段错题候选）。
 
     `turns` = `[{seq, question, answer, review, score, skipped}]`，只含已完成（作答或跳过）的条目。
     """
@@ -679,7 +695,7 @@ def build_interview_summary_messages(*, context: str, turns: list[dict]) -> list
         )
     user = "\n\n".join(parts)[:INTERVIEW_SUMMARY_LIMIT] + "\n\n请写总结报告。"
     return [
-        {"role": "system", "content": INTERVIEW_SUMMARY_SYSTEM},
+        {"role": "system", "content": INTERVIEW_SUMMARY_SYSTEM.format(direction_menu=_DIRECTION_MENU)},
         {"role": "user", "content": user},
     ]
 

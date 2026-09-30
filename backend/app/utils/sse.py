@@ -162,7 +162,7 @@ def _event(name: str, data: dict) -> str:
 _DELTA_EVENT_PREFIX = "event: delta\n"  # `_event` 对 delta 的报文前缀（节奏器据此识别文本事件）
 
 # 结构化段（一次性 JSON，前端整体解析）：整块直通、不拆步——拆碎会破坏「一个 delta 即完整 JSON」的段契约
-_PACE_EXEMPT_SECTIONS = frozenset({"dimensions", "next_choices", "tool_call"})
+_PACE_EXEMPT_SECTIONS = frozenset({"dimensions", "next_choices", "wrong_candidates", "tool_call"})
 
 _PACE_STEP = (1, 4)  # 小步步长范围（字）：随机步长让出字连续、不机械
 _PACE_PAUSE: dict[str, float] = {  # 标点后的停顿（秒）：逗号轻停、句末重停、换行最重

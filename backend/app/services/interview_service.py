@@ -11,6 +11,7 @@ prompt 按阶段分派。总结报告见 `run_summary`（全文随流落库、�
 """
 
 import json
+import logging
 import re
 from collections.abc import Iterator
 from datetime import datetime
@@ -18,7 +19,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.clients.llm_client import LLMClient, LLMConfig, resolve_config
+from app.clients.llm_client import LLMClient, LLMConfig, parse_json_block, resolve_config
 from app.exceptions import BizException, ErrorCode
 from app.models import Application, InterviewQa, InterviewSession, JdAnalysisReport, UserProfile
 from app.models.enums import Direction, InterviewIntensity, InterviewStage, SessionStatus
@@ -26,6 +27,7 @@ from app.prompts import (
     INTERVIEW_EXPERIENCE_LIMIT,
     INTERVIEW_JD_LIMIT,
     INTERVIEW_SECTION_RULES,
+    INTERVIEW_SUMMARY_SECTION_RULES,
     build_experience_digest,
     build_interview_question_messages,
     build_interview_summary_messages,
@@ -47,8 +49,18 @@ from app.services.practice_service import STACKS
 from app.utils.section_splitter import SectionSplitter
 from app.utils.sse import SSE
 
+logger = logging.getLogger(__name__)
+
 # 领域枚举值 → 中文名（与陪练筛选面板同源）
 _DIRECTION_LABELS: dict[str, str] = {d: label for _, _, domains in STACKS for d, label in domains}
+
+# 错题候选 direction 的合法值（19 值 = 18 个领域 + GENERAL）
+_DIRECTION_VALUES: frozenset[str] = frozenset(d.value for d in Direction)
+
+# 错题候选上限：条数取前 5，字段口径与 POST /wrong-questions 知识点形态一致（超限条目单独丢弃）
+_CANDIDATE_MAX = 5
+_CANDIDATE_CONTENT_MAX = 2000
+_CANDIDATE_ANSWER_MAX = 5000
 
 # 点评首行的评分口径（与陪练同正则）：容忍冒号、空格等间隔符
 _SCORE_RE = re.compile(r"评分[^\d]{0,6}(\d{1,2})")
@@ -172,12 +184,14 @@ def ensure_summarizable(db: Session, *, user_id: int, session_id: int) -> Interv
 def run_summary(
     db: Session, *, user_id: int, session_id: int, client: LLMClient
 ) -> Iterator[str]:
-    """总结生成（业务生成器）：`yield` SSE 事件（delta section 恒为 `summary`）、`return` done 载荷。
+    """总结生成（业务生成器）：`yield` SSE 事件、`return` done 载荷（接口文档 3.7）。
 
-    已有总结时直接回放、不调 LLM（重复调用不重复计费）；否则流式生成，**全文随流落库**
-    （`summary` 列即 delta 拼接，不做分节——模型没按格式输出也不会丢内容），
-    同事务将会话置 FINISHED。断连不落库（与 `interview-chat` 同口径）：
-    `GeneratorExit` 沿链上抛，commit 不执行。
+    delta 的 section 为 `summary`（正文，不切段）；正文之后**可能**跟一段 `wrong_candidates`
+    （一次性 JSON 的错题候选，供前端出确认卡片）。已有总结时直接回放、不调 LLM
+    （重复调用不重复计费，也不重出候选）；否则流式生成，**正文随流落库**
+    （`summary` 列即正文 delta 拼接，候选段不落库、回放不含），同事务将会话置 FINISHED。
+    候选段缺失 / 非法一律静默跳过、照常落正文（`_extract_candidates`）；正文为空仍报 10011
+    且不落库。断连不落库（与 `interview-chat` 同口径）：`GeneratorExit` 沿链上抛，commit 不执行。
     """
     session = ensure_summarizable(db, user_id=user_id, session_id=session_id)
     if session.summary:
@@ -201,13 +215,26 @@ def run_summary(
         context=_build_context(db, session, include_jd=False), turns=turns
     )
     pieces: list[str] = []
-    for chunk in client.stream_chat(config, messages):
-        pieces.append(chunk)
-        yield SSE.delta(chunk, "summary")
+    candidate_parts: list[str] = []
+    for text, section in _iter_pieces(
+        client, config, messages, rules=INTERVIEW_SUMMARY_SECTION_RULES
+    ):
+        if section == "wrong_candidates":
+            # 候选段（含标题行）缓冲、不下发不落库，流末校验后整块一次性下发（接口文档 3.7 实现口径 6）
+            candidate_parts.append(text)
+            continue
+        pieces.append(text)
+        yield SSE.delta(text, "summary")
 
     summary = "".join(pieces).strip()
     if not summary:
         raise BizException(ErrorCode.LLM_OUTPUT_INVALID, "模型未产出总结内容，请重试")
+
+    candidates = _extract_candidates("".join(candidate_parts))
+    if candidates:
+        yield SSE.delta(
+            json.dumps({"candidates": candidates}, ensure_ascii=False), "wrong_candidates"
+        )
 
     now = datetime.now()
     session.summary = summary
@@ -216,6 +243,47 @@ def run_summary(
         session.finished_at = now
     db.commit()
     return {"record_id": session.id}
+
+
+def _extract_candidates(raw: str) -> list[dict]:
+    """错题候选段原文 → 合法候选列表（容错解析 → 逐条校验 → 去重 → 取前 5）。
+
+    降级口径（接口文档 3.7 实现口径 6）：段缺失、JSON 不可解析、条目字段缺失 / 超限 /
+    direction 非法、去重后为空——不合格条目单独丢弃，一条不剩则整段静默跳过（记日志），
+    正文照常落库。宁缺毋滥：坏数据既不下发也不报错。
+    """
+    if not raw.strip():
+        return []
+    try:
+        payload = parse_json_block(raw)
+    except ValueError:
+        logger.info("面试总结：错题候选段 JSON 解析失败，已跳过")
+        return []
+    items = payload.get("candidates")
+    if not isinstance(items, list):
+        logger.info("面试总结：错题候选段缺少 candidates 数组，已跳过")
+        return []
+    result: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        content, answer, direction = item.get("content"), item.get("answer"), item.get("direction")
+        if not all(isinstance(v, str) for v in (content, answer, direction)):
+            continue
+        content, answer = content.strip(), answer.strip()
+        direction = direction.strip().upper()
+        if not content or len(content) > _CANDIDATE_CONTENT_MAX:
+            continue
+        if not answer or len(answer) > _CANDIDATE_ANSWER_MAX:
+            continue
+        if direction not in _DIRECTION_VALUES or content in seen:
+            continue
+        seen.add(content)
+        result.append({"content": content, "answer": answer, "direction": direction})
+        if len(result) >= _CANDIDATE_MAX:
+            break
+    return result
 
 
 def run_chat(
@@ -400,10 +468,17 @@ def _stream(
 
 
 def _iter_pieces(
-    client: LLMClient, config: LLMConfig, messages: list[dict]
+    client: LLMClient,
+    config: LLMConfig,
+    messages: list[dict],
+    *,
+    rules: tuple[tuple[tuple[str, ...], str], ...] = INTERVIEW_SECTION_RULES,
 ) -> Iterator[tuple[str, str | None]]:
-    """逐块喂切分器产出 `(文本, 段名)`，收尾冲刷残留（段名 None = 尚未出现标题的前导文本）。"""
-    splitter = SectionSplitter(INTERVIEW_SECTION_RULES)
+    """逐块喂切分器产出 `(文本, 段名)`，收尾冲刷残留（段名 None = 尚未出现标题的前导文本）。
+
+    段规则默认取问答轮（点评 / 下一题），总结轮传 `INTERVIEW_SUMMARY_SECTION_RULES`。
+    """
+    splitter = SectionSplitter(rules)
     for chunk in client.stream_chat(config, messages):
         yield from splitter.feed(chunk)
     yield from splitter.flush()

@@ -212,9 +212,10 @@ def interview_summary_stream(
 ) -> StreamingResponse:
     """整场面试结束后的总结报告（接口文档 3.7）。
 
-    事件流 `start → delta×N → done(record_id=session_id)`，delta 的 `section` 恒为 `summary`。
-    报告全文随流落库并把会话置 `FINISHED`（进行中的会话经此即「提前结束」）；已有总结时
-    直接回放、不调 LLM（重复调用不重复计费）。断连或中途失败不落库。
+    事件流 `start → delta×N → done(record_id=session_id)`：delta 的 `section` 为 `summary`（正文），
+    正文之后可能跟一段 `wrong_candidates`（一次性 JSON 的错题候选，供前端出确认卡片）。
+    报告正文随流落库并把会话置 `FINISHED`（进行中的会话经此即「提前结束」）；已有总结时
+    直接回放、不调 LLM（重复调用不重复计费，候选段不落库故回放不含）。断连或中途失败不落库。
     """
     user_id = current_user.id
     # 会话与「至少一条已完成问答」的校验必须在流式响应建立之前完成（404+10002 / 400+10001）
