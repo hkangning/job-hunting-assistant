@@ -7,9 +7,8 @@
   作答点评 / 追问 / 提示 / 材料 / 找错 / 复述，轮次产出即落库；
 - `/stream/interview-chat`：模拟面试一问一答（步骤 15），作答 / 跳过 / 开场 / 续题按进度分派，
   一轮请求产出一轮内容，整轮生成完才落库；
-- `/stream/interview-summary`：面试总结报告（步骤 15），整场回顾生成总结并把会话置 FINISHED。
-
-其余业务链路（面经复盘）后续步骤逐个加入本文件。
+- `/stream/interview-summary`：面试总结报告（步骤 15），整场回顾生成总结并把会话置 FINISHED；
+- `/stream/experience-extract`：面经结构化提取（步骤 17），把面经原文拆成问答条目并落库。
 
 路由层只做协议转换：取登录态、校验入参、组装业务生成器、交给 `sse_response` 包装，不直接访问 ORM。
 """
@@ -30,11 +29,12 @@ from app.prompts import JD_ANALYSIS_SECTION_RULES
 from app.schemas.practice import PracticeTurnRequest
 from app.schemas.stream import (
     DemoChatRequest,
+    ExperienceExtractRequest,
     InterviewChatRequest,
     InterviewSummaryRequest,
     JdAnalysisRequest,
 )
-from app.services import interview_service, jd_service, practice_turn_service
+from app.services import experience_service, interview_service, jd_service, practice_turn_service
 from app.utils.section_splitter import SectionSplitter
 from app.utils.sse import SSE, sse_response
 
@@ -229,6 +229,34 @@ def interview_summary_stream(
         )
 
     return sse_response(_run, start_message="正在生成总结…")
+
+
+@router.post("/stream/experience-extract", summary="面经结构化提取（流式）")
+def experience_extract_stream(
+    payload: ExperienceExtractRequest,
+    current_user: User = Depends(get_current_user),
+    client: LLMClient = Depends(get_llm_client),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """把面经原文交给 AI 拆成结构化问答条目（接口文档 3.10）。
+
+    事件流 `start → delta(section=progress)×N → done(record_id=experience_id)`：进度 delta 是整句
+    状态文案（「正在阅读原文…」「已提炼 N 条…」），模型输出原文不外发；`done.extra.items` 是
+    已落库的条目列表（含 id）。条目**提取即替换**，重复提取不翻倍；提取失败（含 0 条）报 40002，
+    原文仍在、可重试；断连或中途失败不落库。
+    """
+    user_id = current_user.id
+    # 面经归属校验必须在流式响应建立之前完成（404 + 10002 按普通响应体返回）
+    experience_service.ensure_extractable(db, user_id=user_id, experience_id=payload.experience_id)
+
+    def _run(stream_db: Session) -> Iterator[str]:
+        return (
+            yield from experience_service.run_extract(
+                stream_db, user_id=user_id, experience_id=payload.experience_id, client=client
+            )
+        )
+
+    return sse_response(_run, start_message="正在提取面经条目…")
 
 
 def _save_partial(
