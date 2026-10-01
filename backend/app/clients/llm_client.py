@@ -125,11 +125,15 @@ class OpenAICompatibleClient(LLMClient):
         self, config: LLMConfig, messages: list[dict], tools: list[dict] | None = None
     ) -> Iterator[str]:
         stream = _create_stream(_build_client(config), config, messages, tools)
+        finished = False
         try:
             for chunk in stream:
                 if not chunk.choices:  # 末尾用量统计等无 choices 的块
                     continue
-                delta = chunk.choices[0].delta
+                choice = chunk.choices[0]
+                if choice.finish_reason:  # 终止标记（stop / length / content_filter / tool_calls）
+                    finished = True
+                delta = choice.delta
                 if delta is not None and delta.content:
                     yield delta.content
         except Exception as exc:  # 流中途失败（超时 / 连接中断 / 服务端错误）：已输出的内容由上层保留
@@ -137,6 +141,7 @@ class OpenAICompatibleClient(LLMClient):
         finally:
             # 主动断开与供应商的连接（幂等）：SSE 断连时上层抛出 GeneratorExit，不关就只靠 GC 回收
             stream.close()
+        _ensure_stream_finished(finished)
 
     def chat_json(self, config: LLMConfig, messages: list[dict]) -> dict:
         response = _create_chat(_build_client(config), config, messages)
@@ -151,10 +156,13 @@ class OpenAICompatibleClient(LLMClient):
     ) -> Iterator[TextDelta | ToolCallDelta]:
         """流式 + 工具调用：文本增量即时下发；tool_calls 按 index 聚合为完整调用后下发。
 
-        聚合只在 `finish_reason == "tool_calls"`（或流尾兜底）时发出——增量碎片对上层无意义。
+        聚合在 `finish_reason == "tool_calls"` 时发出；流正常结束后再兜底发一次，覆盖
+        「终止标记非 tool_calls 但聚合仍有残片」的供应商差异。流结束无终止标记 = 上游被截断，
+        按调用失败上抛（IS-56）。
         """
         stream = _create_stream(_build_client(config), config, messages, tools)
         pending: dict[int, dict] = {}  # index → 聚合中的调用（id 不收：结果以普通消息回灌，不走 role=tool）
+        finished = False
         try:
             for chunk in stream:
                 if not chunk.choices:
@@ -171,13 +179,16 @@ class OpenAICompatibleClient(LLMClient):
                                 slot["name"] += part.function.name
                             if part.function.arguments:
                                 slot["arguments"] += part.function.arguments
-                if choice.finish_reason == "tool_calls":
-                    yield from _flush_calls(pending)
-            yield from _flush_calls(pending)  # 兜底：部分供应商不发 finish_reason
+                if choice.finish_reason:
+                    finished = True
+                    if choice.finish_reason == "tool_calls":
+                        yield from _flush_calls(pending)
         except Exception as exc:
             raise _translate(exc) from exc
         finally:
             stream.close()
+        _ensure_stream_finished(finished)
+        yield from _flush_calls(pending)  # 兜底：终止标记非 tool_calls 但聚合仍有残片的供应商差异
 
 
 def get_llm_client() -> LLMClient:
@@ -271,6 +282,17 @@ def _flush_calls(pending: dict[int, dict]) -> list[ToolCallDelta]:
     ]
     pending.clear()
     return calls
+
+
+def _ensure_stream_finished(finished: bool) -> None:
+    """流结束却全程未收到终止标记 = 上游连接被截断（IS-56）：按调用失败上抛。
+
+    OpenAI 兼容协议的流式响应收尾必带 `finish_reason`（stop / length / tool_calls 等）；
+    `[DONE]` 会被 SDK 消费、不产生 chunk，判断依据只能是 `finish_reason`。截断时已产出的
+    增量由调用方保留，但**不得当完整回复落库**——与各链路「失败不落库、重发即重试」口径一致。
+    """
+    if not finished:
+        raise LLMError(ErrorCode.LLM_CALL_FAILED, "AI 回复被中断（未收到完成标记），请重试")
 
 
 def _create_chat(client: OpenAI, config: LLMConfig, messages: list[dict]):

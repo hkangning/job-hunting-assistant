@@ -663,6 +663,14 @@ def _prepare_write_call(
         if application_id is None:
             return None, f"没找到「{company}」的投递记录，确认下公司名，或到投递管理页核对后再说一声～"
     complete = {"application_id": application_id, "status": status.value}
+    # 回填库中公司名（模型给的可能与记录不符，统一以记录为准；确认卡片展示用，执行端点按需取字段、忽略此键）
+    record_company = db.scalar(
+        select(Application.company).where(
+            Application.id == application_id, Application.user_id == user_id
+        )
+    )
+    if record_company:
+        complete["company"] = record_company
     if status == ApplicationStatus.CLOSED:
         close_reason = _as_close_reason(args.get("close_reason"))
         if close_reason is None:
