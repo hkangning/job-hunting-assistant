@@ -1,8 +1,9 @@
-"""面经整理（FR-008）：面经 CRUD、条目检索与结构化提取的用例——测试计划 TC-14 / TC-15、TC-127~TC-133。
+"""面经整理（FR-008）：面经 CRUD、条目检索与结构化提取的用例——测试计划 TC-14 / TC-15、TC-127~TC-133、TC-136 / TC-137。
 
-后端 6 端点已于 2026-09-30 落地（接口文档 v1.37 §3.10 实现口径 8 条）。FakeLLM 输出按契约的
-`{"items":[{question, answer_points}]}` JSON 构造；服务层用例走 `db_session`（自建 provider
-配置行、不经 HTTP），SSE 事件与前置校验走 TestClient + `llm_configured`。
+后端 6 端点已于 2026-09-30 落地（接口文档 v1.37 §3.10 实现口径 8 条），2026-10-01 增补
+公司名识别回填与提取期间删除的并发防御（v1.39 口径 9 / 10，用例 TC-136 / TC-137）。FakeLLM
+输出按契约的 `{"company", "items":[{question, answer_points}]}` JSON 构造；服务层用例走
+`db_session`（自建 provider 配置行、不经 HTTP），SSE 事件与前置校验走 TestClient + `llm_configured`。
 """
 
 import json
@@ -13,7 +14,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.clients.llm_client import get_llm_client
+from app.database import SessionLocal
 from app.exceptions import BizException, ErrorCode
+from app.main import app
 from app.models import Experience, ExperienceItem, LlmProviderConfig
 from app.models.enums import ExperienceItemSource
 from app.schemas.auth import RegisterRequest
@@ -37,6 +41,13 @@ EXTRACT_CHUNKS = [
     "]\n}",
 ]
 EXTRACT_QUESTIONS = ["JVM 内存结构？", "GC 算法有哪些？"]
+
+# 带公司名的契约输出（IS-54 落地后的对象包裹形态）；分块保证删除钩子能落在流中途。
+EXTRACT_CHUNKS_WITH_COMPANY = [
+    '{"company": "浩鲸科技", "items": [\n',
+    '{"question": "JVM 内存结构？", "answer_points": "堆、栈、方法区"}',
+    "]\n}",
+]
 
 
 def _configure_provider(db: Session, user_id: int) -> None:
@@ -142,6 +153,7 @@ class TestCreateAndExtract:
         assert {n for n, _ in events} == {"delta"}  # 模型输出原文不外发，流里只有进度段
         assert _progress_texts(events) == ["正在阅读原文…", "已提炼 1 条…", "已提炼 2 条…"]
         assert result["record_id"] == exp.id
+        assert result["extra"]["company"] is None  # 旧格式（无 company 键）→ 最终值仍为空
 
         items = result["extra"]["items"]
         assert [i["question"] for i in items] == EXTRACT_QUESTIONS
@@ -211,6 +223,78 @@ class TestReplaceOnExtract:
         assert [r.question for r in rows] == ["重新提取后的问题"]  # 清旧插新，不追加
         assert db_session.get(Experience, exp.id).item_count == 1
         assert second["extra"]["items"][0]["id"] not in first_ids  # 旧条目已被清掉
+
+
+# ================================================================ TC-136 公司名识别与回填
+
+
+class TestCompanyBackfill:
+    """TC-136：公司名识别与回填——手填优先、无效值忽略、超长截断（实现口径 9）。"""
+
+    def test_backfilled_when_blank(self, db_session: Session, account_id: int, fake_llm_client):
+        """未填公司 + 模型输出带 company → 回填落库；done.extra.company 回传最终值。"""
+        _configure_provider(db_session, account_id)
+        exp = _make(db_session, account_id)  # company 未填
+
+        fake_llm_client.chunks = list(EXTRACT_CHUNKS_WITH_COMPANY)
+        _, result = _run_extract(db_session, account_id, exp.id, fake_llm_client)
+
+        assert db_session.get(Experience, exp.id).company == "浩鲸科技"
+        assert result["extra"]["company"] == "浩鲸科技"
+        detail = experience_service.get_experience(
+            db_session, user_id=account_id, experience_id=exp.id
+        )
+        assert detail.company == "浩鲸科技"
+        assert [i.question for i in detail.items] == ["JVM 内存结构？"]  # 条目照常落库
+
+    def test_manual_company_not_overwritten(
+        self, db_session: Session, account_id: int, fake_llm_client
+    ):
+        """已填公司不被覆盖（手填优先）；done.extra.company 回传手填值。"""
+        _configure_provider(db_session, account_id)
+        exp = _make(db_session, account_id, company="手填公司")
+
+        fake_llm_client.chunks = list(EXTRACT_CHUNKS_WITH_COMPANY)
+        _, result = _run_extract(db_session, account_id, exp.id, fake_llm_client)
+
+        assert db_session.get(Experience, exp.id).company == "手填公司"
+        assert result["extra"]["company"] == "手填公司"
+
+    def test_invalid_company_ignored(self, db_session: Session, account_id: int, fake_llm_client):
+        """company 为 null / 非字符串 / 全空白 → 不回填、不报错，条目照常解析落库。"""
+        _configure_provider(db_session, account_id)
+        exp = _make(db_session, account_id)
+
+        for index, value in enumerate([None, 123, "   "]):
+            fake_llm_client.chunks = [
+                json.dumps(
+                    {"company": value, "items": [{"question": f"第 {index} 问"}]},
+                    ensure_ascii=False,
+                )
+            ]
+            _, result = _run_extract(db_session, account_id, exp.id, fake_llm_client)
+
+            assert result["extra"]["company"] is None
+            assert db_session.get(Experience, exp.id).company is None
+            assert [i["question"] for i in result["extra"]["items"]] == [f"第 {index} 问"]
+
+    def test_overlong_company_truncated(
+        self, db_session: Session, account_id: int, fake_llm_client
+    ):
+        """公司名超 100 字按列宽截断（截断仍可用，不回退为 null）。"""
+        _configure_provider(db_session, account_id)
+        exp = _make(db_session, account_id)
+
+        fake_llm_client.chunks = [
+            json.dumps(
+                {"company": "公" * 120, "items": [{"question": "超长公司名的题"}]},
+                ensure_ascii=False,
+            )
+        ]
+        _, result = _run_extract(db_session, account_id, exp.id, fake_llm_client)
+
+        assert result["extra"]["company"] == "公" * 100
+        assert db_session.get(Experience, exp.id).company == "公" * 100
 
 
 # ================================================================ TC-129 条目清洗
@@ -424,6 +508,82 @@ class TestMidFailure:
         assert db_session.get(Experience, exp.id).item_count == 0
 
 
+# ================================================================ TC-137 提取期间删除的并发防御
+
+
+class _DeleteMidStream:
+    """面经提取替身：按契约逐块产出，第 2 块前用独立会话删除面经（多标签页并发场景）。
+
+    删除必须发生在**流中途**——开头的前置校验会走 404、测不到落库前的防御。判据取
+    错误码 + 落库结果：MySQL REPEATABLE READ 下普通 SELECT 读的是事务快照，看不到
+    并发删除，快照读判据不可靠（自测已坐实）。
+    """
+
+    def __init__(self, experience_id: int, chunks: list[str]) -> None:
+        self._experience_id = experience_id
+        self._chunks = chunks
+        self.deleted = False
+
+    def stream_chat(self, config, messages, tools=None):
+        for index, chunk in enumerate(self._chunks):
+            if index == 1 and not self.deleted:
+                self.deleted = True
+                with SessionLocal() as other:  # 独立会话 = 模拟另一标签页的删除
+                    row = other.get(Experience, self._experience_id)
+                    if row is not None:
+                        other.delete(row)
+                        other.commit()
+            yield chunk
+
+
+class TestConcurrentDelete:
+    """TC-137：提取期间面经被删除 → error 10002、不落任何条目（实现口径 10）。"""
+
+    def test_service_reports_not_found_and_persists_nothing(
+        self, db_session: Session, account_id: int
+    ):
+        """服务层：流中途删除 → BizException 10002；新会话核实面经已删、无条目残留。"""
+        _configure_provider(db_session, account_id)
+        exp = _make(db_session, account_id)
+        exp_id = exp.id
+
+        fake = _DeleteMidStream(exp_id, list(EXTRACT_CHUNKS))
+        with pytest.raises(BizException) as exc:
+            for _ in experience_service.run_extract(
+                db_session, user_id=account_id, experience_id=exp_id, client=fake
+            ):
+                pass
+
+        assert exc.value.code == ErrorCode.NOT_FOUND
+        assert exc.value.message == "面经已被删除，提取结果未保存"
+        assert fake.deleted  # 删除确实发生在流中途（而非开头校验）
+        with SessionLocal() as fresh:  # 新会话核实：面经已删、无条目插入
+            assert fresh.get(Experience, exp_id) is None
+            assert fresh.query(ExperienceItem).filter_by(experience_id=exp_id).count() == 0
+
+    def test_http_stream_error_event_without_done(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """HTTP 全链路：收到 error 事件（10002）、无 done、无条目落库。"""
+        exp = client.post(API, json={"original_text": ORIGINAL}).json()["data"]
+        deleter = _DeleteMidStream(exp["id"], list(EXTRACT_CHUNKS))
+        app.dependency_overrides[get_llm_client] = lambda: deleter
+        try:
+            events = _sse_events(
+                client.post(STREAM_API, json={"experience_id": exp["id"]}).text
+            )
+        finally:
+            # 交还 fixture 的替身（其 teardown 负责摘除 override）
+            app.dependency_overrides[get_llm_client] = lambda: fake_llm_client
+
+        assert _error(events)["code"] == 10002
+        assert all(name != "done" for name, _ in events)  # 未产出 done
+        assert deleter.deleted
+        with SessionLocal() as fresh:
+            assert fresh.get(Experience, exp["id"]) is None
+            assert fresh.query(ExperienceItem).filter_by(experience_id=exp["id"]).count() == 0
+
+
 # ================================================================ TC-127 REST 四端点与校验
 
 
@@ -517,6 +677,7 @@ class TestStreamApi:
 
         done = _done(events)
         assert done["record_id"] == exp["id"]
+        assert done["extra"]["company"] is None  # 未识别到公司 → 回传 null
         assert [i["question"] for i in done["extra"]["items"]] == EXTRACT_QUESTIONS
         assert all(isinstance(i["id"], int) for i in done["extra"]["items"])
 

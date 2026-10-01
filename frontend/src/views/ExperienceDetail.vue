@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 面经详情（开发计划步骤 17；接口文档 v1.33 §3.10）。
+ * 面经详情（开发计划步骤 17；接口文档 v1.39 §3.10）。
  *
  * 三块内容：**提取状态区**（无条目时常驻：入口 / 进度 / 失败重试，逻辑在 ExperienceExtract）、
  * **结构化条目**、**原文折叠块**（有条目默认收起；无条目时展开——提取失败 / 未提取时原文是主角）。
@@ -53,8 +53,12 @@ async function load() {
   }
 }
 
-/** 提取完成：重拉详情拿含 id 的完整条目；重拉失败以 done 事件里的 items 兜底渲染。 */
-async function onExtracted(itemsFromDone) {
+/** 提取完成：重拉详情拿含 id 的完整条目；重拉失败以 done 事件里的 items 兜底渲染。
+ * 识别出的公司名先用 `extra.company` 即时回填（仅原值为空时，与后端同口径）——不重拉也能立即显示。 */
+async function onExtracted({ items: itemsFromDone, company }) {
+  if (company && detail.value && !detail.value.company) {
+    detail.value.company = company
+  }
   try {
     detail.value = await getExperience(experienceId)
   } catch {

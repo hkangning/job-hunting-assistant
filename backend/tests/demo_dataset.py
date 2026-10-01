@@ -864,7 +864,7 @@ def reset_for_user(db: Session, username: str) -> dict[str, int]:
 
 # 验证 / 调试过程中产生的临时账号名前缀。`--purge` 时按前缀清除，**不动其他账号**
 # （开发者自己的账号、演示账号都不受影响）。
-_TEST_ACCOUNT_PREFIXES = ("link_", "link9", "empty_", "diag_", "lay_", "step", "tmp_", "check_")
+_TEST_ACCOUNT_PREFIXES = ("link_", "link9", "empty_", "diag_", "lay_", "step", "tmp_", "check_", "walk")
 
 
 def purge_test_accounts(db: Session) -> list[str]:

@@ -1,9 +1,11 @@
 <script setup>
 /**
- * 面经结构化提取状态区（接口文档 v1.33 §3.10 `POST /stream/experience-extract`）。
+ * 面经结构化提取状态区（接口文档 v1.39 §3.10 `POST /stream/experience-extract`）。
  *
  * 契约口径：`delta` 是**提取进度状态文字**（不逐字展示 JSON），故用状态行而非打字机；
- * `done` 时条目已由后端落库（`extra.items` 供兜底渲染）；失败（code 40002）原文仍在，可重试。
+ * `done` 时条目已由后端落库（`extra.items` 含落库 id、`extra.company` 为回填后最终公司名，
+ * 两者供详情页兜底渲染）；失败（code 40002）原文仍在，可重试；
+ * **10002** = 提取期间面经被其它页面删除（并发防御），重试无意义，引导返回列表。
  *
  * 自动提取只在详情页拿到 `?extract=1` 时发生一次：发起后立即清掉 query——
  * 刷新时若条目已落库自然不再渲染本组件；若仍无条目则回到手动入口，
@@ -25,7 +27,7 @@ const emit = defineEmits(['extracted', 'close', 'state'])
 
 const router = useRouter()
 
-const status = ref('idle') // idle | running | done | error
+const status = ref('idle') // idle | running | done | error | gone
 const progressText = ref('')
 const errorMsg = ref('')
 let stream = null
@@ -45,9 +47,18 @@ function start() {
       },
       onDone: (d) => {
         status.value = 'done'
-        emit('extracted', d?.extra?.items || [])
+        emit('extracted', {
+          items: d?.extra?.items || [],
+          company: d?.extra?.company ?? null
+        })
       },
       onError: (e) => {
+        // 10002：提取期间面经被其它页面删除（后端并发防御）——原文已不在，重试无意义
+        if (e?.code === 10002) {
+          status.value = 'gone'
+          errorMsg.value = e?.message || '面经已被删除，提取结果未保存'
+          return
+        }
         status.value = 'error'
         errorMsg.value =
           e?.code === 10012
@@ -90,8 +101,13 @@ onUnmounted(() => {
     <template v-else>
       <p class="extract__hint extract__hint--error">{{ errorMsg }}</p>
       <div class="extract__actions">
-        <el-button type="primary" plain @click="start">重试提取</el-button>
-        <el-button v-if="closable" @click="emit('close')">关闭</el-button>
+        <template v-if="status === 'gone'">
+          <el-button type="primary" @click="router.push('/experiences')">返回面经列表</el-button>
+        </template>
+        <template v-else>
+          <el-button type="primary" plain @click="start">重试提取</el-button>
+          <el-button v-if="closable" @click="emit('close')">关闭</el-button>
+        </template>
       </div>
     </template>
   </div>
