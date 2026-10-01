@@ -20,6 +20,12 @@ DateTime→DATETIME、Date→DATE、Integer→INTEGER）。
 同样走手工 `ALTER`（§7.3），开发库与测试库都要执行一次，否则启动导入即报
 「Unknown column 'question.options'」；`WrongSourceType` 补 `DRILL`
 （文档 v1.7 先行定义、本次代码落地，练习模式知识点入本）。
+
+面试阶段化 + 三条功能需求（数据库设计 v1.18 / v1.19）后，本轮共 6 处列变更：
+`interview_session` 加 `stage_plan` / `intensity`、`interview_qa` 加 `stage`、
+`application` 加 `jd_text`、`user_profile` 加 `experiences` 并删 `resume_text`
+（有损删除，画像改结构化经历）。均走手工 `ALTER`（§7.3 有完整 SQL），
+开发库与测试库都要执行一次。
 """
 
 # 每表结构：columns 元组为 (列名, 类型, 允许为空, 是否主键)
@@ -30,6 +36,7 @@ TABLES: dict[str, dict] = {
             ("user_id", "INTEGER", False, False),
             ("company", "VARCHAR(100)", False, False),
             ("position", "VARCHAR(100)", False, False),
+            ("jd_text", "TEXT", True, False),
             ("city", "VARCHAR(50)", True, False),
             ("expected_salary", "VARCHAR(50)", True, False),
             ("applied_at", "DATETIME", False, False),
@@ -73,6 +80,8 @@ TABLES: dict[str, dict] = {
             ("position", "VARCHAR(100)", False, False),
             ("direction", "VARCHAR(20)", False, False),
             ("question_count", "INTEGER", False, False),
+            ("stage_plan", "TEXT", True, False),
+            ("intensity", "VARCHAR(20)", True, False),
             ("status", "VARCHAR(20)", False, False),
             ("summary", "TEXT", True, False),
             ("created_at", "DATETIME", False, False),
@@ -88,6 +97,7 @@ TABLES: dict[str, dict] = {
             ("session_id", "INTEGER", False, False),
             ("seq", "INTEGER", False, False),
             ("question", "TEXT", False, False),
+            ("stage", "VARCHAR(20)", False, False),
             ("answer", "TEXT", True, False),
             ("is_voice", "INTEGER", False, False),
             ("score", "INTEGER", True, False),
@@ -324,7 +334,7 @@ TABLES: dict[str, dict] = {
             ("degree", "VARCHAR(20)", True, False),
             ("gpa", "VARCHAR(20)", True, False),
             ("english_level", "VARCHAR(50)", True, False),
-            ("resume_text", "TEXT", True, False),
+            ("experiences", "TEXT", True, False),
             ("target_position", "VARCHAR(100)", True, False),
             ("target_city", "VARCHAR(50)", True, False),
             ("skills", "TEXT", True, False),

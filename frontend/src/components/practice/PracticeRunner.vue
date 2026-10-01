@@ -181,6 +181,10 @@ onUnmounted(stopTimer)
         :qtype="session.question.qtype"
         @retry="emit('retry', index)"
       />
+      <!-- 等待提示：首字到达前的空窗期给个「在做事」的信号（与面试页同形态） -->
+      <p v-if="streaming" class="runner__thinking">
+        {{ isCoach ? 'AI 教练思考中…' : 'AI 思考中…' }}
+      </p>
     </div>
 
     <section ref="answerBox" class="runner__card runner__card--answer">
@@ -195,7 +199,7 @@ onUnmounted(stopTimer)
         v-else
         v-model="answer"
         type="textarea"
-        :rows="4"
+        :autosize="{ minRows: 4, maxRows: 10 }"
         :disabled="streaming"
         :placeholder="isCoach ? '作答，卡住了可以点「要提示」' : '写下你的回答'"
       />
@@ -285,6 +289,11 @@ onUnmounted(stopTimer)
 
 .runner__stream {
   margin: var(--card-gap) 0;
+}
+.runner__thinking {
+  margin: 10px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
 }
 
 /* 按钮行整体左对齐（2026-09-29 用户反馈调整）：选项与输入框都是左对齐的，

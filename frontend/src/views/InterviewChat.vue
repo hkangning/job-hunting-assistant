@@ -19,6 +19,7 @@ import {
   applyDelta,
   buildMessages,
   insertSkipped,
+  INTENSITY_LABELS,
   sealStreaming,
   stageProgress
 } from '../utils/interviewStream'
@@ -248,6 +249,7 @@ onUnmounted(() => {
         {{ session ? `${session.company} · ${session.position}` : '加载中…' }}
       </span>
       <span v-if="session" class="chat__dir">{{ directionText }}</span>
+      <span v-if="session" class="chat__intensity">{{ INTENSITY_LABELS[session.intensity] || '中厂' }}</span>
       <span v-if="stageInfo" class="chat__stage">{{ stageInfo.label }}</span>
       <div v-if="session" class="chat__progress">
         <span class="chat__progress-text">
@@ -296,7 +298,7 @@ onUnmounted(() => {
         <el-input
           v-model="input"
           type="textarea"
-          :rows="3"
+          :autosize="{ minRows: 3, maxRows: 8 }"
           :disabled="streaming"
           maxlength="5000"
           placeholder="输入你的作答（Ctrl + Enter 提交）"
@@ -392,6 +394,15 @@ onUnmounted(() => {
   font-size: var(--fs-xs);
   color: var(--m-interview);
   background: color-mix(in srgb, var(--m-interview) 12%, var(--c-card));
+  border-radius: var(--r-mark);
+}
+/* 强度标签：中性色——与方向（模块色）、阶段（主色）都不抢位 */
+.chat__intensity {
+  flex: 0 0 auto;
+  padding: 1px 8px;
+  font-size: var(--fs-xs);
+  color: var(--c-text-2);
+  background: var(--c-bg);
   border-radius: var(--r-mark);
 }
 /* 阶段标签：与方向标签区分——阶段是「流程位置」，用主色；方向是「面试范围」，用模块色 */

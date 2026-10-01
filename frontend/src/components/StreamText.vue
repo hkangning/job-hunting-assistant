@@ -61,18 +61,27 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* 进行中指示：柔和呼吸圆点——原「闪烁竖线」观感像输入框光标（试用反馈） */
 .stream-text__caret {
   display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: text-bottom;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  vertical-align: middle;
   background: var(--brand);
-  animation: stream-blink 1s steps(2, start) infinite;
+  opacity: 0.5;
+  animation: stream-breathe 1.6s ease-in-out infinite;
 }
-@keyframes stream-blink {
-  to {
-    visibility: hidden;
+@keyframes stream-breathe {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1);
   }
 }
 </style>

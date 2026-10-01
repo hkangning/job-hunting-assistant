@@ -36,7 +36,7 @@ def test_create_application_defaults(db_session: Session, account_id: int):
     """TC-01：字段合法入库，status 默认 APPLIED，投递日期默认当天。"""
     dto = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(company="浩鲸科技", position="Java 开发", city="南京", expected_salary="13k", channel="官网"),
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="浩鲸科技", position="Java 开发", city="南京", expected_salary="13k", channel="官网"),
     )
 
     assert dto.id > 0
@@ -54,7 +54,7 @@ def test_create_application_defaults(db_session: Session, account_id: int):
 def test_change_status_legal_chain(db_session: Session, account_id: int):
     """TC-02：合法流转链 APPLIED→WRITTEN→INTERVIEW→OFFER 逐跳成功。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="浩鲸科技", position="Java 开发")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="浩鲸科技", position="Java 开发")
     )
 
     for target in (ApplicationStatus.WRITTEN, ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER):
@@ -73,7 +73,7 @@ def test_change_status_legal_chain(db_session: Session, account_id: int):
 def test_change_status_legal_skip_level(db_session: Session, account_id: int, start: ApplicationStatus, target: ApplicationStatus):
     """TC-02：跳级前进合法（SRS v1.8 放开）——可前进到链上任意更靠后的状态。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="云器科技", position="后端开发", status=start)
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="云器科技", position="后端开发", status=start)
     )
 
     dto = application_service.change_status(db_session, account_id, dto.id, ApplicationStatusUpdate(status=target))
@@ -93,7 +93,7 @@ def test_change_status_legal_skip_level(db_session: Session, account_id: int, st
 def test_change_status_closed_from_any_active_state(db_session: Session, account_id: int, start: ApplicationStatus):
     """TC-02：除已结束外任意状态（含 OFFER）均可流转至 CLOSED，结束原因同时入库。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="亚信科技", position="后端开发", status=start)
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="亚信科技", position="后端开发", status=start)
     )
 
     dto = application_service.change_status(
@@ -122,7 +122,7 @@ def test_change_status_illegal_rejected(db_session: Session, account_id: int, st
     """TC-02：非法流转拒绝（错误码 10001）——回退 / 原地 / 终态；且库中状态不变。"""
     dto = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(company="新华三", position="Java 开发", status=start),
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="新华三", position="Java 开发", status=start),
     )
 
     with pytest.raises(BizException) as exc_info:
@@ -137,7 +137,7 @@ def test_change_status_event_and_remark_appended(db_session: Session, account_id
     """TC-02：转 WRITTEN/INTERVIEW 时更新下次考试时间，流转备注追加不覆盖原备注。"""
     event_at = f"{date.today() + timedelta(days=3)} 14:00:00"
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="满帮", position="Java 开发", remark="原备注")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="满帮", position="Java 开发", remark="原备注")
     )
 
     dto = application_service.change_status(
@@ -241,7 +241,7 @@ def test_import_unsupported_file_type(db_session: Session, account_id: int):
 def test_delete_application_detaches_related_records(db_session: Session, account_id: int):
     """删除投递：关联 JD 报告/面试会话保留数据、解除关联（否则外键拦截删除会 500）。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="云器科技", position="后端开发")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="云器科技", position="后端开发")
     )
     report = JdAnalysisReport(user_id=account_id, application_id=dto.id, jd_text="JD 原文", report_text="五段报告")
     session = InterviewSession(user_id=account_id, application_id=dto.id, company="云器科技", position="后端开发")
@@ -266,6 +266,7 @@ def test_application_crud_flow(client: TestClient):
         json={
             "company": "浩鲸科技",
             "position": "Java 开发",
+            "jd_text": "岗位职责：测试 JD",
             "city": "南京",
             "expected_salary": "13k",
             "applied_at": "2026-09-20",
@@ -288,7 +289,7 @@ def test_application_crud_flow(client: TestClient):
     # 编辑（全量更新：未传字段置空，status 不受影响）
     updated = client.put(
         f"{API}/{app_id}",
-        json={"company": "浩鲸科技国际", "position": "Java 开发", "status": "OFFER"},
+        json={"company": "浩鲸科技国际", "position": "Java 开发", "jd_text": "岗位职责：测试 JD", "status": "OFFER"},
     ).json()["data"]
     assert updated["company"] == "浩鲸科技国际"
     assert updated["city"] is None and updated["expected_salary"] is None
@@ -316,15 +317,15 @@ def test_application_crud_flow(client: TestClient):
 
 def test_application_invalid_payload(client: TestClient):
     """TC-26：必填字段缺失/超长 → 参数校验失败 10001。"""
-    assert client.post(API, json={"position": "Java 开发"}).json()["code"] == 10001
-    assert client.post(API, json={"company": "  ", "position": "Java 开发"}).json()["code"] == 10001
-    assert client.post(API, json={"company": "A" * 101, "position": "Java"}).json()["code"] == 10001
+    assert client.post(API, json={"position": "Java 开发", "jd_text": "岗位职责：测试 JD"}).json()["code"] == 10001
+    assert client.post(API, json={"company": "  ", "position": "Java 开发", "jd_text": "岗位职责：测试 JD"}).json()["code"] == 10001
+    assert client.post(API, json={"company": "A" * 101, "position": "Java", "jd_text": "岗位职责：测试 JD"}).json()["code"] == 10001
     assert client.get(f"{API}/9999999").json()["code"] == 10002
 
 
 def test_close_reason_api_flow(client: TestClient):
     """TC-26：结束原因接口口径——缺 reason 结束被拒 10001、带 reason 成功且可回读、列表按 reason 筛选。"""
-    app_id = client.post(API, json={"company": "亚信安全", "position": "Java 开发"}).json()["data"]["id"]
+    app_id = client.post(API, json={"company": "亚信安全", "position": "Java 开发", "jd_text": "岗位职责：测试 JD"}).json()["data"]["id"]
 
     assert client.patch(f"{API}/{app_id}/status", json={"status": "CLOSED"}).json()["code"] == 10001
 
@@ -342,7 +343,7 @@ def test_close_reason_api_flow(client: TestClient):
 
 def test_status_skip_level_api(client: TestClient):
     """TC-02：跳级流转走 HTTP 链路（前端看板拖拽场景）——APPLIED 直跳 INTERVIEW 成功、回退仍被拒。"""
-    app_id = client.post(API, json={"company": "云器科技", "position": "后端开发"}).json()["data"]["id"]
+    app_id = client.post(API, json={"company": "云器科技", "position": "后端开发", "jd_text": "岗位职责：测试 JD"}).json()["data"]["id"]
 
     jumped = client.patch(f"{API}/{app_id}/status", json={"status": "INTERVIEW"}).json()["data"]
     assert jumped["status"] == "INTERVIEW"
@@ -379,7 +380,7 @@ def test_trend_zero_filled_and_bounds(client: TestClient):
     today = date.today()
     yesterday = today - timedelta(days=1)
     for company, applied in (("A 公司", today), ("B 公司", today), ("C 公司", yesterday)):
-        client.post(API, json={"company": company, "position": "Java 开发", "applied_at": applied.isoformat()})
+        client.post(API, json={"company": company, "position": "Java 开发", "jd_text": "岗位职责：测试 JD", "applied_at": applied.isoformat()})
 
     items = client.get(f"{API}/trend", params={"days": 7}).json()["data"]["items"]
     assert len(items) == 7
@@ -408,7 +409,7 @@ def test_create_application_all_fields(db_session: Session, account_id: int):
     """TC-01：全字段显式传入后读回逐字段一致，显式投递日期不被当天覆盖。"""
     dto = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", 
             company="亚信科技",
             position="后端开发",
             city="上海",
@@ -442,7 +443,7 @@ def test_change_status_event_at_ignored_for_closed(db_session: Session, account_
     original = datetime(2026, 9, 26, 14, 0, 0)
     dto = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(company="满帮", position="Java 开发", next_event_at=original),
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="满帮", position="Java 开发", next_event_at=original),
     )
 
     dto = application_service.change_status(
@@ -464,7 +465,7 @@ def test_change_status_event_at_applied_for_interview(db_session: Session, accou
     """TC-02：转 INTERVIEW 时 event_at 同样生效（现有用例只覆盖了 WRITTEN）。"""
     dto = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(company="新华三", position="Java 开发", status=ApplicationStatus.WRITTEN),
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="新华三", position="Java 开发", status=ApplicationStatus.WRITTEN),
     )
     event_at = datetime(2026, 9, 28, 10, 30, 0)
 
@@ -481,7 +482,7 @@ def test_change_status_event_at_applied_for_interview(db_session: Session, accou
 def test_change_status_remark_without_existing(db_session: Session, account_id: int):
     """TC-02：原备注为空时流转备注直接落库，不产生前导换行。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="云器科技", position="后端开发")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="云器科技", position="后端开发")
     )
 
     dto = application_service.change_status(
@@ -499,7 +500,7 @@ def test_change_status_remark_without_existing(db_session: Session, account_id: 
 def test_change_status_without_remark_keeps_remark(db_session: Session, account_id: int):
     """TC-02：流转不传 remark 时备注原样保留，不追加任何流转记录。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="合合信息", position="后端开发", remark="原备注")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="合合信息", position="后端开发", remark="原备注")
     )
 
     dto = application_service.change_status(
@@ -526,7 +527,7 @@ def test_change_status_not_found(db_session: Session, account_id: int):
 def test_change_status_closed_requires_reason(db_session: Session, account_id: int):
     """TC-02：流转至 CLOSED 未指明结束原因 → 10001，且库中状态不变。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="神州信息", position="Java 开发")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="神州信息", position="Java 开发")
     )
 
     with pytest.raises(BizException) as exc_info:
@@ -544,7 +545,7 @@ def test_change_status_closed_requires_reason(db_session: Session, account_id: i
 def test_change_status_closed_writes_reason(db_session: Session, account_id: int):
     """TC-02：流转至 CLOSED 时结束原因入库，DTO 与库内一致。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="东软集团", position="Java 开发")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="东软集团", position="Java 开发")
     )
 
     dto = application_service.change_status(
@@ -561,7 +562,7 @@ def test_change_status_closed_writes_reason(db_session: Session, account_id: int
 def test_change_status_active_has_no_reason(db_session: Session, account_id: int):
     """TC-02：非 CLOSED 态的 close_reason 恒为 null（合法链路上逐跳核对）。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="满帮集团", position="Java 开发")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="满帮集团", position="Java 开发")
     )
 
     for target in (ApplicationStatus.WRITTEN, ApplicationStatus.INTERVIEW, ApplicationStatus.OFFER):
@@ -573,7 +574,7 @@ def test_create_close_reason_kept_only_when_closed(db_session: Session, account_
     """TC-01：新增时结束原因仅 CLOSED 态入库，非 CLOSED 态传该字段被忽略（不报错）。"""
     closed = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", 
             company="汉得信息",
             position="Java 开发",
             status=ApplicationStatus.CLOSED,
@@ -582,7 +583,7 @@ def test_create_close_reason_kept_only_when_closed(db_session: Session, account_
     )
     active = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", 
             company="华苏科技",
             position="Java 开发",
             status=ApplicationStatus.APPLIED,
@@ -598,14 +599,14 @@ def test_create_close_reason_kept_only_when_closed(db_session: Session, account_
 def test_update_close_reason_rejected_when_not_closed(db_session: Session, account_id: int):
     """TC-26：编辑接口对非 CLOSED 记录传结束原因 → 10001，且不产生部分更新。"""
     dto = application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="焦点科技", position="Java 开发", city="南京")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="焦点科技", position="Java 开发", city="南京")
     )
 
     with pytest.raises(BizException) as exc_info:
         application_service.update_application(
             db_session,
             account_id, dto.id,
-            ApplicationCreate(company="焦点科技", position="Java 开发", close_reason=CloseReason.FAILED),
+            ApplicationCreate(jd_text="岗位职责：测试 JD", company="焦点科技", position="Java 开发", close_reason=CloseReason.FAILED),
         )
 
     assert exc_info.value.code == ErrorCode.PARAM_INVALID
@@ -618,7 +619,7 @@ def test_update_close_reason_allowed_when_closed(db_session: Session, account_id
     """TC-26：已结束记录可更正结束原因（原因选错时的修正路径）。"""
     dto = application_service.create_application(
         db_session,
-        account_id, ApplicationCreate(
+        account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", 
             company="润和软件",
             position="Java 开发",
             status=ApplicationStatus.CLOSED,
@@ -629,7 +630,7 @@ def test_update_close_reason_allowed_when_closed(db_session: Session, account_id
     dto = application_service.update_application(
         db_session,
         account_id, dto.id,
-        ApplicationCreate(company="润和软件", position="Java 开发", close_reason=CloseReason.DECLINED),
+        ApplicationCreate(jd_text="岗位职责：测试 JD", company="润和软件", position="Java 开发", close_reason=CloseReason.DECLINED),
     )
 
     assert dto.status == ApplicationStatus.CLOSED
@@ -646,7 +647,7 @@ def test_list_filter_by_close_reason(db_session: Session, account_id: int):
     for company, reason in expected.items():
         application_service.create_application(
             db_session,
-            account_id, ApplicationCreate(
+            account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", 
                 company=company,
                 position="Java 开发",
                 status=ApplicationStatus.CLOSED,
@@ -654,7 +655,7 @@ def test_list_filter_by_close_reason(db_session: Session, account_id: int):
             ),
         )
     application_service.create_application(
-        db_session, account_id, ApplicationCreate(company="富士通南大", position="Java 开发")
+        db_session, account_id, ApplicationCreate(jd_text="岗位职责：测试 JD", company="富士通南大", position="Java 开发")
     )
 
     for company, reason in expected.items():
@@ -918,5 +919,28 @@ def test_download_template_has_chinese_header_and_sample(client: TestClient):
     assert resp.status_code == 200
     sheet = load_workbook(BytesIO(resp.content)).active
     header = [cell.value for cell in sheet[1]]
-    assert header[:4] == ["公司", "岗位", "城市", "投递日期"]
+    assert header[:4] == ["公司", "岗位", "岗位JD", "城市"]
     assert sheet.cell(row=2, column=1).value.startswith("【示例】")
+
+
+def test_create_application_missing_jd_rejected(client: TestClient):
+    """TC-120：新增投递缺 jd_text / 全空白 → 400 + 10001（接口文档 v1.35 §3.5）。"""
+    for payload in (
+        {"company": "云器科技", "position": "后端开发"},
+        {"company": "云器科技", "position": "后端开发", "jd_text": "   "},
+    ):
+        resp = client.post(API, json=payload)
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 10001
+
+
+def test_application_list_excludes_jd_text(client: TestClient):
+    """TC-121：列表不含 jd_text（大字段排除），详情返回全文。"""
+    created = client.post(
+        API,
+        json={"company": "云器科技", "position": "后端开发", "jd_text": "岗位职责：BSS 系统"},
+    ).json()["data"]
+    items = client.get(API).json()["data"]["items"]
+    assert "jd_text" not in items[0]
+    detail = client.get(f"{API}/{created['id']}").json()["data"]
+    assert detail["jd_text"] == "岗位职责：BSS 系统"

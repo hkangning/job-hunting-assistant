@@ -97,13 +97,13 @@ async function submit(withExtract) {
         </div>
       </el-form-item>
       <el-form-item label="公司">
-        <el-input v-model="form.company" placeholder="选填，如：南京浩鲸" />
+        <el-input v-model="form.company" maxlength="100" placeholder="选填，如：南京浩鲸" />
       </el-form-item>
       <el-form-item label="岗位">
-        <el-input v-model="form.position" placeholder="选填，如：Java 开发" />
+        <el-input v-model="form.position" maxlength="100" placeholder="选填，如：Java 开发" />
       </el-form-item>
       <el-form-item label="来源">
-        <el-input v-model="form.source" placeholder="选填，如：牛客 / 公众号 / 同学分享" />
+        <el-input v-model="form.source" maxlength="100" placeholder="选填，如：牛客 / 公众号 / 同学分享" />
       </el-form-item>
     </el-form>
 

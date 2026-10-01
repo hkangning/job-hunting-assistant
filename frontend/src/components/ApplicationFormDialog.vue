@@ -22,6 +22,7 @@ const cityPath = ref([])
 const form = reactive({
   company: '',
   position: '',
+  jd_text: '',
   city: '',
   expected_salary: '',
   applied_at: '',
@@ -41,6 +42,14 @@ const rules = {
   position: [
     { required: true, message: '请填写岗位名称', trigger: 'blur' },
     { max: 100, message: '岗位名称不超过 100 字', trigger: 'blur' }
+  ],
+  jd_text: [
+    {
+      validator: (_, value, callback) =>
+        (value || '').trim() ? callback() : callback(new Error('请填写岗位 JD')),
+      trigger: 'blur'
+    },
+    { max: 10000, message: '岗位 JD 不超过 10000 字', trigger: 'blur' }
   ],
   city: [{ max: 50, message: '城市不超过 50 字', trigger: 'blur' }],
   expected_salary: [{ max: 50, message: '期望薪资不超过 50 字', trigger: 'blur' }],
@@ -88,6 +97,7 @@ function resetForm() {
   Object.assign(form, {
     company: '',
     position: '',
+    jd_text: '',
     city: '',
     expected_salary: '',
     applied_at: todayString(),
@@ -108,6 +118,7 @@ async function loadDetail(id) {
     Object.assign(form, {
       company: detail.company,
       position: detail.position,
+      jd_text: detail.jd_text || '',
       city: detail.city || '',
       expected_salary: detail.expected_salary || '',
       applied_at: detail.applied_at || todayString(),
@@ -155,6 +166,7 @@ async function submit() {
   const payload = {
     company: form.company.trim(),
     position: form.position.trim(),
+    jd_text: form.jd_text.trim(),
     city: orNull(form.city),
     expected_salary: orNull(form.expected_salary),
     applied_at: form.applied_at || null,
@@ -193,6 +205,16 @@ async function submit() {
       </el-form-item>
       <el-form-item label="岗位名称" prop="position">
         <el-input v-model="form.position" maxlength="100" placeholder="如：Java 开发" />
+      </el-form-item>
+      <el-form-item label="岗位 JD" prop="jd_text">
+        <el-input
+          v-model="form.jd_text"
+          type="textarea"
+          :autosize="{ minRows: 3, maxRows: 8 }"
+          maxlength="10000"
+          show-word-limit
+          placeholder="把岗位描述整段粘进来——JD 匹配分析与模拟面试出题都会用到"
+        />
       </el-form-item>
       <el-form-item label="工作城市" prop="city">
         <el-cascader

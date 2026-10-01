@@ -11,7 +11,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Back } from '@element-plus/icons-vue'
+import { Back, Refresh } from '@element-plus/icons-vue'
 import { deleteExperience, getExperience } from '../api/experiences'
 import { textLength } from '../utils/text'
 import { shortDateTime } from '../utils/datetime'
@@ -26,6 +26,8 @@ const loading = ref(true)
 const errorMsg = ref('')
 const showOriginal = ref(false)
 const highlightItemId = ref(null)
+const reExtracting = ref(false) // 「重新提取」流程开启（提取区此时也常驻显示）
+const extracting = ref(false) // 提取进行中（提取区 status=running，据此禁用删除）
 
 const items = computed(() => detail.value?.items || [])
 const hasItems = computed(() => items.value.length > 0)
@@ -60,6 +62,26 @@ async function onExtracted(itemsFromDone) {
       detail.value.items = (itemsFromDone || []).map((it, index) => ({ id: `done-${index}`, ...it }))
     }
   }
+  reExtracting.value = false
+}
+
+/** 「重新提取」：后端为「提取即替换」语义（IS-53），复调提取端点即整篇重做——先确认再发。 */
+async function onReExtract() {
+  try {
+    await ElMessageBox.confirm(
+      `重新提取会重新调用 AI，并用新结果替换现有 ${items.value.length} 条条目。`,
+      '重新提取',
+      { type: 'warning', confirmButtonText: '重新提取', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  reExtracting.value = true
+}
+
+/** 提取区状态上报：提取中禁用删除——删除与提取落库并发时，条目并入会撞外键失败。 */
+function onExtractState(state) {
+  extracting.value = state === 'running'
 }
 
 function locateFromQuery() {
@@ -103,7 +125,15 @@ onMounted(load)
       <span class="detail__title">{{ title }}</span>
       <span v-if="detail?.source" class="detail__source">{{ detail.source }}</span>
       <span v-if="detail" class="detail__meta">{{ shortDateTime(detail.created_at) }}</span>
-      <el-button v-if="detail" class="detail__del" link type="danger" @click="onDelete">删除</el-button>
+      <el-button
+        v-if="detail"
+        class="detail__del"
+        link
+        type="danger"
+        :disabled="extracting"
+        @click="onDelete"
+        >删除</el-button
+      >
     </header>
 
     <div v-if="errorMsg" class="detail__error">
@@ -114,18 +144,30 @@ onMounted(load)
 
     <div v-else v-loading="loading" class="detail__body">
       <template v-if="detail">
-        <!-- 提取区：无条目时常驻（入口 / 进度 / 失败重试） -->
+        <!-- 提取区：无条目时常驻（入口 / 进度 / 失败重试）；「重新提取」运行 / 失败期间也显示 -->
         <ExperienceExtract
-          v-if="!hasItems"
+          v-if="!hasItems || reExtracting"
           :experience-id="experienceId"
-          :auto-start="route.query.extract === '1'"
+          :auto-start="route.query.extract === '1' || reExtracting"
+          :closable="hasItems"
           @extracted="onExtracted"
+          @close="reExtracting = false"
+          @state="onExtractState"
         />
 
-        <!-- 结构化条目 -->
-        <section v-else>
+        <!-- 结构化条目（重新提取期间保持可见——旧条目到新结果并库前仍是用户可读的内容） -->
+        <section v-if="hasItems">
           <h3 class="detail__section-title">
             结构化条目<span class="detail__count">{{ items.length }}</span>
+            <el-button
+              class="detail__reextract"
+              link
+              type="primary"
+              :icon="Refresh"
+              :disabled="extracting"
+              @click="onReExtract"
+              >重新提取</el-button
+            >
           </h3>
           <ol class="detail__list">
             <li
@@ -216,10 +258,16 @@ onMounted(load)
 }
 
 .detail__section-title {
+  display: flex;
+  align-items: center;
   margin: 0 0 10px;
   font-size: var(--fs-title);
   font-weight: 700;
   color: var(--c-text);
+}
+.detail__reextract {
+  margin-left: auto; /* 贴右：与「删除」同一视觉列 */
+  font-weight: 400;
 }
 .detail__count {
   display: inline-block;
