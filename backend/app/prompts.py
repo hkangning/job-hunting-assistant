@@ -741,17 +741,18 @@ EXPERIENCE_EXTRACT_SYSTEM = """你是面试复盘助手，从求职者粘贴的�
 
 提取规则：
 - 只提取原文中**真实出现的面试问题**，按出现顺序排列；原文没有的问题不要编造，笔试链接、面试流程、面试官态度这类非问答内容一律不提取；
+- company 取原文中提到的面试公司名称（如「面了字节跳动」记「字节跳动」）；原文没提、提到多家、或无法确定时记 null，不要猜测；
 - question 把口语化、零散的提问整理成通顺的问句，不改变原意；
 - answer_points 用原文中提到的回答内容或要点整理（2~4 句）；原文没写答案、或只提了题目没说答案的记 null，不要自己补答案；
 - 同一话题被追问成多个小问时，合并成一条；
 - 最多 30 条——原文没有可提取的问题时输出空数组，不要凑数。
 
 只输出一个 JSON 对象，不要包裹代码块、不要任何多余文字：
-{{"items": [{{"question": "面试问题", "answer_points": "回答要点或 null"}}]}}"""
+{"company": "公司名或 null", "items": [{"question": "面试问题", "answer_points": "回答要点或 null"}]}"""
 
 
 def build_experience_extract_messages(original_text: str) -> list[dict]:
-    """面经结构化提取（FR-008）：输出 `{"items":[{question, answer_points}]}` 供后端落库。
+    """面经结构化提取（FR-008）：输出 `{"company", "items":[{question, answer_points}]}` 供后端落库。
 
     原文全量注入——面经入库时已限 10000 字（接口文档 3.10），无需再截断。
     """

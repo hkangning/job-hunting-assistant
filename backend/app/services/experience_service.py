@@ -1,9 +1,11 @@
 """面经整理：面经 CRUD、条目检索与结构化提取（接口文档 3.10；FR-008）。
 
 面经分两步入库：先存原文（不调 AI），再由用户触发一次流式提取把原文拆成问答条目。
-提取口径（系统设计 5.3）：LLM 输出 `{"items":[{question, answer_points}]}` 一次性 JSON，
-**提取即替换**——同事务清掉该面经旧条目再插新条目并更新冗余计数，重试 / 重复提取不翻倍；
+提取口径（系统设计 5.3）：LLM 输出 `{"company", "items":[{question, answer_points}]}` 一次性
+JSON，**提取即替换**——同事务清掉该面经旧条目再插新条目并更新冗余计数，重试 / 重复提取不翻倍；
 流正常结束才落库，断连或中途失败不落库（原文仍在，重试即重新提取）。
+原文中识别到的公司名**仅在账号未手填 `company` 时回填**（手填优先）；落库前当前读校验面经仍在，
+提取期间被其他会话删除时报 10002、不落任何条目。
 """
 
 import json
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 MAX_ITEMS = 50  # 单篇面经条目硬上限（超出截尾）；prompt 侧引导模型最多 30 条
 MAX_QUESTION_LEN = 2000  # 题干长度上限，超长截断
 MAX_ANSWER_LEN = 5000  # 回答要点长度上限，超长截断
+MAX_COMPANY_LEN = 100  # 公司名长度上限（与 experience.company 列宽一致），超长截断
 
 _ITEM_KEY = '"question"'  # 进度计数识别的条目键名
 _PROGRESS_TAIL = len(_ITEM_KEY) - 1  # 跨块边界的键名尾巴：留不足一个键的长度，既拼得回又不重复计数
@@ -152,6 +155,8 @@ def run_extract(
     （`逐步` 覆盖式渲染，不能拆碎，故该段在协议层豁免输出节奏器）；模型原文全程不外发。
     条目**提取即替换**：流正常结束后同事务清旧插新并更新 `item_count`；断连或中途失败
     直接上抛（`GeneratorExit` 穿过本函数、commit 不执行）——原文仍在，重试即重新提取。
+    识别到的公司名仅在账号未手填 `company` 时回填（手填优先）；落库前当前读校验面经仍在，
+    提取期间被其他会话删除时报 404 + 10002（不落任何条目，`done.extra.company` 回传最终值）。
     解析失败、条目为空、提取条数为 0 一律报 40002；LLM 调用失败沿用四档错误码（10010~10012）。
     """
     experience = _get_owned(db, user_id, experience_id)
@@ -167,19 +172,23 @@ def run_extract(
             counter.reported = counter.count
             yield SSE.delta(f"已提炼 {counter.count} 条…", "progress")
 
-    items = _parse_items("".join(chunks))
+    company, items = _parse_extract("".join(chunks))
     if not items:
         raise BizException(
             ErrorCode.EXPERIENCE_EXTRACT_FAILED,
             "未能从原文中提取到问答条目，请确认原文包含面试问答内容",
         )
+    _ensure_still_exists(db, experience.id)
+    if company and not experience.company:
+        experience.company = company
     rows = _replace_items(db, experience, items)
     db.commit()
     extra = {
+        "company": experience.company,
         "items": [
             {"id": row.id, "question": row.question, "answer_points": row.answer_points}
             for row in rows
-        ]
+        ],
     }
     return {"record_id": experience.id, "extra": extra}
 
@@ -203,25 +212,31 @@ class _ProgressCounter:
         return self.count
 
 
-def _parse_items(raw: str) -> list[dict]:
-    """模型输出原文 → 合法条目列表（容错解析 → 逐条校验 → 截断上限）。
+def _parse_extract(raw: str) -> tuple[str | None, list[dict]]:
+    """模型输出原文 → (识别到的公司名, 合法条目列表)（容错解析 → 逐条校验 → 截断上限）。
 
-    `{"items":[...]}` 对象包裹（复用 `parse_json_block` 的围栏 / 前后文字容错）；
-    题干非字符串、去空白后为空、条目不是对象的**单独丢弃**，一条不剩由调用方报 40002。
-    题干与回答要点超长截断（不丢弃——截断仍可用，丢弃等于白花 token）。
+    `{"company": ..., "items":[...]}` 对象包裹（复用 `parse_json_block` 的围栏 / 前后文字容错）；
+    company 非字符串、去空白后为空、模型没按约定输出该键（含旧格式只给 items）一律记 None——
+    不回填、不报错，入口侧仅在账号未手填时采用。题干非字符串、去空白后为空、条目不是对象的
+    **单独丢弃**，一条不剩由调用方报 40002。题干 / 回答要点 / 公司名超长截断（不丢弃——
+    截断仍可用，丢弃等于白花 token）。
     """
     if not raw.strip():
         logger.info("面经提取：模型未输出任何内容")
-        return []
+        return None, []
     try:
         payload = parse_json_block(raw)
     except ValueError:
         logger.info("面经提取：模型输出不是可解析的 JSON 对象")
-        return []
+        return None, []
+    raw_company = payload.get("company")
+    company = None
+    if isinstance(raw_company, str):
+        company = raw_company.strip()[:MAX_COMPANY_LEN] or None
     items = payload.get("items")
     if not isinstance(items, list):
         logger.info("面经提取：模型输出缺少 items 数组")
-        return []
+        return company, []
     result: list[dict] = []
     for item in items:
         if not isinstance(item, dict):
@@ -239,7 +254,22 @@ def _parse_items(raw: str) -> list[dict]:
         )
         if len(result) >= MAX_ITEMS:
             break
-    return result
+    return company, result
+
+
+def _ensure_still_exists(db: Session, experience_id: int) -> None:
+    """落库前校验面经仍在（提取期间被其他会话删除的并发防御，接口文档 3.10）。
+
+    MySQL REPEATABLE READ 下普通 SELECT 走事务快照、可能看不到提取期间别处的删除；
+    `SELECT ... FOR UPDATE` 是**当前读**——读最新已提交状态并锁住该行：面经已被删则
+    404 + 10002 友好报错，避免随后的条目插入撞外键抛 10000；锁持续到本事务提交，
+    并发的删除只能等本事务结束，不会出现「条目插进了已删面经名下」。
+    """
+    exists = db.execute(
+        select(Experience.id).where(Experience.id == experience_id).with_for_update()
+    ).first()
+    if exists is None:
+        raise BizException(ErrorCode.NOT_FOUND, "面经已被删除，提取结果未保存")
 
 
 def _replace_items(db: Session, experience: Experience, items: list[dict]) -> list[ExperienceItem]:
