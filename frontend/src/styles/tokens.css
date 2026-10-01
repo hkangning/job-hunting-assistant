@@ -131,13 +131,16 @@ body {
    它参与布局并把按钮撑宽——实测「保存画像」由 90px 变 110.5px（图标 1em = 14.5px
    加上库内 [class*=el-icon]+span 的 6px 外边距，恰好 20.5px），图标移除后缩回，
    表现为点击保存时按钮宽度一跳。库内只有 :before 遮罩是绝对定位的，图标不是。
-   改为绝对定位居中 + 隐藏文字：按钮宽度恒定，loading 时中央转圈。 */
+   改为绝对定位居中 + 隐藏文字：按钮宽度恒定，loading 时中央转圈。
+
+   居中**不能用 transform**：库内 `.el-icon.is-loading` 挂着 `rotating` 动画，
+   keyframes 只声明 `transform: rotate(...)`——运行中的动画整体接管 transform，
+   `translate(-50%,-50%)` 会被覆盖丢弃（实测图标中心偏右下 7.25px，computed
+   transform 的平移分量为 0）。改用四边归零 + margin:auto 居中，与动画互不干扰。 */
 .el-button.is-loading > .el-icon.is-loading {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  margin: 0;
+  inset: 0;
+  margin: auto;
   z-index: 2; /* 盖过库内 :before 遮罩（z-index: 1） */
 }
 .el-button.is-loading > span {

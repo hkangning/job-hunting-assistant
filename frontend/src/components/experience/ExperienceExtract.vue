@@ -9,7 +9,7 @@
  * 刷新时若条目已落库自然不再渲染本组件；若仍无条目则回到手动入口，
  * 不会因为刷新而静默重复消耗 AI 调用。
  */
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 import { experienceExtractStream } from '../../api/experiences'
@@ -17,9 +17,11 @@ import { experienceExtractStream } from '../../api/experiences'
 const props = defineProps({
   experienceId: { type: Number, required: true },
   /** 进入详情页时自动发起（新增时「保存并提取」跳转带 ?extract=1） */
-  autoStart: { type: Boolean, default: false }
+  autoStart: { type: Boolean, default: false },
+  /** 失败态提供「关闭」入口（仅「重新提取」场景传——初次提取失败时本区常驻，无需关闭） */
+  closable: { type: Boolean, default: false }
 })
-const emit = defineEmits(['extracted'])
+const emit = defineEmits(['extracted', 'close', 'state'])
 
 const router = useRouter()
 
@@ -63,6 +65,9 @@ onMounted(() => {
   start()
 })
 
+// 状态上报：详情页据此在提取中禁用删除（提取中删面经，落库端的并入会撞外键失败）
+watch(status, (value) => emit('state', value), { immediate: true })
+
 onUnmounted(() => {
   stream?.abort()
 })
@@ -84,7 +89,10 @@ onUnmounted(() => {
 
     <template v-else>
       <p class="extract__hint extract__hint--error">{{ errorMsg }}</p>
-      <el-button type="primary" plain @click="start">重试提取</el-button>
+      <div class="extract__actions">
+        <el-button type="primary" plain @click="start">重试提取</el-button>
+        <el-button v-if="closable" @click="emit('close')">关闭</el-button>
+      </div>
     </template>
   </div>
 </template>
@@ -104,6 +112,10 @@ onUnmounted(() => {
 }
 .extract__hint--error {
   color: var(--el-color-danger);
+}
+.extract__actions {
+  display: flex;
+  gap: 8px;
 }
 .extract__running {
   display: flex;

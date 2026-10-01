@@ -44,6 +44,8 @@ async function loadLibrary() {
     const data = await listExperiences({ page: page.value, page_size: pageSize.value })
     items.value = data.items || []
     total.value = data.total || 0
+  } catch (error) {
+    ElMessage.error(error?.message || '面经列表加载失败')
   } finally {
     loading.value = false
   }
@@ -79,6 +81,8 @@ async function loadSearch() {
     })
     searchItems.value = data.items || []
     searchTotal.value = data.total || 0
+  } catch (error) {
+    ElMessage.error(error?.message || '条目检索失败')
   } finally {
     searching.value = false
   }
