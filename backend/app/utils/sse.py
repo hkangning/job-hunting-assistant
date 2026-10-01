@@ -71,14 +71,22 @@ class SSE:
         return _event("tool_call", {"tool_name": tool_name, "args": args})
 
     @staticmethod
-    def done(record_id: int | None = None, extra: dict | None = None, seq: int | None = None) -> str:
+    def done(
+        record_id: int | None = None,
+        extra: dict | None = None,
+        seq: int | None = None,
+        conversation_id: int | None = None,
+    ) -> str:
         """流正常结束：携带落库记录 id 与附加数据（前端据此刷新列表/跳转）。
 
-        `seq` 仅序号语义的链路传（模拟面试的题序，前端据此校准题号；不传则不下发该字段）。
+        `seq` 仅序号语义的链路传（模拟面试的题序，前端据此校准题号；不传则不下发该字段）；
+        `conversation_id` 仅 Agent 链路传（会话 id，与 seq 同模式按需下发）。
         """
         data: dict = {"record_id": record_id, "extra": extra}
         if seq is not None:
             data["seq"] = seq
+        if conversation_id is not None:
+            data["conversation_id"] = conversation_id
         return _event("done", data)
 
     @staticmethod
@@ -147,7 +155,12 @@ def _drive(work: Callable[[Session], Iterator[str]], start_message: str) -> Iter
         yield SSE.error(ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.default_message)
     else:
         result = payload or {}
-        yield SSE.done(result.get("record_id"), result.get("extra"), result.get("seq"))
+        yield SSE.done(
+            result.get("record_id"),
+            result.get("extra"),
+            result.get("seq"),
+            result.get("conversation_id"),
+        )
     finally:
         db.close()
 
@@ -164,7 +177,7 @@ _DELTA_EVENT_PREFIX = "event: delta\n"  # `_event` 对 delta 的报文前缀（�
 # 豁免段：整块直通、不拆步——拆碎会破坏其段契约。结构化段（一次性 JSON）前端整体解析；
 # `progress` 是整句状态文案，前端按条**覆盖式**渲染（只显示最后一条），拆碎会只剩几个字。
 _PACE_EXEMPT_SECTIONS = frozenset(
-    {"dimensions", "next_choices", "wrong_candidates", "progress", "tool_call"}
+    {"dimensions", "next_choices", "wrong_candidates", "progress", "tool_call", "result"}
 )
 
 _PACE_STEP = (1, 4)  # 小步步长范围（字）：随机步长让出字连续、不机械

@@ -8,7 +8,9 @@
 - `/stream/interview-chat`：模拟面试一问一答（步骤 15），作答 / 跳过 / 开场 / 续题按进度分派，
   一轮请求产出一轮内容，整轮生成完才落库；
 - `/stream/interview-summary`：面试总结报告（步骤 15），整场回顾生成总结并把会话置 FINISHED；
-- `/stream/experience-extract`：面经结构化提取（步骤 17），把面经原文拆成问答条目并落库。
+- `/stream/experience-extract`：面经结构化提取（步骤 17），把面经原文拆成问答条目并落库；
+- `/stream/agent-chat`：全局 Agent 对话（步骤 18），意图路由 + Function Calling——写操作类工具
+  出确认卡片不落库、查询类工具后端直接执行并以文字 + 结构化 JSON 块回显。
 
 路由层只做协议转换：取登录态、校验入参、组装业务生成器、交给 `sse_response` 包装，不直接访问 ORM。
 """
@@ -26,6 +28,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.prompts import JD_ANALYSIS_SECTION_RULES
+from app.schemas.agent import AgentChatRequest
 from app.schemas.practice import PracticeTurnRequest
 from app.schemas.stream import (
     DemoChatRequest,
@@ -34,7 +37,13 @@ from app.schemas.stream import (
     InterviewSummaryRequest,
     JdAnalysisRequest,
 )
-from app.services import experience_service, interview_service, jd_service, practice_turn_service
+from app.services import (
+    agent_service,
+    experience_service,
+    interview_service,
+    jd_service,
+    practice_turn_service,
+)
 from app.utils.section_splitter import SectionSplitter
 from app.utils.sse import SSE, sse_response
 
@@ -257,6 +266,40 @@ def experience_extract_stream(
         )
 
     return sse_response(_run, start_message="正在提取面经条目…")
+
+
+@router.post("/stream/agent-chat", summary="全局 Agent 对话（流式）")
+def agent_chat_stream(
+    payload: AgentChatRequest,
+    current_user: User = Depends(get_current_user),
+    client: LLMClient = Depends(get_llm_client),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """全局 Agent 对话（接口文档 3.11）。
+
+    事件流 `start → delta×N → done(record_id=本轮最后一条消息 id, conversation_id)`：
+    写操作类工具在参数齐备时推 `tool_call`（前端出确认卡片，用户确认后走 `/agent/tools/{tool}/execute`），
+    查询类工具由后端直接执行、结果以文字 + 一段 `section="result"` 的 JSON 块回显；
+    参数不全降级为追问（普通 delta，不报错）。会话不传则新建（done 回新 id）；
+    流正常结束才落库，断连或中途失败不落任何消息（重试 = 整轮重发）。
+    """
+    user_id = current_user.id
+    # 会话归属校验必须在流式响应建立之前完成（404 + 10002 按普通响应体返回）
+    if payload.conversation_id is not None:
+        agent_service.get_conversation(db, user_id=user_id, conversation_id=payload.conversation_id)
+
+    def _run(stream_db: Session) -> Iterator[str]:
+        return (
+            yield from agent_service.run_agent_chat(
+                stream_db,
+                user_id=user_id,
+                conversation_id=payload.conversation_id,
+                message=payload.message,
+                client=client,
+            )
+        )
+
+    return sse_response(_run, start_message="正在思考…")
 
 
 def _save_partial(

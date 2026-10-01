@@ -763,3 +763,68 @@ def build_experience_extract_messages(original_text: str) -> list[dict]:
         {"role": "system", "content": EXPERIENCE_EXTRACT_SYSTEM},
         {"role": "user", "content": user},
     ]
+
+
+# ---- 全局 Agent（FR-011）：意图路由、对话与工具调用 ----
+
+
+INTENT_CLASSIFY_SYSTEM = """你是个人求职助手的意图识别模块。判断用户这句话属于哪一类，只输出 JSON。
+
+【意图枚举】
+- APPLICATION：求职过程操作——记录新投递、查询投递进展、更新投递状态、问今天要跟进什么；
+- PRACTICE：笔试与刷题——出题练习、复习错题、问八股知识点；
+- EXPERIENCE：面经相关——检索面经、问某公司面试考了什么；
+- CHAT：以上都不是的闲聊或其他提问。
+
+只输出一个 JSON 对象，不要包裹代码块、不要任何多余文字：
+{"intent": "APPLICATION"}"""
+
+
+def build_intent_classify_messages(message: str) -> list[dict]:
+    """意图分类对话（规则快筛未命中时走本路，chat_json 非流式）。"""
+    return [
+        {"role": "system", "content": INTENT_CLASSIFY_SYSTEM},
+        {"role": "user", "content": message},
+    ]
+
+
+AGENT_SYSTEM = """你是个人求职助手的对话入口，通过自然语言帮用户处理求职事务。
+
+【当前日期】{today}
+{profile}
+【工作方式】
+- 需要查数据、办事情时调用给你的工具，绝不凭空编造数据；
+- 写操作（记录投递、更新状态）由系统出确认卡片、用户确认后生效——你调用工具后如实告知用户「已生成确认卡片，确认后生效」；
+- 查询类工具由系统执行、结果交给你总结——用自然语言讲清楚，别罗列原始字段；
+- 信息不够时直接追问缺失的关键信息（如公司名、岗位名），不要猜测。
+
+【回复约束】
+- 简洁自然，一般 200 字以内；
+- 不要 markdown 表格、不要加粗与反引号（前端按纯文本渲染），分条用「- 」；
+- 不要出现"作为 AI"这类自指表述。"""
+
+
+def build_agent_system(profile, *, with_profile: bool, today: str) -> str:
+    """组装 Agent 对话 system prompt。
+
+    `with_profile`——仅 APPLICATION / EXPERIENCE 意图注入画像摘要（系统设计 5.2，控 token）；
+    用 replace 而非 format 注入，画像内容若含花括号不会被当作占位符。
+    """
+    block = f"\n【用户画像】\n{build_profile_digest(profile)}\n" if with_profile else ""
+    return AGENT_SYSTEM.replace("{today}", today).replace("{profile}", block)
+
+
+AGENT_FOLLOWUP_UNKNOWN = "这部分我没太理解清楚，麻烦你再说明白一点～"
+
+
+def build_agent_followup(tool_label: str, missing: list[str]) -> str:
+    """工具参数不全时的追问文案（系统设计 5.2：Function Calling 失败降级为追问）。"""
+    return f"好的，要帮你{tool_label}，还差这些信息：{'、'.join(missing)}。麻烦补充一下～"
+
+
+def build_agent_result_note(tool_label: str, data_text: str) -> str:
+    """查询类工具执行结果回灌 LLM 的提示文本（要求其口头总结、不再调工具）。"""
+    return (
+        f"【系统】工具「{tool_label}」已执行，返回数据如下：\n{data_text}\n\n"
+        "请据此用自然语言向用户总结（不要罗列原始 JSON、不要再调用工具）。"
+    )

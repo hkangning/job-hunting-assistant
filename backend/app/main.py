@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import init_db
 from app.exceptions import register_exception_handlers
 from app.routers import (
+    agent,
     applications,
     auth,
     experiences,
@@ -60,6 +61,7 @@ app.add_middleware(
 register_exception_handlers(app)
 
 app.include_router(health.router, prefix=settings.api_prefix)
+app.include_router(agent.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(profile.router, prefix=settings.api_prefix)
 app.include_router(applications.router, prefix=settings.api_prefix)

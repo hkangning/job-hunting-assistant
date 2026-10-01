@@ -52,6 +52,21 @@ class LLMConfig:
     model: str  # 模型 ID
 
 
+@dataclass(frozen=True)
+class TextDelta:
+    """流式输出的一段文本增量。"""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolCallDelta:
+    """一次**完整**的工具调用（增量聚合完毕后才发出，Agent 链路用）。"""
+
+    tool_name: str
+    arguments: str  # 原始 JSON 字符串，由调用方解析（容错）与校验
+
+
 class LLMError(BizException):
     """LLM 对话调用失败（配置缺失 / 鉴权 / 模型不存在 / 网络超时 / 输出格式）。
 
@@ -91,6 +106,17 @@ class LLMClient(ABC):
     def chat_json(self, config: LLMConfig, messages: list[dict]) -> dict:
         """非流式对话：返回解析后的 JSON 对象（面经结构化 / 投喂抽取用）。"""
 
+    def stream_tool_chat(
+        self, config: LLMConfig, messages: list[dict], tools: list[dict] | None = None
+    ) -> Iterator[TextDelta | ToolCallDelta]:
+        """带工具调用的流式对话（Agent 链路）：yield 文本增量与完整工具调用。
+
+        **非抽象方法**（意为之）：默认实现降级为纯文本流、忽略 `tools`——测试替身不实现
+        本方法也能正常实例化；需要验证 tool_call 事件序列的用例自行覆写。
+        """
+        for text in self.stream_chat(config, messages):
+            yield TextDelta(text)
+
 
 class OpenAICompatibleClient(LLMClient):
     """生产实现：12 家供应商全走 OpenAI 兼容协议（系统设计 5.4）。"""
@@ -119,6 +145,39 @@ class OpenAICompatibleClient(LLMClient):
             return parse_json_block(content)
         except ValueError as exc:
             raise LLMError(ErrorCode.LLM_OUTPUT_INVALID, f"AI 输出格式异常：{exc}") from exc
+
+    def stream_tool_chat(
+        self, config: LLMConfig, messages: list[dict], tools: list[dict] | None = None
+    ) -> Iterator[TextDelta | ToolCallDelta]:
+        """流式 + 工具调用：文本增量即时下发；tool_calls 按 index 聚合为完整调用后下发。
+
+        聚合只在 `finish_reason == "tool_calls"`（或流尾兜底）时发出——增量碎片对上层无意义。
+        """
+        stream = _create_stream(_build_client(config), config, messages, tools)
+        pending: dict[int, dict] = {}  # index → 聚合中的调用（id 不收：结果以普通消息回灌，不走 role=tool）
+        try:
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
+                if delta is not None:
+                    if delta.content:
+                        yield TextDelta(delta.content)
+                    for part in delta.tool_calls or []:
+                        slot = pending.setdefault(part.index or 0, {"name": "", "arguments": ""})
+                        if part.function is not None:
+                            if part.function.name:  # 个别供应商把函数名也拆成多块
+                                slot["name"] += part.function.name
+                            if part.function.arguments:
+                                slot["arguments"] += part.function.arguments
+                if choice.finish_reason == "tool_calls":
+                    yield from _flush_calls(pending)
+            yield from _flush_calls(pending)  # 兜底：部分供应商不发 finish_reason
+        except Exception as exc:
+            raise _translate(exc) from exc
+        finally:
+            stream.close()
 
 
 def get_llm_client() -> LLMClient:
@@ -201,6 +260,17 @@ def _create_stream(
     if tools:
         kwargs["tools"] = tools
     return _retry(lambda: client.chat.completions.create(**kwargs))
+
+
+def _flush_calls(pending: dict[int, dict]) -> list[ToolCallDelta]:
+    """把聚合完毕的工具调用按 index 顺序取出，并清空缓冲区（无函数名的残片丢弃）。"""
+    calls = [
+        ToolCallDelta(slot["name"], slot["arguments"])
+        for _, slot in sorted(pending.items())
+        if slot["name"]
+    ]
+    pending.clear()
+    return calls
 
 
 def _create_chat(client: OpenAI, config: LLMConfig, messages: list[dict]):

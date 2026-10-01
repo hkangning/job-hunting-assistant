@@ -152,22 +152,60 @@ def trend(db: Session, user_id: int, days: int) -> TrendData:
 
 def create_application(db: Session, user_id: int, payload: ApplicationCreate) -> ApplicationDTO:
     """新增投递：归属由登录态决定（请求体不接受 user_id）；status 缺省 APPLIED、applied_at 缺省当天。"""
-    now = datetime.now()
-    status = payload.status or ApplicationStatus.APPLIED
-    app = Application(
-        user_id=user_id,
+    return create_from_fields(
+        db,
+        user_id,
         company=payload.company,
         position=payload.position,
         jd_text=payload.jd_text,
         city=payload.city,
         expected_salary=payload.expected_salary,
-        applied_at=to_datetime(payload.applied_at or date.today()),
+        applied_at=payload.applied_at,
         channel=payload.channel,
-        status=status,
-        # 结束原因仅在记录处于 CLOSED 时有值（数据库设计 3.1）
-        close_reason=payload.close_reason if status == ApplicationStatus.CLOSED else None,
+        status=payload.status,
+        close_reason=payload.close_reason,
         next_event_at=payload.next_event_at,
         remark=payload.remark,
+    )
+
+
+def create_from_fields(
+    db: Session,
+    user_id: int,
+    *,
+    company: str,
+    position: str,
+    jd_text: str | None = None,
+    city: str | None = None,
+    expected_salary: str | None = None,
+    applied_at: date | None = None,
+    channel: str | None = None,
+    status: ApplicationStatus | None = None,
+    close_reason: CloseReason | None = None,
+    next_event_at: datetime | None = None,
+    remark: str | None = None,
+) -> ApplicationDTO:
+    """新增投递（字段直传变体）：表单路径与 Agent 工具执行（execute_tool）共用。
+
+    两路径的 JD 口径不同：表单路径由 `ApplicationCreate` 保证必填，**Agent 路径可选**
+    （接口文档 3.11）——模型从对话里提取到 JD 就带上、没有就空入库，后续可在投递详情页补填。
+    """
+    now = datetime.now()
+    status = status or ApplicationStatus.APPLIED
+    app = Application(
+        user_id=user_id,
+        company=company,
+        position=position,
+        jd_text=jd_text,
+        city=city,
+        expected_salary=expected_salary,
+        applied_at=to_datetime(applied_at or date.today()),
+        channel=channel,
+        status=status,
+        # 结束原因仅在记录处于 CLOSED 时有值（数据库设计 3.1）
+        close_reason=close_reason if status == ApplicationStatus.CLOSED else None,
+        next_event_at=next_event_at,
+        remark=remark,
         created_at=now,
         updated_at=now,
     )
