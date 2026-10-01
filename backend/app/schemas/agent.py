@@ -1,6 +1,7 @@
 """全局 Agent 传输模型（接口文档 3.11）：对话请求体 + 会话 / 消息查询 DTO。
 
-工具调用与结果回显走 SSE 事件（{tool_name, args} / result 段），无请求模型。
+工具调用与结果回显走 SSE 事件（{tool_name, args} / result 段）；确认卡片执行端点
+（POST /agent/tools/{tool}/execute）的请求体为工具参数字典、由路由层宽收，无请求模型。
 """
 
 from datetime import datetime
