@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import SideNav from './components/SideNav.vue'
 import AppHeader from './components/AppHeader.vue'
+import AgentFloatBall from './components/agent/AgentFloatBall.vue'
 
 const route = useRoute()
 const collapse = ref(false)
@@ -28,7 +29,8 @@ const isBlank = computed(() => route.meta.layout === 'blank')
         <router-view />
       </el-main>
     </el-container>
-    <!-- 步骤 16 挂载位：<AgentFloatBall /> -->
+    <!-- 全局 Agent 悬浮球（步骤 19）：任意业务页可用；blank 布局不渲染 -->
+    <AgentFloatBall />
   </el-container>
 </template>
 

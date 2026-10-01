@@ -36,6 +36,8 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, init_db
 from app.models import (
+    AgentConversation,
+    AgentMessage,
     Application,
     Config,
     DomainMastery,
@@ -471,7 +473,7 @@ def _delete_account_data(db: Session, user_ids: list[int], *, keep_llm: bool = F
     """
     if not user_ids:
         return
-    # 两张子表没有 user_id，经父记录关联，先删
+    # 三张子表没有 user_id，经父记录关联，先删
     db.execute(
         delete(ExperienceItem).where(
             ExperienceItem.experience_id.in_(
@@ -486,6 +488,13 @@ def _delete_account_data(db: Session, user_ids: list[int], *, keep_llm: bool = F
             )
         )
     )
+    db.execute(
+        delete(AgentMessage).where(
+            AgentMessage.conversation_id.in_(
+                select(AgentConversation.id).where(AgentConversation.user_id.in_(user_ids))
+            )
+        )
+    )
     for model in (
         PracticeRecord,
         PracticeSession,
@@ -495,6 +504,7 @@ def _delete_account_data(db: Session, user_ids: list[int], *, keep_llm: bool = F
         Application,
         Experience,
         DomainMastery,
+        AgentConversation,
         Config,
         UserProfile,
     ):

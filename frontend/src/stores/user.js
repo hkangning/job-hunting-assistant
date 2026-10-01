@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useAppStore } from './app'
 import { useOverviewStore } from './overview'
+import { useAgentStore } from './agent'
 import {
   loginApi, registerApi, meApi, updateAccountApi,
   uploadAvatarApi, resetAvatarApi
@@ -72,6 +73,7 @@ export const useUserStore = defineStore('user', () => {
     reset()
     useAppStore().$reset()
     useOverviewStore().reset() // 概览数据同样按账号隔离，不得残留上一账号的统计
+    useAgentStore().reset() // 悬浮球对话与本地会话 id 随登出清空（系统设计 §4.2）
   }
 
   return {

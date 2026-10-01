@@ -31,6 +31,7 @@ export function streamSSE(url, body, handlers = {}, options = {}) {
   const { onStart, onDelta, onToolCall, onDone, onError } = handlers
   const controller = new AbortController()
   let aborted = false
+  let sawDone = false // 是否收到过 done 事件（见 run 末尾的截断判定）
 
   if (options.signal) {
     if (options.signal.aborted) controller.abort()
@@ -42,8 +43,10 @@ export function streamSSE(url, body, handlers = {}, options = {}) {
     if (event === 'start') onStart?.(data)
     else if (event === 'delta') onDelta?.(data)
     else if (event === 'tool_call') onToolCall?.(data)
-    else if (event === 'done') onDone?.(data)
-    else if (event === 'error') {
+    else if (event === 'done') {
+      sawDone = true
+      onDone?.(data)
+    } else if (event === 'error') {
       onError?.(data)
       return false
     }
@@ -126,6 +129,13 @@ export function streamSSE(url, body, handlers = {}, options = {}) {
       }
     } catch (err) {
       reportError(err, '流式连接中断，请重试')
+      return
+    }
+
+    // 流结束但从未收到 done：上游被截断（服务端崩溃 / 网关超时关连接）。
+    // 不报错的话各链路会停在「仍在生成」态——统一按可重试的错误处理。
+    if (!sawDone && !aborted) {
+      onError?.({ code: undefined, message: '连接中断，回复未完成，请重试' })
     }
   }
 
