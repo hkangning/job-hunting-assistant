@@ -5,6 +5,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 from app.models.enums import ApplicationStatus
+from app.schemas.campus import CampusEventBrief
 
 
 class UpcomingEventItem(BaseModel):
@@ -58,12 +59,12 @@ class OverviewData(BaseModel):
         default_factory=list, description="3 天无进展的投递，按 days 降序（拖得越久越靠前）"
     )
     wrong_question_count: int = Field(default=0, description="到期未复习错题数")
-    campus_events: list[dict] = Field(
+    campus_events: list[CampusEventBrief] = Field(
         default_factory=list,
-        description="近期宣讲会/双选会，按日期升序取前若干条；子项结构见接口文档 3.4（数据源属校招情报，步骤 21 落地前恒为空列表）",
+        description="近期宣讲会/双选会，按事件时间升序取前 5 条（未过期）；子项结构见接口文档 3.4",
     )
     last_crawl_at: datetime | None = Field(
-        default=None, description="最近一次校招信息采集时间；null=从未采集（步骤 21 落地前恒为 null）"
+        default=None, description="最近一次校招信息采集时间（多源取最近）；null=从未采集或源清单为空"
     )
     top_job_postings: list[dict] = Field(
         default_factory=list,

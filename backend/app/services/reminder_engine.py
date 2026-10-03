@@ -20,6 +20,7 @@ from app.database import SessionLocal
 from app.models import Application, Question, Reminder, User, WrongQuestion
 from app.models.enums import ApplicationStatus, ReminderType
 from app.prompts import build_reminder_messages
+from app.services import campus_service
 from app.services.overview_service import (
     FOLLOW_UP_MIN_DAYS,
     FOLLOW_UP_STATUSES,
@@ -68,6 +69,10 @@ def run_daily(
         getter = client_getter or get_llm_client
         total = 0
         with factory() as db:
+            # 校招信息采集：公共任务全站执行一次（步骤 21，受 crawl_enabled 总开关控制）；
+            # 先采集后判定，订阅命中的提醒（步骤 22）才能读到本次新入库的条目。
+            # 内部已隔离异常与总开关，失败不阻塞提醒生成。
+            campus_service.run_scheduled(db_factory=factory)
             for user_id in db.scalars(select(User.id)).all():
                 try:
                     total += generate_for_user(db, user_id, client_getter=getter)

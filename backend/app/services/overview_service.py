@@ -1,6 +1,6 @@
-"""今日概览聚合服务：面试提醒、投递统计、跟进提醒与个人中心计数（FR-001、FR-013）。
+"""今日概览聚合服务：面试提醒、投递统计、跟进提醒、校招情报与个人中心计数（FR-001、FR-013、FR-021）。
 
-纯 SQL 规则聚合、不调 LLM；数据一律按登录账号过滤（系统设计 3.6）。
+纯 SQL 规则聚合、不调 LLM；账号私有数据按登录账号过滤（系统设计 3.6），校招情报为公共数据。
 """
 
 from datetime import datetime, timedelta
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Application, InterviewSession, WrongQuestion
 from app.models.enums import ApplicationStatus
+from app.services import campus_service
 from app.schemas.overview import (
     ApplicationStats,
     FollowUpItem,
@@ -27,14 +28,16 @@ FOLLOW_UP_STATUSES = (ApplicationStatus.APPLIED, ApplicationStatus.WRITTEN)
 def build_overview(db: Session, user_id: int) -> OverviewData:
     """聚合当前账号的今日概览数据。"""
     now = datetime.now()
+    # 校招情报（公共数据）：近期宣讲会/双选会取前若干条 + 最近一次采集时间（步骤 21 落地）
+    campus_events, last_crawl_at = campus_service.overview_campus(db)
     return OverviewData(
         upcoming_events=_upcoming_events(db, user_id, now),
         application_stats=_application_stats(db, user_id),
         follow_ups=_follow_ups(db, user_id, now),
         wrong_question_count=_due_wrong_question_count(db, user_id, now),
-        # 校招情报四项的数据源（crawl_source / job_posting / subscription）属步骤 21~22，落地前固定空值
-        campus_events=[],
-        last_crawl_at=None,
+        campus_events=campus_events,
+        last_crawl_at=last_crawl_at,
+        # 岗位信息与订阅命中数属步骤 22（job_posting / subscription 表），落地前固定空值
         top_job_postings=[],
         match_reminder_count=0,
         stats=_stats(db, user_id),

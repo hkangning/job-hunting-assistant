@@ -16,6 +16,8 @@ from app.routers import (
     agent,
     applications,
     auth,
+    campus,
+    crawl_sources,
     experiences,
     health,
     interview,
@@ -40,7 +42,7 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动钩子：建库 + 种子导入（步骤 2，幂等）+ 每日提醒定时任务（步骤 20，可开关）。"""
+    """启动钩子：建库 + 种子导入（步骤 2，幂等）+ 每日任务定时器（步骤 20~21，可开关）。"""
     added = init_db()
     if added:
         logging.info("种子题库新增 %d 题", added)
@@ -83,6 +85,8 @@ app.include_router(agent.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(profile.router, prefix=settings.api_prefix)
 app.include_router(applications.router, prefix=settings.api_prefix)
+app.include_router(campus.router, prefix=settings.api_prefix)
+app.include_router(crawl_sources.router, prefix=settings.api_prefix)
 app.include_router(experiences.router, prefix=settings.api_prefix)
 app.include_router(jd_analysis.router, prefix=settings.api_prefix)
 app.include_router(interview.router, prefix=settings.api_prefix)
