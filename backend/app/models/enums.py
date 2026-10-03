@@ -160,6 +160,7 @@ class ReminderType(StrEnum):
     FOLLOW_UP = "FOLLOW_UP"  # 投递跟进（3 天无进展）
     WRONG_QUESTION = "WRONG_QUESTION"  # 错题到期
     INTERVIEW = "INTERVIEW"  # 待面试提醒
+    INFO_MATCH = "INFO_MATCH"  # 校招情报订阅命中（步骤 22 起生成；ref_type 标识来源表）
 
 
 class MessageRole(StrEnum):

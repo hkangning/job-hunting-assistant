@@ -1,11 +1,11 @@
 """画像与设置传输模型（接口文档 3.12；表结构见数据库设计 3.14 / 3.15）。"""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StrictBool, StringConstraints, field_serializer
 
-from app.models.enums import ExperienceType
+from app.models.enums import ExperienceType, ReminderType
 from app.utils.datetime_utils import format_datetime
 
 # 经历名称：必填、去首尾空格、1~100 字（空串 → 10001，接口文档 3.12）
@@ -123,3 +123,25 @@ class SettingsUpdateRequest(BaseModel):
     crawl_enabled: StrictBool | None = Field(default=None, description="就业网抓取开关（系统级，非布尔值 → 10001）")
     asr_app_id: str | None = Field(default=None, description="讯飞语音 AppID；传值则加密覆盖，传空串不修改")
     asr_api_key: str | None = Field(default=None, description="讯飞语音 Key；传值则加密覆盖，传空串不修改")
+
+
+class ReminderDTO(BaseModel):
+    """提醒记录（GET /reminders 列表项，接口文档 3.14）。"""
+
+    id: int = Field(description="提醒 id")
+    reminder_type: ReminderType = Field(
+        description="类型：FOLLOW_UP 投递跟进 / WRONG_QUESTION 错题到期 / INTERVIEW 待面试 / INFO_MATCH 校招情报"
+    )
+    ref_id: int | None = Field(description="关联业务 id（跟进 / 面试 = 投递 id；错题 = 错题 id）")
+    ref_type: str | None = Field(
+        description="信息来源表名（仅 INFO_MATCH 有值：campus_event 宣讲会 / job_posting 岗位），其余类型为 null"
+    )
+    content: str = Field(description="提醒文案（AI 生成，失败时为固定模板文案）")
+    remind_date: date = Field(description="提醒日期（生成当天，YYYY-MM-DD）")
+    checked: bool = Field(description="是否已读（false 未读 / true 已读）")
+
+
+class ReminderRunData(BaseModel):
+    """手动触发每日任务的结果（POST /reminders/run，接口文档 3.14）。"""
+
+    generated: int = Field(description="本次实际新生成的提醒条数（当日已生成过的不重复计数）")

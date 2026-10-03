@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     sse_pace_cps: float = 45.0  # SSE 文本输出节奏（字/秒）：把快模型的"块状喷射"缓释成打字机观感；<=0 关闭节奏直通（见 utils/sse.py 节奏器）
 
+    reminder_scheduler_enabled: bool = True  # 每日提醒定时任务开关（APScheduler，每日 07:00）；置 false 可用于演示环境禁用后台调度
+
 
 def _ensure_secret_key(config: Settings) -> None:
     """主密钥缺失时生成随机值并写回 .env（系统设计 3.5）。

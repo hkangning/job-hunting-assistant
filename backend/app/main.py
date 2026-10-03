@@ -3,6 +3,8 @@
 import logging
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,10 +24,12 @@ from app.routers import (
     overview,
     practice,
     profile,
+    reminders,
     settings as settings_router,
     stream,
     wrong_questions,
 )
+from app.services.reminder_engine import run_daily
 from app.utils.security import AVATAR_DIR
 
 logging.basicConfig(
@@ -36,12 +40,26 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动钩子：建库 + 种子导入（步骤 2，幂等）；定时任务注册见步骤 17。"""
+    """启动钩子：建库 + 种子导入（步骤 2，幂等）+ 每日提醒定时任务（步骤 20，可开关）。"""
     added = init_db()
     if added:
         logging.info("种子题库新增 %d 题", added)
-    # TODO(步骤 17)：注册每日提醒定时任务
+    scheduler = None
+    if settings.reminder_scheduler_enabled:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(
+            run_daily,
+            CronTrigger(hour=7, minute=0),
+            id="daily_reminders",
+            name="每日提醒任务",
+            max_instances=1,
+            coalesce=True,
+        )
+        scheduler.start()
+        logging.info("每日提醒任务已注册（每日 07:00）")
     yield
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -69,6 +87,7 @@ app.include_router(experiences.router, prefix=settings.api_prefix)
 app.include_router(jd_analysis.router, prefix=settings.api_prefix)
 app.include_router(interview.router, prefix=settings.api_prefix)
 app.include_router(overview.router, prefix=settings.api_prefix)
+app.include_router(reminders.router, prefix=settings.api_prefix)
 app.include_router(practice.router, prefix=settings.api_prefix)
 app.include_router(llm_providers.router, prefix=settings.api_prefix)
 app.include_router(settings_router.router, prefix=settings.api_prefix)

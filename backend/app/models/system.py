@@ -24,6 +24,7 @@ class Reminder(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))  # 所属账号（提醒按账号分别生成）
     reminder_type: Mapped[str] = mapped_column(String(20))  # 类型，枚举 ReminderType
     ref_id: Mapped[int | None] = mapped_column(Integer)  # 关联业务 id（跟进/面试=application.id，错题=wrong_question.id）
+    ref_type: Mapped[str | None] = mapped_column(String(20))  # 信息来源表名（仅 INFO_MATCH 有值：campus_event / job_posting），其余类型为 NULL
     content: Mapped[str] = mapped_column(Text)  # 提醒文案（LLM 或模板生成）
     remind_date: Mapped[date] = mapped_column(Date)  # 提醒日期
     checked: Mapped[int] = mapped_column(Integer, default=0)  # 是否已读（0 未读 / 1 已读）

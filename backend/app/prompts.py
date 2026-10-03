@@ -829,3 +829,31 @@ def build_agent_result_note(tool_label: str, data_text: str) -> str:
         f"【系统】工具「{tool_label}」已执行，返回数据如下：\n{data_text}\n\n"
         "请据此用自然语言向用户总结（不要罗列原始 JSON、不要再调用工具）。"
     )
+
+
+# ---------- 提醒文案（FR-013）：每日任务生成提醒时的一次性文案改写 ----------
+# 判定全为纯规则（不调 LLM），本场景是每日任务里唯一一次 LLM 调用；失败一律回退模板文案。
+
+REMINDER_DIGEST_SYSTEM = """你是求职助手的提醒文案写手，把每日提醒清单改写成自然口语的一句话。
+
+【输入】每行一条提醒，格式为「序号. [类型] 内容」。
+
+【输出格式】
+只输出一个 JSON 对象，不要代码块、不要任何多余文字：
+{"items": [{"index": 1, "content": "改写后的文案"}]}
+index 与输入序号一一对应，输入几条就输出几条、一条都不能少。
+
+【约束】
+- 每条 20~50 字，一句话讲清「发生了什么 + 建议做什么」；
+- 直接对用户说话（可用「你」），语气自然、像朋友提醒，别写成系统通知；
+- 只基于输入内容改写，不编造输入里没有的信息；
+- 不要序号前缀、不用 markdown 标记。"""
+
+
+def build_reminder_messages(fact_lines: list[str]) -> list[dict]:
+    """提醒文案批量改写对话（chat_json 非流式，一次生成该账号全部条目）。"""
+    user = "【今日提醒清单】\n" + "\n".join(fact_lines)
+    return [
+        {"role": "system", "content": REMINDER_DIGEST_SYSTEM},
+        {"role": "user", "content": user},
+    ]
