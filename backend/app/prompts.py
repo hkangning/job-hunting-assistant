@@ -766,6 +766,41 @@ def build_experience_extract_messages(original_text: str) -> list[dict]:
     ]
 
 
+# ---- 岗位投喂（FR-021）：JD 原文 / 链接正文 → 岗位字段抽取 ----
+
+
+INGEST_TEXT_LIMIT = 6000  # 投喂原文注入上限（字符）：粘贴正文通常在此以内，控制 prefill 长度
+
+INGEST_EXTRACT_SYSTEM = """你是信息抽取助手，从招聘信息原文中抽取岗位字段。
+
+抽取规则：
+- 只抽取原文中明确写出的信息，缺失或拿不准的字段一律记 null，**不要编造、不要推测**；
+- title 是岗位名称（如「Java 后端开发工程师」），company 是招聘公司名称（如「华为技术有限公司」）；
+- city 只取工作所在城市名（如「南京」），不要填详细地址；原文提及多个城市时取第一个；
+- job_type 只取 CAMPUS（校招）/ INTERN（实习）/ SOCIAL（社招）之一，从岗位性质判断、拿不准记 null；
+- deadline 是投递截止日期，格式 YYYY-MM-DD，原文没写或无法确定记 null；
+- salary_text 保留原文写法（如「15-25K·14薪」），不做换算；edu_req 如「本科及以上」；
+- major_req 如「计算机、软件工程相关专业」。
+
+只输出一个 JSON 对象，不要包裹代码块、不要任何多余文字：
+{"title": "岗位名称或 null", "company": "公司名或 null", "city": "城市或 null", "edu_req": "学历要求或 null", "major_req": "专业要求或 null", "salary_text": "薪资原文或 null", "job_type": "CAMPUS 或 INTERN 或 SOCIAL 或 null", "deadline": "YYYY-MM-DD 或 null"}"""
+
+
+def build_ingest_extract_messages(text: str) -> list[dict]:
+    """岗位投喂抽取（FR-021）：输出 8 个岗位字段 JSON，缺失字段为 null。
+
+    原文注入前截断到 INGEST_TEXT_LIMIT（接口层已限长，这里兜底）。
+    """
+    user = f"""【招聘信息原文】
+{text[:INGEST_TEXT_LIMIT]}
+
+请抽取岗位字段。"""
+    return [
+        {"role": "system", "content": INGEST_EXTRACT_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
 # ---- 全局 Agent（FR-011）：意图路由、对话与工具调用 ----
 
 

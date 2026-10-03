@@ -1,10 +1,10 @@
-"""校招情报传输模型：信息源配置与宣讲会/双选会（接口文档 3.16）。"""
+"""校招情报传输模型：信息源配置、宣讲会/双选会、岗位、订阅与日历（接口文档 3.16）。"""
 
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.models.enums import CrawlSystemType
+from app.models.enums import CrawlSystemType, JobType, SubscriptionInfoType
 
 
 # ---------- 信息源（/crawl-sources） ----------
@@ -137,3 +137,139 @@ class CampusEventBrief(BaseModel):
     source_site: str | None = Field(description="来源学校名（多来源逗号分隔）")
     info_type: str = Field(description="信息类型：TALK 宣讲会 / FAIR 双选会")
     status: str = Field(description="状态：ACTIVE / CHANGED（前端打「已变更」角标）")
+
+
+# ---------- 岗位（/job-postings 与概览） ----------
+
+
+class JobPostingItem(BaseModel):
+    """岗位列表条目（GET /job-postings；结果 = 公共岗位 + 本账号投喂）。"""
+
+    id: int = Field(description="岗位 id")
+    title: str = Field(description="岗位名称")
+    company: str = Field(description="公司名称")
+    city: str | None = Field(description="工作城市")
+    edu_req: str | None = Field(description="学历要求（原文）")
+    major_req: str | None = Field(description="专业要求（原文）")
+    salary_text: str | None = Field(description="薪资原文，不做结构化解析")
+    job_type: str | None = Field(description="岗位类型：CAMPUS 校招 / INTERN 实习 / SOCIAL 社招")
+    deadline: datetime | None = Field(description="投递截止时间")
+    source_site: str | None = Field(description="来源学校名（投喂岗位为空）")
+    source_url: str | None = Field(description="原文链接")
+    ingest_source: str = Field(description="入库通道：AUTO 自动抓取（公共）/ FEED 投喂（仅本账号可见）")
+    status: str = Field(description="状态：ACTIVE 有效 / CHANGED 内容已变更 / EXPIRED 已过期")
+    first_seen_at: datetime = Field(description="首次入库时间（time 排序依据）")
+    changed_at: datetime | None = Field(description="最近一次内容变更时间，仅 CHANGED 时有值")
+    match_score: int = Field(description="画像匹配打分（0~100，城市 +30 / 方向 +40 / 专业 +30）")
+    is_applied: bool = Field(description="当前账号是否已投递（按公司 + 岗位名比对投递记录）")
+
+
+class JobPostingBrief(BaseModel):
+    """概览「校招情报」区块的岗位条目（GET /overview 的 top_job_postings，按匹配打分降序）。"""
+
+    id: int = Field(description="岗位 id")
+    title: str = Field(description="岗位名称")
+    company: str = Field(description="公司名称")
+    city: str | None = Field(description="工作城市")
+    job_type: str | None = Field(description="岗位类型：CAMPUS / INTERN / SOCIAL")
+    deadline: datetime | None = Field(description="投递截止时间")
+    source_site: str | None = Field(description="来源学校名（投喂岗位为空）")
+    source_url: str | None = Field(description="原文链接")
+    match_score: int = Field(description="画像匹配打分（0~100）")
+    is_applied: bool = Field(description="当前账号是否已投递")
+
+
+class JobPostingIngestRequest(BaseModel):
+    """投喂抽取预览请求体（POST /job-postings/ingest）：text 与 url 二选一，同传 → 10001。"""
+
+    text: str | None = Field(
+        default=None, max_length=20000, description="粘贴的 JD 原文（与 url 二选一，同传 → 10001）"
+    )
+    url: str | None = Field(
+        default=None, max_length=500, description="招聘信息链接（走合规抓取：拒绝内网地址，抓不到 → 70003）"
+    )
+
+
+class JobPostingIngestData(BaseModel):
+    """投喂抽取预览结果（**不入库**）：用户确认后把 fields 回传 POST /job-postings 入库。"""
+
+    fields: dict = Field(
+        description="AI 抽取的岗位字段（title / company / city / edu_req / major_req / salary_text / "
+        "job_type / deadline），未抽取到的为 null"
+    )
+    missing: list[str] = Field(default_factory=list, description="未抽取到的字段名（前端标黄提示用户补充）")
+    source: str = Field(description="预览来源通道，固定 FEED")
+    fetched_from: str = Field(description="原文来源：text 粘贴 / url 链接抓取")
+
+
+class JobPostingCreateRequest(BaseModel):
+    """确认入库请求体（POST /job-postings；user_id / dedup_key / ingest_source 由服务端生成）。"""
+
+    title: str = Field(min_length=1, max_length=200, description="岗位名称")
+    company: str = Field(min_length=1, max_length=100, description="公司名称")
+    city: str | None = Field(default=None, max_length=50, description="工作城市")
+    edu_req: str | None = Field(default=None, max_length=50, description="学历要求")
+    major_req: str | None = Field(default=None, max_length=300, description="专业要求")
+    salary_text: str | None = Field(default=None, max_length=100, description="薪资原文")
+    job_type: JobType | None = Field(default=None, description="岗位类型：CAMPUS / INTERN / SOCIAL")
+    deadline: datetime | None = Field(default=None, description="投递截止时间")
+    source_url: str | None = Field(default=None, max_length=500, description="原文链接（链接投喂时回传）")
+    raw_excerpt: str | None = Field(
+        default=None, max_length=20000, description="原文摘录（供日后回看校对；仅投喂通道保存）"
+    )
+
+
+# ---------- 日历（GET /calendar） ----------
+
+
+class CalendarEventItem(BaseModel):
+    """日历事件（四类聚合：宣讲会 / 双选会 / 笔试 / 面试）。"""
+
+    event_type: str = Field(description="事件类型：TALK 宣讲会 / FAIR 双选会 / EXAM 笔试 / INTERVIEW 面试")
+    title: str = Field(description="标题（宣讲会/双选会为活动标题；笔试/面试为岗位名）")
+    event_at: datetime = Field(description="事件时间")
+    ref_type: str = Field(description="关联对象来源表：campus_event / application（与 ref_id 供前端跳转）")
+    ref_id: int = Field(description="关联对象 id")
+    company: str | None = Field(description="公司名称，来源未提供为 null")
+    location: str | None = Field(description="地点（宣讲会/双选会）；笔试/面试为 null")
+    status: str = Field(description="来源对象状态（活动：ACTIVE / CHANGED / EXPIRED；投递：APPLIED 等状态值）")
+
+
+# ---------- 订阅规则（/subscriptions） ----------
+
+
+class SubscriptionDTO(BaseModel):
+    """订阅规则条目（数组类字段直接返回数组）。"""
+
+    id: int = Field(description="规则 id")
+    name: str = Field(description="规则名称")
+    keywords: list[str] = Field(default_factory=list, description="关键词数组（命中标题 / 公司名），空 = 不限")
+    companies: list[str] = Field(default_factory=list, description="公司名数组，空 = 不限")
+    cities: list[str] = Field(default_factory=list, description="城市数组（岗位按城市、宣讲会按地点文本），空 = 不限")
+    info_types: list[str] = Field(default_factory=list, description="信息类型数组：TALK / FAIR / JOB，空 = 不限")
+    enabled: bool = Field(description="启用开关")
+    created_at: datetime = Field(description="创建时间")
+
+
+class SubscriptionCreateRequest(BaseModel):
+    """新增订阅规则的请求体。"""
+
+    name: str = Field(min_length=1, max_length=50, description="规则名称")
+    keywords: list[str] | None = Field(default=None, description="关键词数组（命中标题 / 公司名）")
+    companies: list[str] | None = Field(default=None, description="公司名数组")
+    cities: list[str] | None = Field(default=None, description="城市数组")
+    info_types: list[SubscriptionInfoType] | None = Field(
+        default=None, description="信息类型数组：TALK 宣讲会 / FAIR 双选会 / JOB 岗位；空 = 不限"
+    )
+    enabled: bool = Field(default=True, description="启用开关，默认 true")
+
+
+class SubscriptionUpdateRequest(BaseModel):
+    """部分更新订阅规则的请求体（PUT /subscriptions/{id}）：未传字段保持原值，传空数组 = 清空该维度。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=50, description="规则名称")
+    keywords: list[str] | None = Field(default=None, description="关键词数组；传 [] 清空（不再限定）")
+    companies: list[str] | None = Field(default=None, description="公司名数组；传 [] 清空")
+    cities: list[str] | None = Field(default=None, description="城市数组；传 [] 清空")
+    info_types: list[SubscriptionInfoType] | None = Field(default=None, description="信息类型数组；传 [] 清空")
+    enabled: bool | None = Field(default=None, description="启用开关")

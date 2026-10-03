@@ -39,6 +39,15 @@ def dedup_key(company: str | None, title: str, event_date: datetime) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
 
+def posting_dedup_key(company: str | None, title: str | None, city: str | None) -> str:
+    """岗位去重指纹：sha1(归一公司 + 归一标题 + 归一城市)，同归属内去重（系统设计 5.9）。
+
+    与活动版字段不同（岗位没有确切日期、以城市参与区分）；城市可空，按空串参与拼接。
+    """
+    parts = [normalize_company(company), normalize_text(title), normalize_text(city)]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
 def content_hash(item) -> str:
     """内容哈希：sha1(归一标题 + 归一公司 + 时间 + 地点 + 专业)，用于变更检测与审计。
 
@@ -50,6 +59,20 @@ def content_hash(item) -> str:
         item.event_date.strftime("%Y-%m-%d %H:%M") if item.event_date else "",
         normalize_text(item.location),
         normalize_text(item.major_req),
+    ]
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def posting_content_hash(item) -> str:
+    """岗位内容哈希：sha1(归一标题 + 归一公司 + 归一城市 + 截止时间)，用于变更检测与审计。
+
+    与活动版字段不同（岗位没有活动时间/地点，以城市与截止时间参与）；入参为鸭子类型对象。
+    """
+    parts = [
+        normalize_text(item.title),
+        normalize_company(item.company),
+        normalize_text(item.city),
+        item.deadline.strftime("%Y-%m-%d %H:%M") if item.deadline else "",
     ]
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -116,12 +139,14 @@ def _position_keywords(position: str) -> list[str]:
 def match_score(item, profile) -> int:
     """画像匹配打分（0~100）：城市 +30 / 方向 +40 / 专业 +30；对应字段缺失不加不减。
 
-    `item` 与 `profile` 均为鸭子类型对象（item 读 title/location/major_req，profile 读
-    target_city/target_position/major），CampusEvent 行与 user_profile 行可直接传入。
+    `item` 与 `profile` 均为鸭子类型对象（item 读 title/major_req 与城市字段，profile 读
+    target_city/target_position/major），CampusEvent / JobPosting 行与 user_profile 行可直接传入。
+    城市字段：岗位读 `city`，活动无该属性、回退 `location`。
     """
     score = 0
     city = getattr(profile, "target_city", None)
-    if city and _hit_any(getattr(item, "location", None), [p for p in _MULTI_SPLIT_RE.split(city) if p]):
+    city_text = getattr(item, "city", None) or getattr(item, "location", None)
+    if city and _hit_any(city_text, [p for p in _MULTI_SPLIT_RE.split(city) if p]):
         score += 30
     position = getattr(profile, "target_position", None)
     if position and _hit_any(getattr(item, "title", None), _position_keywords(position)):

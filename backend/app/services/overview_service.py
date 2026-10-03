@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Application, InterviewSession, WrongQuestion
-from app.models.enums import ApplicationStatus
+from app.models import Application, InterviewSession, Reminder, WrongQuestion
+from app.models.enums import ApplicationStatus, ReminderType
 from app.services import campus_service
 from app.schemas.overview import (
     ApplicationStats,
@@ -28,7 +28,8 @@ FOLLOW_UP_STATUSES = (ApplicationStatus.APPLIED, ApplicationStatus.WRITTEN)
 def build_overview(db: Session, user_id: int) -> OverviewData:
     """聚合当前账号的今日概览数据。"""
     now = datetime.now()
-    # 校招情报（公共数据）：近期宣讲会/双选会取前若干条 + 最近一次采集时间（步骤 21 落地）
+    # 校招情报：近期宣讲会/双选会取前若干条 + 最近一次采集时间（步骤 21）+
+    # 匹配岗位与订阅命中未读数（步骤 22；岗位查询含本账号投喂，故带 user_id）
     campus_events, last_crawl_at = campus_service.overview_campus(db)
     return OverviewData(
         upcoming_events=_upcoming_events(db, user_id, now),
@@ -37,11 +38,23 @@ def build_overview(db: Session, user_id: int) -> OverviewData:
         wrong_question_count=_due_wrong_question_count(db, user_id, now),
         campus_events=campus_events,
         last_crawl_at=last_crawl_at,
-        # 岗位信息与订阅命中数属步骤 22（job_posting / subscription 表），落地前固定空值
-        top_job_postings=[],
-        match_reminder_count=0,
+        top_job_postings=campus_service.top_job_postings(db, user_id),
+        match_reminder_count=_match_reminder_count(db, user_id),
         stats=_stats(db, user_id),
     )
+
+
+def _match_reminder_count(db: Session, user_id: int) -> int:
+    """订阅命中未读数：INFO_MATCH 且未读（校招情报区块的提醒角标）。"""
+    return db.execute(
+        select(func.count())
+        .select_from(Reminder)
+        .where(
+            Reminder.user_id == user_id,
+            Reminder.reminder_type == ReminderType.INFO_MATCH.value,
+            Reminder.checked == 0,
+        )
+    ).scalar_one()
 
 
 def _upcoming_events(db: Session, user_id: int, now: datetime) -> list[UpcomingEventItem]:

@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 _RUN_LOCK = threading.Lock()  # 任务互斥（TC-22）：拿不到锁直接返回，不排队不等待
 
-# LLM 输入里给模型看的类型标签（INFO_MATCH 属步骤 22 的订阅提醒，暂不参与生成）
+# LLM 输入里给模型看的类型标签（INFO_MATCH 由订阅匹配直接写模板文案，不经本引擎的 LLM 改写）
 _TYPE_LABELS = {
     ReminderType.FOLLOW_UP: "投递跟进",
     ReminderType.WRONG_QUESTION: "错题复习",
@@ -73,6 +73,13 @@ def run_daily(
             # 先采集后判定，订阅命中的提醒（步骤 22）才能读到本次新入库的条目。
             # 内部已隔离异常与总开关，失败不阻塞提醒生成。
             campus_service.run_scheduled(db_factory=factory)
+            # 订阅匹配：今天新入库/变更的公共信息 × 各账号规则 → INFO_MATCH 提醒，命中数计入生成总数
+            # （接口文档 3.14 口径）；独立于本次采集是否成功，异常隔离不影响后续提醒生成。
+            try:
+                total += campus_service.match_new_items(db)
+            except Exception:
+                db.rollback()
+                logger.exception("订阅匹配失败，已跳过")
             for user_id in db.scalars(select(User.id)).all():
                 try:
                     total += generate_for_user(db, user_id, client_getter=getter)

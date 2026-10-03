@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 from app.models.enums import ApplicationStatus
-from app.schemas.campus import CampusEventBrief
+from app.schemas.campus import CampusEventBrief, JobPostingBrief
 
 
 class UpcomingEventItem(BaseModel):
@@ -66,11 +66,11 @@ class OverviewData(BaseModel):
     last_crawl_at: datetime | None = Field(
         default=None, description="最近一次校招信息采集时间（多源取最近）；null=从未采集或源清单为空"
     )
-    top_job_postings: list[dict] = Field(
+    top_job_postings: list[JobPostingBrief] = Field(
         default_factory=list,
-        description="匹配度最高的若干条岗位，按匹配打分降序；子项结构见接口文档 3.4（数据源属校招情报，步骤 22 落地前恒为空列表）",
+        description="匹配度最高的若干条岗位（默认 3 条），按匹配打分降序、过滤已过期；子项结构见接口文档 3.4",
     )
     match_reminder_count: int = Field(
-        default=0, description="命中订阅的未读提醒数（步骤 22 落地前恒为 0）"
+        default=0, description="命中订阅的未读提醒数（INFO_MATCH 且未读）"
     )
     stats: OverviewStats = Field(description="个人中心数据概览计数")

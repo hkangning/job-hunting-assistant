@@ -164,10 +164,33 @@ class ReminderType(StrEnum):
 
 
 class InfoType(StrEnum):
-    """校招信息类型（campus_event.info_type、subscription.info_types 元素）。"""
+    """校招活动类型（campus_event.info_type）。订阅规则里的信息类型另见 SubscriptionInfoType。"""
 
     TALK = "TALK"  # 宣讲会
     FAIR = "FAIR"  # 双选会
+
+
+class SubscriptionInfoType(StrEnum):
+    """订阅规则的信息类型（subscription.info_types 元素）：活动两类 + 岗位。"""
+
+    TALK = "TALK"  # 宣讲会
+    FAIR = "FAIR"  # 双选会
+    JOB = "JOB"  # 岗位（campus_event 无此类型，仅订阅维度）
+
+
+class JobType(StrEnum):
+    """岗位类型（job_posting.job_type）。"""
+
+    CAMPUS = "CAMPUS"  # 校招
+    INTERN = "INTERN"  # 实习
+    SOCIAL = "SOCIAL"  # 社招
+
+
+class IngestSource(StrEnum):
+    """岗位入库通道（job_posting.ingest_source）。"""
+
+    AUTO = "AUTO"  # 自动抓取（公共数据 user_id=0）
+    FEED = "FEED"  # 投喂录入（账号私有）
 
 
 class InfoStatus(StrEnum):
