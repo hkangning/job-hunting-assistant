@@ -9,6 +9,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { ArrowDown, ArrowUp, Back } from '@element-plus/icons-vue'
 import PracticeTurn from './PracticeTurn.vue'
 import ChoiceOptions from '../ChoiceOptions.vue'
+import ResizableTextarea from '../ResizableTextarea.vue'
 
 const props = defineProps({
   session: { type: Object, required: true },
@@ -195,11 +196,11 @@ onUnmounted(stopTimer)
         :options="currentChoices"
         :disabled="streaming"
       />
-      <el-input
+      <!-- 固定高度 + 顶部拖拽条手动调整（由用户自己拖出想要的高度） -->
+      <ResizableTextarea
         v-else
         v-model="answer"
-        type="textarea"
-        :autosize="{ minRows: 4, maxRows: 10 }"
+        :default-height="110"
         :disabled="streaming"
         :placeholder="isCoach ? '作答，卡住了可以点「要提示」' : '写下你的回答'"
       />

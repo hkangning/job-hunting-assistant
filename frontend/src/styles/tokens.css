@@ -155,3 +155,24 @@ body {
      当前项目中无此类按钮，将来引入时需改用其他处理方式。 */
   margin-left: 0;
 }
+
+/* ---------- 文本域滚动条：细条化 ----------
+   默认滚动条 15px 宽、紧贴内缘，在作答框里观感重、像压住边框（用户反馈）。
+   细条（8px）+ 与边框同色系后，滚动条从「一块灰条」变为「边框内的一条细线」。 */
+.el-textarea__inner {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: var(--c-border) transparent;
+}
+.el-textarea__inner::-webkit-scrollbar {
+  width: 8px;
+}
+.el-textarea__inner::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--c-border);
+}
+.el-textarea__inner::-webkit-scrollbar-thumb:hover {
+  background: var(--c-text-3);
+}
+.el-textarea__inner::-webkit-scrollbar-track {
+  background: transparent;
+}

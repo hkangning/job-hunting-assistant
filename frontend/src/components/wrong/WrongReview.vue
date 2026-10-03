@@ -8,6 +8,7 @@
 import { computed, ref, watch } from 'vue'
 import { Back } from '@element-plus/icons-vue'
 import ChoiceOptions from '../ChoiceOptions.vue'
+import ResizableTextarea from '../ResizableTextarea.vue'
 import { toPlainText } from '../../utils/practiceStream'
 import { directionLabelMap } from '../../utils/practiceMeta'
 import { dueText, nextPlanText } from '../../utils/reviewPlan'
@@ -76,11 +77,11 @@ const headPlan = computed(() => {
         :options="item.options"
         :disabled="busy || !!result"
       />
-      <el-input
+      <!-- 固定高度 + 顶部拖拽条手动调整（由用户自己拖出想要的高度） -->
+      <ResizableTextarea
         v-else
         v-model="answer"
-        type="textarea"
-        :autosize="{ minRows: 4, maxRows: 10 }"
+        :default-height="110"
         :disabled="busy || !!result"
         placeholder="写下你的答案"
       />

@@ -24,6 +24,7 @@ import {
   stageProgress
 } from '../utils/interviewStream'
 import InterviewMessages from '../components/interview/InterviewMessages.vue'
+import ResizableTextarea from '../components/ResizableTextarea.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -295,14 +296,14 @@ onUnmounted(() => {
       </template>
 
       <template v-else>
-        <el-input
+        <!-- 固定高度 + 顶部拖拽条手动调整（ResizableTextarea）：高度由用户自己拖出，
+             输入不改变高度（与 autosize 互斥）；拖拽条整条宽、命中面积大 -->
+        <ResizableTextarea
           v-model="input"
-          type="textarea"
-          :autosize="{ minRows: 3, maxRows: 8 }"
           :disabled="streaming"
           maxlength="5000"
           placeholder="输入你的作答（Ctrl + Enter 提交）"
-          @keydown.ctrl.enter="submitAnswer"
+          @submit="submitAnswer"
         />
         <div class="chat__actions">
           <el-popconfirm
@@ -475,6 +476,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
+  /* 给右下角的 AI 助手悬浮球让位（球固定占 right 24~82px，实测按钮组右端恒压住球左侧约 28px） */
+  padding-right: 48px;
 }
 /* 「结束本场」推到最左并弱化：低频且有代价的动作，别和「提交」抢注意力 */
 .chat__finish.el-button {
