@@ -20,8 +20,8 @@
 **`--purge`** 只按前缀（见 `_TEST_ACCOUNT_PREFIXES`）清除验证过程中产生的临时账号，
 **不碰开发者自己注册的账号**——开发库的账号列表被测试残留淹没时用它清理。
 
-**范围**：覆盖当前已实现的功能——投递、画像、AI 配置、错题、JD 分析、模拟面试、面经、陪练。
-Agent（步骤 19）与校招情报（步骤 21~23）尚未实现，数据待各步骤落地后补充。
+**范围**：覆盖当前已实现的功能——投递、画像、AI 配置、错题、JD 分析、模拟面试、面经、陪练，
+以及校招情报（信息源配置 + 宣讲会 / 双选会，步骤 21 公共数据）。Agent（步骤 18/19）数据待补充。
 
 **时间一律相对「导入当天」计算**（如「明天有面试」「9 天前投递」），
 故数据不会随时间失效——这正是不能写死日期的原因。
@@ -29,17 +29,21 @@ Agent（步骤 19）与校招情报（步骤 21~23）尚未实现，数据待各
 
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.clients.crawler import processor
+from app.clients.crawler.base import RawItem
 from app.database import SessionLocal, init_db
 from app.models import (
     AgentConversation,
     AgentMessage,
     Application,
+    CampusEvent,
     Config,
+    CrawlSource,
     DomainMastery,
     Experience,
     ExperienceItem,
@@ -58,8 +62,12 @@ from app.models import (
 from app.models.enums import (
     ApplicationStatus,
     CloseReason,
+    CrawlStatus,
+    CrawlSystemType,
     Direction,
     ExperienceItemSource,
+    InfoStatus,
+    InfoType,
     InterviewIntensity,
     InterviewStage,
     PracticeMode,
@@ -820,6 +828,90 @@ def _add_practice(db: Session, user_id: int) -> int:
     return len(PRACTICE_SESSIONS)
 
 
+# ---------- 校招情报（公共数据，不按账号） ----------
+
+
+def _add_campus_events(db: Session) -> int:
+    """校招情报：信息源配置 + 宣讲会 / 双选会（TALK / FAIR、含「已变更」与已过期、单 / 多来源合并）。"""
+    db.execute(delete(CampusEvent))
+    db.execute(delete(CrawlSource))
+    db.flush()
+
+    now = _now()
+    db.add_all(
+        [
+            CrawlSource(
+                school_name="南京理工大学",
+                system_type=CrawlSystemType.JOB91.value,
+                domain="https://njust.91job.org.cn",
+                params=json.dumps({"xxdm": "10288"}),
+                enabled=1,
+                last_crawl_at=now - timedelta(hours=2),
+                last_status=CrawlStatus.OK.value,
+                created_at=now - timedelta(days=30),
+            ),
+            CrawlSource(
+                school_name="重庆大学",
+                system_type=CrawlSystemType.BYSJY.value,
+                domain="https://cqu.edu.cn",
+                params=json.dumps({"panel_name": "宣讲会", "panel_id": "1"}),
+                enabled=1,
+                last_crawl_at=now - timedelta(hours=2),
+                last_status=CrawlStatus.OK.value,
+                created_at=now - timedelta(days=30),
+            ),
+            CrawlSource(
+                school_name="东南大学",
+                system_type=CrawlSystemType.JYSD.value,
+                domain="https://seu.jysd.com",
+                params=None,
+                enabled=0,
+                last_crawl_at=now - timedelta(days=3),
+                last_status=CrawlStatus.BLOCKED.value,
+                last_error="robots.txt 明确禁止抓取，按合规要求停止该源",
+                created_at=now - timedelta(days=30),
+            ),
+        ]
+    )
+
+    today = date.today()
+    rows = [
+        # (标题, 公司, 距今天数, 时刻, 地点, 专业要求, 类型, 来源站点, 状态, 变更距今年数)
+        ("华为 2027 届校园宣讲会", "华为技术有限公司", 1, 14, "学术交流中心报告厅", "计算机 / 软件工程 / 电子信息", InfoType.TALK.value, "njust.91job.org.cn,cqu.edu.cn", InfoStatus.ACTIVE.value, None),
+        ("中国电子科技集团专场双选会", "中国电子科技集团有限公司", 2, 9, "体育馆", "计算机 / 自动化", InfoType.FAIR.value, "njust.91job.org.cn", InfoStatus.ACTIVE.value, None),
+        ("字节跳动校园宣讲会（改期）", "北京字节跳动科技有限公司", 3, 16, "大学生活动中心", "计算机 / 数学", InfoType.TALK.value, "cqu.edu.cn", InfoStatus.CHANGED.value, 5,
+         ),
+        ("国家电网专场宣讲会", "国家电网有限公司", 5, 10, "第一教学楼 101", "电气工程 / 计算机", InfoType.TALK.value, "seu.jysd.com", InfoStatus.ACTIVE.value, None),
+        ("腾讯游戏校园行", "深圳市腾讯计算机系统有限公司", 7, 15, "大学生活动中心报告厅", "计算机 / 数字媒体", InfoType.TALK.value, "cqu.edu.cn,njust.91job.org.cn", InfoStatus.ACTIVE.value, None),
+        ("小米集团宣讲会（已过期）", "小米科技有限责任公司", -6, 14, "第二教学楼 201", "计算机 / 通信", InfoType.TALK.value, "njust.91job.org.cn", InfoStatus.EXPIRED.value, None),
+        ("苏宁易购双选会（已过期）", "苏宁易购集团股份有限公司", -30, 9, "体育馆", None, InfoType.FAIR.value, "cqu.edu.cn", InfoStatus.EXPIRED.value, None),
+    ]
+    for index, (title, company, days, hour, location, major, info_type, site, status, changed_hours) in enumerate(rows):
+        event_date = datetime.combine(today, time(hour, 0)) + timedelta(days=days)
+        db.add(
+            CampusEvent(
+                title=title,
+                company=company,
+                event_date=event_date,
+                location=location,
+                source_url=f"https://njust.91job.org.cn/sub-station/lectureDetail?xjhid=demo{index}",
+                info_type=info_type,
+                major_req=major,
+                source_site=site,
+                dedup_key=processor.dedup_key(company, title, event_date),
+                content_hash=processor.content_hash(
+                    RawItem(title=title, event_date=event_date, info_type=info_type, company=company, location=location, major_req=major)
+                ),
+                status=status,
+                first_seen_at=now - timedelta(days=20 - index),
+                last_seen_at=now - timedelta(hours=2),
+                changed_at=(now - timedelta(hours=changed_hours)) if changed_hours else None,
+            )
+        )
+    db.flush()
+    return len(rows)
+
+
 def _load_business_data(db: Session, user_id: int, *, with_llm: bool = True) -> dict[str, int]:
     """把整套业务数据写入指定账号（调用方负责清场策略）。"""
     _fill_profile(db, user_id)
@@ -832,6 +924,7 @@ def _load_business_data(db: Session, user_id: int, *, with_llm: bool = True) -> 
         "experiences": _add_experiences(db, user_id),
         "wrong_questions": _add_wrong_questions(db, user_id),
         "practice_sessions": _add_practice(db, user_id),
+        "campus_events": _add_campus_events(db),  # 公共数据（信息源 + 宣讲会/双选会），随全套数据一并重建
         "profiles": len(PROFILE),
     }
 
@@ -909,6 +1002,7 @@ def _print_summary(target: str, summary: dict[str, int]) -> None:
         f"  面经 {summary['experiences']} 篇（含条目；1 篇未填公司）\n"
         f"  错题 {summary['wrong_questions']} 条（含面试知识点与选择题形态）\n"
         f"  陪练 {summary['practice_sessions']} 场（已完成结算 / 追问链进行中）+ 掌握度 4 域\n"
+        f"  校招情报 {summary['campus_events']} 条（TALK / FAIR，「已变更」与已过期各覆盖）+ 信息源 3 个\n"
         f"  画像 {summary['profiles']} 个字段 + 经历条目 {len(PROFILE_EXPERIENCES)} 条"
     )
 

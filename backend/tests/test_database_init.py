@@ -3,9 +3,9 @@
 **数据库 2026-09-26 由 SQLite 换为 MySQL 8.0**（数据库设计 v1.9）：表数与结构断言不变，
 原 SQLite 专有的 WAL / 外键 PRAGMA 断言改为 MySQL 口径（InnoDB 引擎 + utf8mb4 字符集）。
 
-期望值来源：《数据库设计文档》v1.14 §3~§4，固化在 tests/expected_schema.py。
+期望值来源：《数据库设计文档》v1.22 §3~§4，固化在 tests/expected_schema.py。
 
-**表数**：15 → 17（多账号）→ **19**（八股训练系统）。该数字不再写进断言——用例 1 改为
+**表数**：15 → 17（多账号）→ 19（八股训练系统）→ **20**（校招情报采集层）。该数字不再写进断言——用例 1 改为
 **与 `Base.metadata` 比对**，新增表时只改镜像、不改断言。
 
 约定：写数据的用例一律 flush + rollback，**不 commit**——保证用例之间互不残留，
@@ -345,14 +345,16 @@ def test_unique_constraints_enforced(client: TestClient, account, make_account):
             db.flush()
         db.rollback()
 
-    # campus_event(title, event_date) 唯一：公共表，与账号无关
+    # campus_event(dedup_key) 唯一：公共表，与账号无关；title + event_date 已不再唯一
     with SessionLocal() as db:
         event_date = datetime.now()
-        db.add(CampusEvent(title="宣讲会", event_date=event_date))
+        db.add(CampusEvent(title="宣讲会", event_date=event_date, dedup_key="dedup-key-1"))
         db.flush()
-        db.add(CampusEvent(title="宣讲会", event_date=event_date))
+        db.add(CampusEvent(title="宣讲会（来源二）", event_date=event_date, dedup_key="dedup-key-2"))
+        db.flush()  # 同标题同日期、指纹不同：允许（旧 UNIQUE(title, event_date) 会拒）
+        db.add(CampusEvent(title="宣讲会", event_date=event_date, dedup_key="dedup-key-1"))
         with pytest.raises(IntegrityError):
-            db.flush()
+            db.flush()  # 同指纹第二条：被拒
         db.rollback()
 
     # user.username 唯一（库层只管精确重复；大小写变体由服务层拦，见 TC-52）

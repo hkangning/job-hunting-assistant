@@ -26,6 +26,12 @@ DateTime→DATETIME、Date→DATE、Integer→INTEGER）。
 `application` 加 `jd_text`、`user_profile` 加 `experiences` 并删 `resume_text`
 （有损删除，画像改结构化经历）。均走手工 `ALTER`（§7.3 有完整 SQL），
 开发库与测试库都要执行一次。
+
+校招情报采集层（数据库设计 v1.21）后：表数 19 → **20**（新增 `crawl_source`），
+`campus_event` 扩 9 列、删 `created_at`（7 → 15 列），唯一约束
+`UNIQUE(title, event_date)` → **`UNIQUE(dedup_key)`**（跨源去重指纹），
+并新增 `idx_event_status`。`campus_event` 走手工 `ALTER`、`crawl_source`
+随 `create_all` 自动建（§7.3 有完整 SQL），开发库与测试库都要执行一次。
 """
 
 # 每表结构：columns 元组为 (列名, 类型, 允许为空, 是否主键)
@@ -307,10 +313,36 @@ TABLES: dict[str, dict] = {
             ("event_date", "DATETIME", False, False),
             ("location", "VARCHAR(200)", True, False),
             ("source_url", "VARCHAR(500)", True, False),
+            ("info_type", "VARCHAR(20)", False, False),
+            ("major_req", "VARCHAR(300)", True, False),
+            ("source_site", "VARCHAR(50)", True, False),
+            ("dedup_key", "VARCHAR(64)", False, False),
+            ("content_hash", "VARCHAR(64)", True, False),
+            ("status", "VARCHAR(20)", False, False),
+            ("first_seen_at", "DATETIME", False, False),
+            ("last_seen_at", "DATETIME", False, False),
+            ("changed_at", "DATETIME", True, False),
+        ],
+        "indexes": {"idx_event_date": ["event_date"], "idx_event_status": ["status", "event_date"]},
+        # 多源采集改造前为 UNIQUE(title, event_date)：现按跨源去重指纹 dedup_key 唯一
+        "uniques": [["dedup_key"]],
+        "foreign_keys": [],
+    },
+    "crawl_source": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("school_name", "VARCHAR(100)", False, False),
+            ("system_type", "VARCHAR(20)", False, False),
+            ("domain", "VARCHAR(200)", False, False),
+            ("params", "TEXT", True, False),
+            ("enabled", "INTEGER", False, False),
+            ("last_crawl_at", "DATETIME", True, False),
+            ("last_status", "VARCHAR(20)", True, False),
+            ("last_error", "VARCHAR(300)", True, False),
             ("created_at", "DATETIME", False, False),
         ],
-        "indexes": {"idx_event_date": ["event_date"]},
-        "uniques": [["title", "event_date"]],
+        "indexes": {"idx_crawl_source_enabled": ["enabled"]},
+        "uniques": [["system_type", "domain"]],
         "foreign_keys": [],
     },
     "config": {

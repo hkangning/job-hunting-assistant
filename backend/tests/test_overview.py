@@ -104,8 +104,9 @@ def test_overview_all_fields_always_present(client: TestClient) -> None:
     }
 
 
-def test_campus_fields_empty_until_campus_module(client: TestClient) -> None:
-    """校招情报四项在步骤 21~22 落地前固定为空值（数据源 `crawl_source` / `job_posting` 尚未建）。"""
+def test_campus_fields_empty_without_data(client: TestClient) -> None:
+    """账号无校招数据时四项为空值（步骤 21 采集层已落地，`campus_events` 数据源为公共表、空库即空；
+    `top_job_postings` / `match_reminder_count` 待步骤 22；有数据时的下发见 `test_campus.py`）。"""
     data = client.get(API).json()["data"]
 
     assert data["campus_events"] == []
