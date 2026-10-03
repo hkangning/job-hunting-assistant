@@ -163,6 +163,37 @@ class ReminderType(StrEnum):
     INFO_MATCH = "INFO_MATCH"  # 校招情报订阅命中（步骤 22 起生成；ref_type 标识来源表）
 
 
+class InfoType(StrEnum):
+    """校招信息类型（campus_event.info_type、subscription.info_types 元素）。"""
+
+    TALK = "TALK"  # 宣讲会
+    FAIR = "FAIR"  # 双选会
+
+
+class InfoStatus(StrEnum):
+    """校招信息状态（campus_event.status / job_posting.status）：ACTIVE 与 CHANGED 均属未过期。"""
+
+    ACTIVE = "ACTIVE"  # 有效
+    CHANGED = "CHANGED"  # 内容已变更（如宣讲会改期，前端打「已变更」角标）
+    EXPIRED = "EXPIRED"  # 已过期（活动已过 / 岗位截止）
+
+
+class CrawlSystemType(StrEnum):
+    """就业网站系统类型（crawl_source.system_type）：决定用哪个适配器解析。"""
+
+    JOB91 = "91JOB"  # 91job（江苏，免登录 JSON API）
+    BYSJY = "BYSJY"  # 云就业（HTML 接口，参数含 panel_name / panel_id）
+    JYSD = "JYSD"  # 才立方（HTML，一校一子域）
+
+
+class CrawlStatus(StrEnum):
+    """信息源最近一次采集状态（crawl_source.last_status）。"""
+
+    OK = "OK"  # 成功
+    FAILED = "FAILED"  # 失败（源疑似失效，下次仍重试）
+    BLOCKED = "BLOCKED"  # 被拒（robots 禁止 / 403，停止该源不重试）
+
+
 class MessageRole(StrEnum):
     """Agent 消息角色（agent_message.role）。"""
 

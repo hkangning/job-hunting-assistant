@@ -6,6 +6,7 @@ from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, Text,
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.models.enums import InfoStatus, InfoType
 
 
 class Reminder(Base):
@@ -32,21 +33,30 @@ class Reminder(Base):
 
 
 class CampusEvent(Base):
-    """宣讲会/招聘会：标题+时间唯一，防重复抓取（FR-001、FR-013）。"""
+    """宣讲会/双选会：多源采集、跨源按 dedup_key 去重（FR-021、数据库设计 3.13）。"""
 
     __tablename__ = "campus_event"
     __table_args__ = (
-        UniqueConstraint("title", "event_date"),
+        UniqueConstraint("dedup_key", name="uq_campus_event_dedup"),
         Index("idx_event_date", "event_date"),
+        Index("idx_event_status", "status", "event_date"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # 主键
     title: Mapped[str] = mapped_column(String(200))  # 活动标题
-    company: Mapped[str | None] = mapped_column(String(100))  # 企业名称
-    event_date: Mapped[datetime] = mapped_column(DateTime)  # 活动时间
+    company: Mapped[str | None] = mapped_column(String(100))  # 企业名称（站点无此字段的来源留空）
+    event_date: Mapped[datetime] = mapped_column(DateTime)  # 活动开始时间（解析不到时刻为当日 00:00）
     location: Mapped[str | None] = mapped_column(String(200))  # 地点
     source_url: Mapped[str | None] = mapped_column(String(500))  # 来源链接
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 抓取时间
+    info_type: Mapped[str] = mapped_column(String(20), default=InfoType.TALK.value)  # 信息类型，枚举 InfoType
+    major_req: Mapped[str | None] = mapped_column(String(300))  # 需求专业（原文摘录，匹配打分用）
+    source_site: Mapped[str | None] = mapped_column(String(50))  # 来源站点标识（主机名；跨源合并逗号分隔）
+    dedup_key: Mapped[str] = mapped_column(String(64))  # 去重指纹（sha1，跨源合并依据）
+    content_hash: Mapped[str | None] = mapped_column(String(64))  # 内容指纹（变更检测依据）
+    status: Mapped[str] = mapped_column(String(20), default=InfoStatus.ACTIVE.value)  # 状态，枚举 InfoStatus
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 首次抓取时间
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)  # 最近仍抓到的时间
+    changed_at: Mapped[datetime | None] = mapped_column(DateTime)  # 最近一次内容变更时间（改期等）
 
 
 class Config(Base):

@@ -3,13 +3,18 @@
 from app.database import Base
 from app.models.agent import AgentConversation, AgentMessage
 from app.models.application import Application, JdAnalysisReport
+from app.models.campus import CrawlSource
 from app.models.enums import (
     ApplicationStatus,
     AttackFace,
     CloseReason,
+    CrawlStatus,
+    CrawlSystemType,
     Direction,
     ExperienceItemSource,
     ExperienceType,
+    InfoStatus,
+    InfoType,
     InterviewIntensity,
     InterviewStage,
     MessageRole,
@@ -51,6 +56,7 @@ __all__ = [
     "AgentMessage",
     "Reminder",
     "CampusEvent",
+    "CrawlSource",
     "Config",
     "UserProfile",
     # 枚举
@@ -71,6 +77,10 @@ __all__ = [
     "AttackFace",
     "RoundKind",
     "ReminderType",
+    "InfoType",
+    "InfoStatus",
+    "CrawlSystemType",
+    "CrawlStatus",
     "MessageRole",
     "UserRole",
     "UserPlan",

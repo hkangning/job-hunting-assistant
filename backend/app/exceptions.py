@@ -38,7 +38,8 @@ class ErrorCode(IntEnum):
     EXPERIENCE_EXTRACT_FAILED = (40002, 502, "面经结构化提取失败")
     AGENT_TOOL_ARGS_MISSING = (50001, 400, "工具参数不完整")
     ASR_FAILED = (60001, 502, "语音转写失败")
-    CRAWL_FAILED = (70001, 502, "就业网抓取失败")
+    CRAWL_FAILED = (70001, 502, "校招信息采集失败")
+    CRAWL_PARSE_FAILED = (70002, 502, "信息源解析失败")
     # —— 8xxxx 账号与鉴权段（接口文档 1.3）——
     UNAUTHORIZED = (80001, 401, "登录状态已失效，请重新登录")
     TOKEN_EXPIRED = (80002, 401, "登录状态已失效，请重新登录")  # 与 80001 同款文案，不暴露失效原因
