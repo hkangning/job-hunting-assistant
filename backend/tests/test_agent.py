@@ -1,6 +1,7 @@
 """全局 Agent（FR-011）：意图路由、写操作确认卡片、查询回显与会话落库的用例——测试计划 TC-16~19、TC-138~TC-141。
 
-后端 `POST /stream/agent-chat` 与两个查询端点已于 2026-10-01 落地（接口文档 v1.38 §3.11 实现口径 7 条）。
+后端 `POST /stream/agent-chat`、两个查询端点（2026-10-01）与执行端点 `POST /agent/tools/{tool}/execute`
+（步骤 19，HTTP 全链路用例见台账 #97）均已落地（接口文档 v1.38 / v1.40 §3.11）。
 替身说明（[前端待改问题](../../docs/07-工作日志/前端待改问题.md) #94 ②）：`stream_tool_chat` **非抽象、
 默认降级为纯文本流**——不覆写也能实例化，但验证 `tool_call` 事件序列的用例必须自行覆写；本文件用
 `AgentFake` 按序产出 `TextDelta` / `ToolCallDelta`（不触网）。
@@ -19,6 +20,7 @@ from app.clients.llm_client import (
     get_llm_client,
     resolve_config,
 )
+from app.database import SessionLocal
 from app.exceptions import BizException, ErrorCode
 from app.main import app
 from app.models import AgentConversation, AgentMessage, Application, LlmProviderConfig
@@ -354,7 +356,7 @@ class TestQueryEcho:
 
 
 class TestExecuteTool:
-    """TC-18：写操作执行函数直测（HTTP 执行端点 `POST /agent/tools/{tool}/execute` 属步骤 19）。"""
+    """TC-18：写操作执行函数直测（HTTP 全链路已于台账 #97 补入 `TestExecuteToolHttp`）。"""
 
     def test_create_application_without_jd(self, db_session: Session, account_id: int):
         """Agent 录入路径 `jd_text` 可选（自然语言口述未必带 JD）；表单路径仍必填（TC-120 覆盖）。"""
@@ -418,6 +420,140 @@ class TestExecuteTool:
                 args={"application_id": 999999, "status": "OFFER"},
             )
         assert exc.value.code == ErrorCode.NOT_FOUND
+
+
+# ---------------- 台账 #97：执行端点 HTTP 全链路 ----------------
+
+
+EXECUTE_API = "/api/v1/agent/tools"
+
+
+class TestExecuteToolHttp:
+    """台账 #97：`POST /agent/tools/{tool}/execute` HTTP 全链路（接口文档 v1.40 §3.11 实现口径 3 条）。
+
+    服务层直测见 `TestExecuteTool`；本类覆盖 HTTP 层——**请求体宽收**（缺失 / 非法 → 400 + 50001，
+    不被请求校验层拦成 10001）、鉴权、跨账号 404 + 10002、宽转与「无幂等」设计口径。
+    """
+
+    def _exec(self, client: TestClient, tool: str, body, headers: dict | None = None):
+        kwargs = {"headers": headers} if headers else {}
+        return client.post(f"{EXECUTE_API}/{tool}/execute", json=body, **kwargs)
+
+    # ---- ① 正常路径 ----
+
+    def test_create_application_ok(self, client: TestClient, account):
+        resp = self._exec(
+            client, "create_application", {"company": "美团", "position": "后端开发", "city": "北京"}
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert (data["company"], data["status"]) == ("美团", "APPLIED")
+        with SessionLocal() as session:  # 业务表确有新增行，归属当前账号
+            row = session.get(Application, data["id"])
+            assert row is not None and row.user_id == account["id"]
+
+    def test_update_status_ok(self, client: TestClient, account):
+        created = self._exec(
+            client, "create_application", {"company": "腾讯", "position": "后端开发"}
+        ).json()["data"]
+
+        resp = self._exec(
+            client,
+            "update_application_status",
+            {"application_id": created["id"], "status": "INTERVIEW"},
+        )
+
+        assert resp.status_code == 200 and resp.json()["data"]["status"] == "INTERVIEW"
+        with SessionLocal() as session:
+            assert session.get(Application, created["id"]).status == "INTERVIEW"
+
+    # ---- ② 50001 各态：宽收口径——缺失 / 非法不被请求校验层拦成 10001 ----
+
+    @pytest.mark.parametrize(
+        ("tool", "body"),
+        [
+            ("create_application", {"company": "美团"}),  # 缺必填 position
+            ("create_application", {}),  # 空 body
+            ("create_application", {"company": "   ", "position": "  "}),  # 全空白值
+            ("update_application_status", {"application_id": 1, "status": "CLOSED"}),  # CLOSED 缺原因
+            ("update_application_status", {"application_id": 1, "status": "NOT_A_STATUS"}),  # 非法状态
+        ],
+    )
+    def test_missing_or_invalid_args_report_50001(self, client: TestClient, tool, body):
+        resp = self._exec(client, tool, body)
+
+        assert resp.status_code == 400 and resp.json()["code"] == 50001  # 不是 10001
+
+    # ---- ③ 10001：非写操作工具 / 请求体非 JSON 对象 ----
+
+    def test_non_write_tool_reports_10001(self, client: TestClient):
+        resp = self._exec(client, "list_applications", {})
+
+        assert resp.status_code == 400 and resp.json()["code"] == 10001
+
+    def test_unknown_tool_reports_10001(self, client: TestClient):
+        assert self._exec(client, "no_such_tool", {}).json()["code"] == 10001
+
+    def test_non_object_body_reports_10001(self, client: TestClient):
+        """数组请求体走全局校验处理器 → 400 + 10001（不是 50001：还没进到工具层）。"""
+        resp = client.post(f"{EXECUTE_API}/create_application/execute", json=[1, 2])
+
+        assert resp.status_code == 400 and resp.json()["code"] == 10001
+
+    # ---- ④ 404 + 10002：不存在 / 跨账号 ----
+
+    def test_not_found_and_cross_account(self, client: TestClient, account, make_account):
+        resp = self._exec(
+            client, "update_application_status", {"application_id": 999999, "status": "OFFER"}
+        )
+        assert resp.status_code == 404 and resp.json()["code"] == 10002
+
+        created = self._exec(
+            client, "create_application", {"company": "字节跳动", "position": "后端"}
+        ).json()["data"]
+        other = make_account("exec_other")
+        resp = self._exec(
+            client,
+            "update_application_status",
+            {"application_id": created["id"], "status": "OFFER"},
+            headers=other["headers"],
+        )
+        assert resp.status_code == 404 and resp.json()["code"] == 10002  # 跨账号同码，不暴露存在性
+
+    # ---- ⑤ 鉴权 ----
+
+    def test_requires_token(self, anon_client: TestClient):
+        resp = anon_client.post(
+            f"{EXECUTE_API}/create_application/execute",
+            json={"company": "美团", "position": "后端"},
+        )
+
+        assert resp.status_code == 401 and resp.json()["code"] == 80001
+
+    # ---- ⑥ 宽转：字符串数字 id 与中文状态标签 ----
+
+    def test_wide_coercion_id_and_label(self, client: TestClient, account):
+        created = self._exec(
+            client, "create_application", {"company": "阿里", "position": "后端"}
+        ).json()["data"]
+
+        resp = self._exec(
+            client,
+            "update_application_status",
+            {"application_id": str(created["id"]), "status": "面试中"},
+        )
+
+        assert resp.status_code == 200 and resp.json()["data"]["status"] == "INTERVIEW"
+
+    # ---- ⑦ 无幂等（设计使然）：同一请求连发两次 = 两条 ----
+
+    def test_no_idempotency_by_design(self, client: TestClient, account):
+        body = {"company": "京东", "position": "后端开发"}
+        first = self._exec(client, "create_application", body).json()["data"]
+        second = self._exec(client, "create_application", body).json()["data"]
+
+        assert first["id"] != second["id"]  # 防重复由前端承担（接口文档 §3.11 口径 3）
 
 
 # ---------------- TC-140 会话与消息 ----------------

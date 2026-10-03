@@ -26,8 +26,8 @@ const store = useAgentStore()
       </button>
       <el-button
         v-if="store.history.items.length < store.history.total"
-        link
         type="primary"
+        plain
         :loading="store.history.loading"
         class="history__more"
         @click="store.loadHistory()"
@@ -55,8 +55,8 @@ const store = useAgentStore()
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 10px 12px;
-  margin-bottom: 6px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
   background: var(--c-card);

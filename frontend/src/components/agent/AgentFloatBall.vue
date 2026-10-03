@@ -45,7 +45,7 @@ function onKeydown(event) {
 <template>
   <!-- 悬浮球（浮窗打开时让位） -->
   <button v-show="!store.open" class="agent-ball" title="AI 助手" @click="store.toggle()">
-    <el-icon :size="24"><Service /></el-icon>
+    <el-icon :size="26"><Service /></el-icon>
   </button>
 
   <!-- 对话浮窗 -->
@@ -54,9 +54,9 @@ function onKeydown(event) {
       <el-icon class="agent-panel__brand"><Service /></el-icon>
       <span class="agent-panel__title">AI 助手</span>
       <div class="agent-panel__ops">
-        <el-button link :icon="Clock" title="历史对话" @click="store.toggleHistory()" />
-        <el-button link :icon="Plus" title="新对话" @click="store.newSession()" />
-        <el-button link :icon="Minus" title="收起" @click="store.closePanel()" />
+        <el-button link class="agent-panel__op" :icon="Clock" title="历史对话" @click="store.toggleHistory()" />
+        <el-button link class="agent-panel__op" :icon="Plus" title="新对话" @click="store.newSession()" />
+        <el-button link class="agent-panel__op" :icon="Minus" title="收起" @click="store.closePanel()" />
       </div>
     </header>
 
@@ -116,8 +116,8 @@ function onKeydown(event) {
   right: 24px;
   bottom: 24px;
   z-index: 1800;
-  width: 54px;
-  height: 54px;
+  width: 58px;
+  height: 58px;
   border: none;
   border-radius: 50%;
   display: flex;
@@ -126,12 +126,15 @@ function onKeydown(event) {
   background: var(--brand);
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(47, 91, 158, 0.32);
+  box-shadow: 0 8px 22px rgba(47, 91, 158, 0.36);
   transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
 .agent-ball:hover {
   transform: scale(1.06);
-  box-shadow: 0 8px 22px rgba(47, 91, 158, 0.42);
+  box-shadow: 0 10px 26px rgba(47, 91, 158, 0.46);
+}
+.agent-ball:active {
+  transform: scale(0.97);
 }
 .agent-panel {
   position: fixed;
@@ -161,13 +164,15 @@ function onKeydown(event) {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 52px;
-  padding: 0 12px 0 14px;
+  height: 56px;
+  padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--c-divider);
+  /* 头部用浅品牌底：与消息区（浅灰）和输入区（白）拉开层次，浮窗更像「产品」而非灰白拼盘 */
+  background: color-mix(in srgb, var(--brand) 9%, var(--c-card));
 }
 .agent-panel__brand {
   color: var(--brand);
-  font-size: 18px;
+  font-size: 19px;
 }
 .agent-panel__title {
   font-size: var(--fs-title);
@@ -178,31 +183,45 @@ function onKeydown(event) {
   margin-left: auto;
   display: flex;
   align-items: center;
+  gap: 2px;
+}
+/* 头部图标按钮：36×36 热区 + 18px 图标 + 悬停浅底——原为裸图标（约 20px 宽），点不准 */
+.agent-panel__op.el-button {
+  width: 36px;
+  padding: 0;
+  font-size: 18px;
+  color: var(--c-text-2);
+  border-radius: var(--r-menu);
+}
+.agent-panel__op.el-button:hover {
+  background: color-mix(in srgb, var(--brand) 12%, var(--c-card));
+  color: var(--brand);
 }
 .agent-panel__foot {
   flex: none;
-  padding: 8px 12px 10px;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--c-divider);
   background: var(--c-card);
 }
 .agent-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 .agent-chip {
-  padding: 3px 9px;
+  padding: 6px 12px;
   border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--c-border));
-  border-radius: var(--r-mark);
+  border-radius: var(--r-control);
   background: color-mix(in srgb, var(--brand) 6%, var(--c-card));
   color: var(--brand);
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .agent-chip:hover:not(:disabled) {
   background: color-mix(in srgb, var(--brand) 12%, var(--c-card));
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--c-border));
 }
 .agent-chip:disabled {
   opacity: 0.5;
@@ -214,10 +233,16 @@ function onKeydown(event) {
   gap: 8px;
 }
 .agent-input :deep(.el-textarea__inner) {
-  padding: 8px 10px;
+  padding: 10px 12px;
   font-size: var(--fs-body);
 }
+/* 发送 / 停止按钮：40×40 热区 + 加大图标（原为默认档 32px 宽，浮窗内偏小）。
+   circle 按钮的宽度不跟 --el-button-size（由 padding + 内容决定），需显式给宽。 */
 .agent-input__btn {
   flex: none;
+  --el-button-size: 40px;
+  width: 40px;
+  padding: 0;
+  font-size: 17px;
 }
 </style>

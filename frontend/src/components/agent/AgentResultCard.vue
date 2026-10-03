@@ -49,7 +49,7 @@ function go(path) {
         </div>
         <p class="result__sub">{{ [item.city, item.applied_at ? datePart(item.applied_at) : ''].filter(Boolean).join(' · ') }}</p>
       </div>
-      <el-button link type="primary" @click="go('/applications')">去投递管理查看</el-button>
+      <el-button type="primary" plain @click="go('/applications')">去投递管理查看</el-button>
     </template>
 
     <!-- 出题 -->
@@ -62,7 +62,7 @@ function go(path) {
         </div>
         <p class="result__text">{{ q.content }}</p>
       </div>
-      <el-button link type="primary" @click="go('/practice')">去陪练作答</el-button>
+      <el-button type="primary" plain @click="go('/practice')">去陪练作答</el-button>
     </template>
 
     <!-- 错题 -->
@@ -75,7 +75,7 @@ function go(path) {
         </div>
         <p class="result__text">{{ q.content }}</p>
       </div>
-      <el-button link type="primary" @click="go('/wrong-questions')">去错题本</el-button>
+      <el-button type="primary" plain @click="go('/wrong-questions')">去错题本</el-button>
     </template>
 
     <!-- 面经条目 -->
@@ -87,7 +87,7 @@ function go(path) {
           {{ item.question }}
         </p>
         <p v-if="item.answer_points" class="result__sub result__sub--clamp">{{ item.answer_points }}</p>
-        <el-button link type="primary" size="small" @click="go(`/experiences/${item.experience_id}?item=${item.id}`)">查看条目</el-button>
+        <el-button size="small" type="primary" plain @click="go(`/experiences/${item.experience_id}?item=${item.id}`)">查看条目</el-button>
       </div>
     </template>
 
@@ -106,7 +106,7 @@ function go(path) {
       <p v-if="!(data.upcoming_events || []).length && !(data.follow_ups || []).length" class="result__sub">
         今天没有待办，投递与错题都在计划上
       </p>
-      <el-button link type="primary" @click="go('/')">去今日概览</el-button>
+      <el-button type="primary" plain @click="go('/')">去今日概览</el-button>
     </template>
   </div>
 </template>
@@ -114,7 +114,9 @@ function go(path) {
 <style scoped>
 .result {
   width: 100%;
-  padding: 10px 12px;
+  /* 全站无 *{box-sizing} 重置：不声明则 100% + padding 溢出消息区，出现横向滚动条 */
+  box-sizing: border-box;
+  padding: 12px 14px;
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
   background: var(--c-card);

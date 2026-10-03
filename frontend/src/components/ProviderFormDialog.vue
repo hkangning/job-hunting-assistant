@@ -11,6 +11,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listModelsApi, saveProviderApi, testProviderApi } from '../api/llmProviders'
+import { probeParams } from '../utils/providerProbe'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -76,11 +77,14 @@ watch(
   }
 )
 
-/** 新增态切换供应商：清掉上一家的端点与模型（编辑态锁定，不触发），随即预拉该家清单。 */
+/** 新增态切换供应商：清掉上一家的 Key / 端点 / 模型（编辑态锁定，不触发），随即预拉该家清单。
+ *  Key 一并清：它是「家」属性最强的字段，留着会让预拉拿上家的 Key 去探新家、
+ *  报一句莫名其妙的「API Key 无效或无权限」（2026-10-03 修复）。 */
 watch(
   () => form.provider,
   () => {
     if (isEdit.value) return
+    form.api_key = ''
     form.base_url = ''
     form.model = ''
     models.value = []
@@ -93,9 +97,9 @@ watch(
 
 async function loadModels(refresh = false) {
   if (!form.provider) return
-  // 临时探测参数（接口 v1.13）：只在**尚未保存**该供应商配置时携带——已存配置传了会绕过 24h 缓存
-  const tempKey = props.item?.key_set ? '' : form.api_key
-  const tempBase = form.base_url && form.base_url !== props.item?.base_url ? form.base_url : ''
+  // 临时探测参数（接口 v1.13 §3.3）：表单当前值优先——编辑态填了新 Key / 改了端点同样携带，
+  // 否则「填新 Key 刷新列表」会用旧 Key 探测，失败信息残留后与测试连通结果同屏矛盾（2026-10-03 修复）。
+  const { apiKey: tempKey, baseUrl: tempBase } = probeParams(form, props.item)
   // 未配 Key 也是合法路径（接口 v1.24）：后端回内置模型表供预览，故不再前置拦截。
   // 注意放宽的只是「看列表」——保存配置、连通性测试、激活仍强制填 Key。
   modelsLoading.value = true
@@ -115,9 +119,13 @@ async function loadModels(refresh = false) {
   }
 }
 
-/** 粘贴 Key 后失焦即拉列表——「填了就能拉」的入口（接口 v1.13 的临时探测）。 */
+/** 粘贴 Key 后失焦即拉列表——「填了就能拉」的入口（接口 v1.13 的临时探测）。
+ *
+ *  编辑态同样生效：框里填的是「准备更换的新 Key」，不探测一次就看不到它对应的列表；
+ *  列表已有内容（如内置预览清单）也不拦——那正是要把预览换成真列表的场景。
+ *  modelsLoading 防重入；保存中不抢跑（保存流程自带连通性校验）。 */
 function onKeyBlur() {
-  if (form.api_key && !props.item?.key_set && !models.value.length) loadModels()
+  if (form.api_key && !modelsLoading.value && !saving.value) loadModels()
 }
 
 /** 组装连通性测试的载荷：一律用**表单当前值**（未保存的 Key / 端点 / 模型），
@@ -136,6 +144,9 @@ async function onTest() {
   try {
     const data = await testProviderApi(buildTestPayload(), { silent: true })
     testResult.value = { ok: true, text: `连通正常（模型：${data.model}）` }
+    // 连通成功证明表单里的配置可用：若列表还停在「拉取失败」态（多为已存旧 Key 的失败
+    // 信息），用当前配置就地重拉修正——否则旧的失败提示会与这条绿条同屏（2026-10-03 修复）。
+    if (modelsError.value) loadModels(true)
   } catch (err) {
     testResult.value = { ok: false, text: err.message || '连通性测试失败' }
   } finally {
@@ -188,7 +199,7 @@ async function onSave() {
 </script>
 
 <template>
-  <el-dialog v-model="visible" :title="isEdit ? '修改配置' : '添加自定义模型'" width="520px">
+  <el-dialog v-model="visible" :title="isEdit ? '修改配置' : '添加自定义模型'" width="560px" class="pf-dialog">
     <el-form label-width="86px" label-position="left">
       <el-form-item label="供应商">
         <el-select v-model="form.provider" :disabled="isEdit" filterable placeholder="选择供应商" class="pf__full">
@@ -225,8 +236,9 @@ async function onSave() {
           <el-option v-for="o in modelOptions" :key="o.value" :label="o.label" :value="o.value" />
         </el-select>
         <div class="pf__actions">
-          <el-button link type="primary" :loading="modelsLoading" @click="loadModels(true)">刷新模型列表</el-button>
-          <el-button link type="primary" :loading="testing" @click="onTest">测试连通</el-button>
+          <!-- 实心按钮（原为文字链接）：这两个是配置时的高频动作，得有明确的「可点」样貌 -->
+          <el-button :loading="modelsLoading" @click="loadModels(true)">刷新模型列表</el-button>
+          <el-button type="primary" plain :loading="testing" @click="onTest">测试连通</el-button>
         </div>
       </el-form-item>
 
@@ -253,8 +265,8 @@ async function onSave() {
     </el-form>
 
     <template #footer>
-      <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="onSave">
+      <el-button size="large" @click="visible = false">取消</el-button>
+      <el-button size="large" type="primary" :loading="saving" @click="onSave">
         {{ saving ? '验证并保存中…' : '保存' }}
       </el-button>
     </template>
@@ -267,14 +279,21 @@ async function onSave() {
 }
 .pf__actions {
   display: flex;
-  gap: 12px;
-  margin-top: 4px;
+  gap: 10px;
+  margin-top: 8px;
 }
 .pf__hint {
-  margin-top: 4px;
+  margin-top: 8px;
 }
 .pf__keyless {
   font-size: var(--fs-body);
   color: var(--c-text-3);
+}
+/* 弹窗右上角关闭按钮：默认热区约 32px 且图标偏小，放大到 40px（限定在本弹窗内，
+   不波及全站其他对话框——项目内弹窗关闭键的尺寸口径如需统一，另行全站处理） */
+:global(.pf-dialog .el-dialog__headerbtn) {
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
 }
 </style>

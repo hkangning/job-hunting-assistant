@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Fold, Expand, Bell } from '@element-plus/icons-vue'
+import { Fold, Expand } from '@element-plus/icons-vue'
 import UserMenu from './UserMenu.vue'
+import ReminderBell from './ReminderBell.vue'
 import { useUserStore } from '../stores/user'
 
 defineProps({
@@ -38,7 +39,8 @@ function goNewApplication() {
       <!-- 页面级操作注入位：页面组件用 <Teleport to="#app-header-actions-slot"> 注入 -->
       <div id="app-header-actions-slot" class="app-header__slot"></div>
       <slot name="actions" />
-      <el-icon class="app-header__icon" title="提醒"><Bell /></el-icon>
+      <!-- 提醒入口（步骤 20）：铃铛 + 未读徽标 + 面板，见 ReminderBell -->
+      <ReminderBell />
       <el-button type="primary" @click="goNewApplication">＋ 新增投递</el-button>
       <!-- 用户菜单固定在顶栏最右（设计文档 §4.4） -->
       <UserMenu v-if="userStore.isLoggedIn" />
@@ -81,13 +83,5 @@ function goNewApplication() {
 }
 .app-header__slot:empty {
   display: none;
-}
-.app-header__icon {
-  font-size: 17px;
-  cursor: pointer;
-  color: var(--c-text-2);
-}
-.app-header__icon:hover {
-  color: var(--brand);
 }
 </style>

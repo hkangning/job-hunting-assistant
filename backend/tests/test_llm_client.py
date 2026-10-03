@@ -74,15 +74,25 @@ def _install(monkeypatch, *responses) -> list[httpx.Request]:
     return seen
 
 
-def _sse(*deltas: str, extra: str = "") -> httpx.Response:
-    """OpenAI 兼容的流式响应：每个 delta 一个 data 块；extra 用于插额外块（如用量统计）。"""
+def _sse(*deltas: str, extra: str = "", finish: str | None = "stop") -> httpx.Response:
+    """OpenAI 兼容的流式响应：每个 delta 一个 data 块 + 终止块（`finish_reason`）+ `[DONE]`。
+
+    终止块为 IS-56 口径（系统设计 §5.4「流终止校验」）必需——流结束未收到 `finish_reason`
+    会被判「上游截断」抛 10010；`finish=None` 专门构造该截断形态（钉子用例用）。
+    extra 用于插额外块（如用量统计）。
+    """
     body = "".join(
         f"data: {json.dumps({'choices': [{'delta': {'content': d}}]}, ensure_ascii=False)}\n\n"
         for d in deltas
     )
+    tail = (
+        ""
+        if finish is None
+        else f"data: {json.dumps({'choices': [{'delta': {}, 'finish_reason': finish}]})}\n\n"
+    )
     return httpx.Response(
         200,
-        content=(body + extra + "data: [DONE]\n\n").encode(),
+        content=(body + extra + tail + "data: [DONE]\n\n").encode(),
         headers={"content-type": "text/event-stream"},
     )
 
@@ -207,6 +217,30 @@ def test_stream_chat_builds_stream_once(monkeypatch):
     list(OpenAICompatibleClient().stream_chat(CONFIG, MSG))
 
     assert len(seen) == 1
+
+
+def test_stream_without_finish_reason_raises_10010_keeps_chunks(monkeypatch):
+    """IS-56：流有 delta 但全程无 `finish_reason`（连接被上游截断）→ 抛 10010，已产出块保留。"""
+    _install(monkeypatch, _sse("半", "截", finish=None))
+
+    got = []
+    with pytest.raises(LLMError) as exc:
+        for chunk in OpenAICompatibleClient().stream_chat(CONFIG, MSG):
+            got.append(chunk)
+
+    assert exc.value.code == ErrorCode.LLM_CALL_FAILED  # 10010
+    assert got == ["半", "截"]  # 已输出内容保留，由调用方按失败口径处理（不落库）
+
+
+def test_stream_only_done_without_finish_reason_still_raises(monkeypatch):
+    """IS-56 钉子：即使收到 `data: [DONE]`，无 `finish_reason` 仍判截断——
+    `[DONE]` 会被 openai SDK 消费、不产生 chunk，不可作终止判据（防后人改判据）。"""
+    _install(monkeypatch, _sse("答", finish=None))
+
+    with pytest.raises(LLMError) as exc:
+        list(OpenAICompatibleClient().stream_chat(CONFIG, MSG))
+
+    assert exc.value.code == ErrorCode.LLM_CALL_FAILED
 
 
 # ---------- C 组：JSON 解析 ----------

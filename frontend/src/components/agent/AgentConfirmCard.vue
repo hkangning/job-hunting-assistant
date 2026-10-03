@@ -79,18 +79,18 @@ function goApplications() {
 
     <div class="confirm__ops">
       <template v-if="tc.status === 'pending'">
-        <el-button size="small" @click="store.cancelTool(message.id)">取消</el-button>
-        <el-button size="small" type="primary" @click="store.confirmTool(message.id)">{{ confirmLabel }}</el-button>
+        <el-button @click="store.cancelTool(message.id)">取消</el-button>
+        <el-button type="primary" @click="store.confirmTool(message.id)">{{ confirmLabel }}</el-button>
       </template>
       <template v-else-if="tc.status === 'executing'">
-        <el-button size="small" type="primary" loading>执行中…</el-button>
+        <el-button type="primary" loading>执行中…</el-button>
       </template>
       <template v-else-if="tc.status === 'done'">
-        <el-button size="small" type="primary" plain @click="goApplications">去投递管理查看</el-button>
+        <el-button type="primary" plain @click="goApplications">去投递管理查看</el-button>
       </template>
       <template v-else-if="tc.status === 'failed'">
-        <el-button size="small" @click="store.cancelTool(message.id)">取消</el-button>
-        <el-button size="small" type="danger" @click="store.confirmTool(message.id)">重试</el-button>
+        <el-button @click="store.cancelTool(message.id)">取消</el-button>
+        <el-button type="danger" @click="store.confirmTool(message.id)">重试</el-button>
       </template>
     </div>
   </div>
@@ -99,7 +99,9 @@ function goApplications() {
 <style scoped>
 .confirm {
   width: 100%;
-  padding: 10px 12px;
+  /* 全站无 *{box-sizing} 重置：不声明则 100% + padding 溢出消息区，出现横向滚动条 */
+  box-sizing: border-box;
+  padding: 12px 14px;
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
   background: var(--c-card);

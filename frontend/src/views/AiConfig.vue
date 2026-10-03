@@ -145,16 +145,15 @@ onMounted(load)
             <!-- 显式入口：整行可点是快捷操作，但界面上得有一处「这行可以切过去」的明示（台账 #63） -->
             <el-button
               v-if="!item.is_active"
-              size="small"
               type="primary"
               plain
               @click="onActivate(item)"
             >
               设为当前
             </el-button>
-            <el-button v-else size="small" disabled>当前使用中</el-button>
-            <el-button size="small" @click="openEdit(item)">修改</el-button>
-            <el-button size="small" type="danger" plain @click="onRemove(item)">删除</el-button>
+            <el-button v-else disabled>当前使用中</el-button>
+            <el-button @click="openEdit(item)">修改</el-button>
+            <el-button type="danger" plain @click="onRemove(item)">删除</el-button>
           </div>
         </li>
       </ul>
@@ -174,20 +173,22 @@ onMounted(load)
 .ai__error {
   margin-bottom: 4px;
 }
-/* 卡片内的首条：与列表同属一个容器，「现在用哪个」不再浮在卡片外 */
+/* 卡片内的首条：与列表同属一个容器，「现在用哪个」不再浮在卡片外。
+   浅品牌底 + 品牌色值：这是全页最需要一眼看到的状态信息。 */
 .ai__current {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
-  padding: 9px 14px;
+  margin-bottom: 14px;
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--brand) 18%, var(--c-border));
   border-radius: var(--r-control);
-  background: var(--c-bg);
+  background: color-mix(in srgb, var(--brand) 6%, var(--c-card));
   font-size: var(--fs-body);
   color: var(--c-text-2);
 }
 .ai__current strong {
-  color: var(--c-text);
+  color: var(--brand);
 }
 .ai__card {
   padding: 16px 18px;
@@ -218,8 +219,8 @@ onMounted(load)
 .ai__row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 4px;
+  gap: 12px;
+  padding: 12px 8px;
   border-bottom: 1px solid var(--c-divider);
 }
 .ai__row:last-child {
@@ -245,6 +246,7 @@ onMounted(load)
 .ai__name {
   min-width: 120px;
   font-size: var(--fs-title);
+  font-weight: 600;
   color: var(--c-text);
 }
 .ai__model {
@@ -257,6 +259,6 @@ onMounted(load)
 }
 .ai__ops {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 </style>

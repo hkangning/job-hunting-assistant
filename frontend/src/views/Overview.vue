@@ -1,14 +1,16 @@
 <script setup>
 /**
  * 今日概览（SRS §3.1 / 接口文档 §3.4）：打开就知道今天该干什么。
- * 分区纵列：状态统计卡 → 待面试/笔试 → 跟进提醒 → 三栏（错题 / 校招情报 / 快捷入口）。
- * 错题与校招情报的内容分别随步骤 14/20 与 21/23 填充，此步留占位。
+ * 分区纵列：待面试/笔试 → 该跟进一下了 → 错题复习 → 校招情报 → 底部状态条。
+ * 待办区块各带一行提醒文案（步骤 20，取自当日未读提醒）；校招情报内容随步骤 21/23 填充。
  */
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOverviewStore } from '../stores/overview'
 import { APPLICATION_STATUSES, STATUS_LABELS, STATUS_COLORS } from '../constants/application'
 import { shortDateTime, datePart } from '../utils/datetime'
+import { listRemindersApi } from '../api/reminders'
+import ReminderTip from '../components/ReminderTip.vue'
 
 // 轮询间隔（系统设计 §4.2）；**仅本页挂载期间生效**——做成 store 内全局轮询的话，
 // 用户在投递页 / 分析页操作时也会持续请求一个没人看的接口
@@ -34,6 +36,26 @@ const tomorrowStr = (() => {
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
 })()
 
+// —— 提醒文案（步骤 20）——
+// 只取「今天生成且未读」的提醒（date = remind_date 恰好当日，契约见 api/reminders.js）：
+// 提醒 content 是生成时刻的事实陈述，挂到次日的新数据上会误导，故不让跨天的过期文案上墙。
+const todayStr = (() => {
+  const d = new Date()
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+})()
+const reminders = ref([])
+const tipOf = (type) => reminders.value.find((r) => r.reminder_type === type)?.content || ''
+
+/** 静默降级：提醒拉不到时区块照常显示实时数据，只是没有文案行 */
+async function loadReminders() {
+  try {
+    const data = await listRemindersApi({ date: todayStr, checked: false, page_size: 50 }, { silent: true })
+    reminders.value = data.items || []
+  } catch {
+    reminders.value = []
+  }
+}
+
 const isTomorrow = (e) => datePart(e.event_at) === tomorrowStr
 
 // 明日项置顶（SRS「明日有面试/笔试的记录置顶展示」），其余保持后端返回的 7 日内升序
@@ -54,7 +76,11 @@ function goApplications() {
 let timer = null
 onMounted(async () => {
   await store.fetch()
-  timer = setInterval(() => store.fetch(true), POLL_MS) // silent：轮询不闪 loading
+  loadReminders()
+  timer = setInterval(() => {
+    store.fetch(true) // silent：轮询不闪 loading
+    loadReminders() // 提醒随同一节奏刷新（已读后文案行随之消失）
+  }, POLL_MS)
 })
 onUnmounted(() => clearInterval(timer))
 </script>
@@ -101,6 +127,7 @@ onUnmounted(() => clearInterval(timer))
         @click="goApplications"
       >
         <h3 class="overview__title dot-title">待面试 / 笔试</h3>
+        <ReminderTip :text="tipOf('INTERVIEW')" />
         <div class="evlist">
           <div
             v-for="e in upcoming"
@@ -127,6 +154,7 @@ onUnmounted(() => clearInterval(timer))
         @click="goApplications"
       >
         <h3 class="overview__title dot-title">该跟进一下了</h3>
+        <ReminderTip :text="tipOf('FOLLOW_UP')" />
         <div class="evlist">
           <div
             v-for="f in followUps"
@@ -141,7 +169,26 @@ onUnmounted(() => clearInterval(timer))
         </div>
       </el-card>
 
-      <!-- ③ 校招情报（一手招聘信息）：**始终显示**，与上面两块（待办类）不同 ——
+      <!-- ③ 错题复习（步骤 20 起从底部状态条升为独立区块）：
+           有到期错题就是行动项，与「待面试 / 跟进」同级；提示文案取当日未读的错题提醒 -->
+      <el-card
+        v-if="wrongCount > 0"
+        shadow="never"
+        class="overview__card overview__card--link"
+        @click="router.push('/wrong-questions')"
+      >
+        <h3 class="overview__title dot-title">错题复习</h3>
+        <ReminderTip :text="tipOf('WRONG_QUESTION')" />
+        <div class="evlist">
+          <div class="evlist__item" @click.stop="router.push('/wrong-questions')">
+            <i class="evlist__dot" :style="{ background: 'var(--m-wrong)' }"></i>
+            <span class="evlist__main">{{ wrongCount }} 道错题到期，去复习一下</span>
+            <span class="evlist__days">去复习 →</span>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- ④ 校招情报（一手招聘信息）：**始终显示**，与上面几块（待办类）不同 ——
            待办没内容时该收起，而**入口本身就是内容**：它是本页唯一的「信息获取」来源，
            把它也藏起来，整页就只剩投递相关内容，与投递管理看不出区别了。
            内容随步骤 21~23 填充。见问题记录 IS-29（招聘信息与投递管理是候选池 → 进度追踪的
@@ -184,7 +231,7 @@ onUnmounted(() => clearInterval(timer))
         </el-button>
       </el-card>
 
-      <!-- ④ 今天无事可做时的说明：**待办类**区块（待面试 / 跟进 / 错题）都收起后才出现。
+      <!-- ⑤ 今天无事可做时的说明：**待办类**区块（待面试 / 跟进 / 错题）都收起后才出现。
            校招情报不参与该判定——它是常驻入口，不算「待办」。 -->
       <p
         v-if="!upcoming.length && !followUps.length && !wrongCount"
@@ -193,15 +240,10 @@ onUnmounted(() => clearInterval(timer))
         今天没有需要处理的事，安心准备下一场面试吧——也可以去校招情报看看新机会。
       </p>
 
-      <!-- ⑤ 底部状态条：紧凑一行 —— 它们是「现状」而非「待办」，不该占首屏
-           （「快捷入口」已移除：其中 4/5 与侧栏重复，且导航不回答「今天干什么」） -->
+      <!-- ⑥ 底部状态条：紧凑一行 —— 它们是「现状」而非「待办」，不该占首屏
+           （「快捷入口」已移除：其中 4/5 与侧栏重复，且导航不回答「今天干什么」；
+            错题复习步骤 20 起升为独立区块，此处不再重复计数） -->
       <div class="overview__strip">
-        <div v-if="wrongCount > 0" class="strip-item" @click="router.push('/wrong-questions')">
-          <i class="strip-item__dot" :style="{ background: 'var(--m-wrong)' }"></i>
-          错题复习 <b>{{ wrongCount }}</b> 道到期
-          <span class="strip-item__link">去复习 →</span>
-        </div>
-
         <div class="strip-item strip-item--grow" @click="goApplications">
           <span v-for="s in APPLICATION_STATUSES" :key="s.value" class="strip-item__stat">
             <i class="strip-item__dot" :style="{ background: s.color }"></i>

@@ -57,7 +57,7 @@ function goConfig() {
     </div>
 
     <div v-else-if="!store.messages.length" class="agent-empty">
-      <el-icon :size="34" class="agent-empty__icon"><Service /></el-icon>
+      <el-icon :size="40" class="agent-empty__icon"><Service /></el-icon>
       <p class="agent-empty__title">你好，我是求职助手</p>
       <p class="agent-empty__desc">记投递、查进度、出题、找面经——说一句话就能办</p>
     </div>
@@ -75,8 +75,8 @@ function goConfig() {
           <div v-if="m.error" class="agent-error">
             <span class="agent-error__text">{{ m.error.message }}</span>
             <div class="agent-error__ops">
-              <el-button v-if="m.error.needConfig" link type="primary" @click="goConfig">去 AI 配置</el-button>
-              <el-button link type="primary" @click="store.retryStream(m.id)">重试</el-button>
+              <el-button v-if="m.error.needConfig" size="small" type="primary" plain @click="goConfig">去 AI 配置</el-button>
+              <el-button size="small" @click="store.retryStream(m.id)">重试</el-button>
             </div>
           </div>
 
@@ -111,7 +111,7 @@ function goConfig() {
   padding: 20px 0;
 }
 .agent-empty__icon {
-  color: color-mix(in srgb, var(--brand) 30%, var(--c-card));
+  color: color-mix(in srgb, var(--brand) 45%, var(--c-card));
 }
 .agent-empty__title {
   margin: 10px 0 4px;
@@ -137,7 +137,7 @@ function goConfig() {
 }
 .agent-bubble {
   max-width: 85%;
-  padding: 9px 12px;
+  padding: 10px 13px;
   font-size: var(--fs-body);
   line-height: 1.65;
   white-space: pre-wrap;
@@ -161,6 +161,8 @@ function goConfig() {
 }
 .agent-error {
   width: 100%;
+  /* 全站无 *{box-sizing} 重置：不声明则 100% + padding 溢出消息区，出现横向滚动条 */
+  box-sizing: border-box;
   padding: 9px 12px;
   border: 1px solid color-mix(in srgb, var(--el-color-danger) 35%, var(--c-border));
   background: color-mix(in srgb, var(--el-color-danger) 6%, var(--c-card));
