@@ -54,6 +54,10 @@ os.environ["DATABASE_URL"] = _derive_test_database_url()
 # 恢复「原样转发」；须在导入 app.* 之前设置（Settings 在模块导入时读环境变量）。
 os.environ.setdefault("SSE_PACE_CPS", "0")
 
+# 提醒定时引擎（步骤 20）：应用 lifespan 默认注册 APScheduler（每日 07:00）——测试里关掉，
+# 避免测试期起后台调度线程干扰；手动触发接口 `/reminders/run` 不受该开关影响（仍可调用）。
+os.environ.setdefault("REMINDER_SCHEDULER_ENABLED", "false")
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.database import Base, SessionLocal, engine  # noqa: E402

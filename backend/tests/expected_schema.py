@@ -288,6 +288,7 @@ TABLES: dict[str, dict] = {
             ("user_id", "INTEGER", False, False),
             ("reminder_type", "VARCHAR(20)", False, False),
             ("ref_id", "INTEGER", True, False),
+            ("ref_type", "VARCHAR(20)", True, False),
             ("content", "TEXT", False, False),
             ("remind_date", "DATE", False, False),
             ("checked", "INTEGER", False, False),
@@ -407,7 +408,7 @@ ENUM_MEMBERS: dict[str, set[str]] = {
     "QuestionType": {"SUBJECTIVE", "CHOICE", "SCENARIO"},
     "QuestionSource": {"BUILTIN", "AI_GENERATED"},
     "WrongSourceType": {"PRACTICE", "DRILL", "INTERVIEW", "MANUAL"},
-    "ReminderType": {"FOLLOW_UP", "WRONG_QUESTION", "INTERVIEW"},
+    "ReminderType": {"FOLLOW_UP", "WRONG_QUESTION", "INTERVIEW", "INFO_MATCH"},
     "MessageRole": {"USER", "ASSISTANT", "TOOL"},
     # 步骤 5 新增两个枚举（数据库设计 §5 user.role / user.plan）
     "UserRole": {"USER", "ADMIN"},
