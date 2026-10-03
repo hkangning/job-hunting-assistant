@@ -8,6 +8,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOverviewStore } from '../stores/overview'
 import { APPLICATION_STATUSES, STATUS_LABELS, STATUS_COLORS } from '../constants/application'
+import { campusEventStatus, sourceSiteBrief } from '../constants/campus'
 import { shortDateTime, datePart } from '../utils/datetime'
 import { listRemindersApi } from '../api/reminders'
 import ReminderTip from '../components/ReminderTip.vue'
@@ -204,13 +205,36 @@ onUnmounted(() => clearInterval(timer))
           <div
             v-for="e in campusEvents"
             :key="`c-${e.id}`"
-            class="evlist__item"
+            class="evlist__item evlist__item--campus"
+            :class="{ 'evlist__item--muted': campusEventStatus(e.status).muted }"
             @click.stop="router.push('/campus')"
           >
             <i class="evlist__dot" :style="{ background: 'var(--m-campus)' }"></i>
-            <span class="evlist__time">{{ e.event_date }}</span>
+            <span class="evlist__time">{{ shortDateTime(e.event_date) }}</span>
             <span class="evlist__main">{{ e.company }} · {{ e.title }}</span>
-            <span class="evlist__status">{{ e.location }}</span>
+            <!-- 「已变更」角标（步骤 21，系统设计 §4.8：角标表达、不复用投递状态色）：
+                 活动改期等高频事件，紧贴标题提示 -->
+            <el-tag
+              v-if="campusEventStatus(e.status).changed"
+              size="small"
+              type="warning"
+              effect="plain"
+            >
+              已变更
+            </el-tag>
+            <!-- 右侧元数据组：地点 + 来源站点标签（step 21，多来源显示首个 + “+N”，悬浮见全部） -->
+            <span class="evlist__meta">
+              <span v-if="e.location" class="evlist__status">{{ e.location }}</span>
+              <el-tag
+                v-if="sourceSiteBrief(e.source_site)"
+                size="small"
+                type="info"
+                effect="plain"
+                :title="e.source_site"
+              >
+                {{ sourceSiteBrief(e.source_site) }}
+              </el-tag>
+            </span>
           </div>
           <div
             v-for="p in jobPostings"
@@ -371,6 +395,27 @@ onUnmounted(() => clearInterval(timer))
 }
 .evlist__item--soon {
   background: var(--el-color-warning-light-9);
+}
+/* 已过期条目灰化（系统设计 §4.8 第 3 条：状态用角标 + 灰化表达，不复用投递状态色）。
+   概览理论上只收未过期条目，此为防御式兜底 */
+.evlist__item--muted {
+  opacity: 0.55;
+}
+/* 行内标签不参与压缩：空间不足时优先截断标题（省略号），标签保持完整 */
+.evlist__item .el-tag {
+  flex: none;
+}
+/* 宣讲会行：标题收缩适应内容，「已变更」角标紧跟标题；地点与来源成组靠右对齐
+   （默认 .evlist__main flex:1 会把角标推进行尾，与「紧贴内容的变化提示」语义不符） */
+.evlist__item--campus .evlist__main {
+  flex: 0 1 auto;
+}
+.evlist__meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
 }
 .evlist__dot {
   width: 8px;
