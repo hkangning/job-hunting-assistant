@@ -5,15 +5,134 @@
  * 挂载于 App.vue 的默认壳内——blank 布局（登录/注册/入场动画）天然不渲染。
  * 浮窗打开时点球隐藏；跳转（结果卡片按钮）由卡片自行 closePanel 后 push。
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Clock, Minus, Plus, Promotion, Service, VideoPause } from '@element-plus/icons-vue'
 import AgentMessages from './AgentMessages.vue'
 import AgentHistoryPanel from './AgentHistoryPanel.vue'
 import { useAgentStore } from '../../stores/agent'
 import { textLength } from '../../utils/text'
+import {
+  BALL_SIZE,
+  PANEL_W,
+  ballFromPanel,
+  clampBallPos,
+  clampPanelRect,
+  panelHeight,
+  panelRectFromBall
+} from '../../utils/agentPosition'
 
 const store = useAgentStore()
 const draft = ref('')
+
+// —— 位置：球可拖到任意位置并记忆（localStorage），浮窗从球的位置朝屏幕中心展开 ——
+const POS_KEY = 'jobpilot_agent_pos'
+const ball = ref(loadBallPos())
+const panelPos = ref({ left: 0, top: 0 })
+
+function loadBallPos() {
+  const fallback = { x: window.innerWidth - BALL_SIZE - 24, y: window.innerHeight - BALL_SIZE - 24 }
+  try {
+    const saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
+    const point = saved && Number.isFinite(saved.x) && Number.isFinite(saved.y) ? saved : fallback
+    return clampBallPos(point.x, point.y, window.innerWidth, window.innerHeight)
+  } catch {
+    return clampBallPos(fallback.x, fallback.y, window.innerWidth, window.innerHeight)
+  }
+}
+
+function saveBallPos() {
+  localStorage.setItem(POS_KEY, JSON.stringify(ball.value))
+}
+
+// 打开浮窗时，面板从球的位置展开（resize 时同样重算，见 onResize）
+watch(
+  () => store.open,
+  (open) => {
+    if (open) {
+      panelPos.value = panelRectFromBall(
+        ball.value, window.innerWidth, window.innerHeight, PANEL_W, panelHeight(window.innerHeight)
+      )
+    }
+  }
+)
+
+// —— 悬浮球：拖动改位置（位移 > 4px 判为拖动），未拖动视为点击（开/关浮窗） ——
+let ballDrag = null
+function onBallDown(e) {
+  if (e.button !== 0) return
+  ballDrag = { sx: e.clientX, sy: e.clientY, ox: ball.value.x, oy: ball.value.y, moved: false }
+  window.addEventListener('mousemove', onBallMove)
+  window.addEventListener('mouseup', onBallUp)
+}
+function onBallMove(e) {
+  if (!ballDrag) return
+  const dx = e.clientX - ballDrag.sx
+  const dy = e.clientY - ballDrag.sy
+  if (!ballDrag.moved && Math.abs(dx) + Math.abs(dy) > 4) ballDrag.moved = true
+  if (ballDrag.moved) {
+    ball.value = clampBallPos(ballDrag.ox + dx, ballDrag.oy + dy, window.innerWidth, window.innerHeight)
+  }
+}
+function onBallUp() {
+  window.removeEventListener('mousemove', onBallMove)
+  window.removeEventListener('mouseup', onBallUp)
+  if (!ballDrag) return
+  if (ballDrag.moved) saveBallPos()
+  else store.toggle() // 未拖动 = 点击
+  ballDrag = null
+}
+
+// —— 浮窗头部：按住空白处拖动整窗（面板跟手），松手换算回球锚点（两套交互共用一个位置） ——
+let headDrag = null
+function onHeadDown(e) {
+  if (e.button !== 0 || e.target.closest('button')) return // 头部按钮不触发拖动
+  headDrag = { sx: e.clientX, sy: e.clientY, ol: panelPos.value.left, ot: panelPos.value.top, moved: false }
+  window.addEventListener('mousemove', onHeadMove)
+  window.addEventListener('mouseup', onHeadUp)
+}
+function onHeadMove(e) {
+  if (!headDrag) return
+  const dx = e.clientX - headDrag.sx
+  const dy = e.clientY - headDrag.sy
+  if (!headDrag.moved && Math.abs(dx) + Math.abs(dy) > 4) headDrag.moved = true
+  if (headDrag.moved) {
+    const vh = window.innerHeight
+    panelPos.value = clampPanelRect(
+      headDrag.ol + dx, headDrag.ot + dy, window.innerWidth, vh, PANEL_W, panelHeight(vh)
+    )
+  }
+}
+function onHeadUp() {
+  window.removeEventListener('mousemove', onHeadMove)
+  window.removeEventListener('mouseup', onHeadUp)
+  if (headDrag?.moved) {
+    ball.value = ballFromPanel(
+      panelPos.value, window.innerWidth, window.innerHeight, PANEL_W, panelHeight(window.innerHeight)
+    )
+    saveBallPos()
+  }
+  headDrag = null
+}
+
+function onResize() {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  ball.value = clampBallPos(ball.value.x, ball.value.y, vw, vh)
+  // 不 saveBallPos：resize 的钳制是临时视口的结果，不该覆盖用户拖出来的偏好位置
+  // （否则「临时小窗口 → 换回大屏」后球会停在钳后的位置，而不是用户拖到的位置）
+  if (store.open) {
+    panelPos.value = panelRectFromBall(ball.value, vw, vh, PANEL_W, panelHeight(vh))
+  }
+}
+
+onMounted(() => window.addEventListener('resize', onResize))
+onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
+  window.removeEventListener('mousemove', onBallMove)
+  window.removeEventListener('mouseup', onBallUp)
+  window.removeEventListener('mousemove', onHeadMove)
+  window.removeEventListener('mouseup', onHeadUp)
+})
 
 // 预设快捷指令（SRS §3.8 原文四项）
 const CHIPS = ['记一笔投递', '出三道 Java 题', '今天有什么事', '抽两道错题']
@@ -43,14 +162,24 @@ function onKeydown(event) {
 </script>
 
 <template>
-  <!-- 悬浮球（浮窗打开时让位） -->
-  <button v-show="!store.open" class="agent-ball" title="AI 助手" @click="store.toggle()">
+  <!-- 悬浮球（浮窗打开时让位）：可拖到任意位置（未拖动 = 点击开/关浮窗） -->
+  <button
+    v-show="!store.open"
+    class="agent-ball"
+    :style="{ left: ball.x + 'px', top: ball.y + 'px' }"
+    title="AI 助手（可拖动）"
+    @mousedown.prevent="onBallDown"
+  >
     <el-icon :size="26"><Service /></el-icon>
   </button>
 
-  <!-- 对话浮窗 -->
-  <section v-if="store.open" class="agent-panel">
-    <header class="agent-panel__head">
+  <!-- 对话浮窗（从球的位置展开；按住头部空白处可拖动整窗） -->
+  <section
+    v-if="store.open"
+    class="agent-panel"
+    :style="{ left: panelPos.left + 'px', top: panelPos.top + 'px' }"
+  >
+    <header class="agent-panel__head" title="按住空白处可拖动浮窗" @mousedown.prevent="onHeadDown">
       <el-icon class="agent-panel__brand"><Service /></el-icon>
       <span class="agent-panel__title">AI 助手</span>
       <div class="agent-panel__ops">
@@ -113,8 +242,6 @@ function onKeydown(event) {
 <style scoped>
 .agent-ball {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
   z-index: 1800;
   width: 58px;
   height: 58px;
@@ -125,7 +252,7 @@ function onKeydown(event) {
   justify-content: center;
   background: var(--brand);
   color: #fff;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: 0 8px 22px rgba(47, 91, 158, 0.36);
   transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
@@ -135,12 +262,14 @@ function onKeydown(event) {
 }
 .agent-ball:active {
   transform: scale(0.97);
+  cursor: grabbing;
 }
 .agent-panel {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  /* 位置由 :style 驱动（从左/上定位，跟随球锚点展开） */
   z-index: 1800;
+  /* border-box：宽度含 1px 边框——位置计算（agentPosition.js）按 400×620 计量，两处必须一致 */
+  box-sizing: border-box;
   width: 400px;
   height: min(620px, calc(100vh - 96px));
   display: flex;
@@ -169,6 +298,12 @@ function onKeydown(event) {
   border-bottom: 1px solid var(--c-divider);
   /* 头部用浅品牌底：与消息区（浅灰）和输入区（白）拉开层次，浮窗更像「产品」而非灰白拼盘 */
   background: color-mix(in srgb, var(--brand) 9%, var(--c-card));
+  /* 按住空白处可拖动整窗（按钮除外，见 onHeadDown） */
+  cursor: grab;
+  user-select: none;
+}
+.agent-panel__head:active {
+  cursor: grabbing;
 }
 .agent-panel__brand {
   color: var(--brand);
