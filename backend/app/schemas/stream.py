@@ -40,7 +40,9 @@ class InterviewChatRequest(BaseModel):
 class InterviewSummaryRequest(BaseModel):
     """面试总结请求体（POST /stream/interview-summary，接口文档 3.7）。"""
 
-    session_id: int = Field(description="会话 id，须属当前账号且含 ≥1 条已完成问答，否则 404+10002 / 400+10001")
+    session_id: int = Field(
+        description="会话 id，须属当前账号，否则 404+10002；0 条已完成问答亦可（落固定说明文案、不调 LLM，见接口文档 3.7 实现口径 7）"
+    )
 
 
 class ExperienceExtractRequest(BaseModel):
