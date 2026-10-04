@@ -24,7 +24,10 @@ router = APIRouter(tags=["提醒"])
 
 
 @router.post("/reminders/run", response_model=ApiResponse[ReminderRunData], summary="立即执行每日提醒任务")
-def run_reminders(client: LLMClient = Depends(get_llm_client)) -> ApiResponse[ReminderRunData]:
+def run_reminders(
+    current_user: User = Depends(get_current_user),
+    client: LLMClient = Depends(get_llm_client),
+) -> ApiResponse[ReminderRunData]:
     """遍历全部账号判定并生成今日提醒（手动触发入口，开发 / 演示用；定时任务同走 `run_daily`）。"""
     generated = run_daily(client_getter=lambda: client)
     return ApiResponse[ReminderRunData](data=ReminderRunData(generated=generated))

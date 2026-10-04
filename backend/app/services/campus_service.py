@@ -14,9 +14,9 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from urllib.parse import urlsplit
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import ColumnElement, delete, false, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.clients.crawler import compliance, processor
 from app.clients.crawler.base import RawItem, SourceError, get_adapter
@@ -284,6 +284,7 @@ def list_campus_events(
     info_type: str | None = None,
     city: str | None = None,
     keyword: str | None = None,
+    source_site: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
     include_expired: bool = False,
@@ -291,7 +292,11 @@ def list_campus_events(
     page: int = 1,
     page_size: int = 10,
 ) -> PageData[CampusEventItem]:
-    """宣讲会/双选会分页列表：过滤 → 画像打分 → 排序 → 内存分页（条目量为千级，一次算分可控）。"""
+    """宣讲会/双选会分页列表：过滤 → 画像打分 → 排序 → 内存分页（条目量为千级，一次算分可控）。
+
+    source_site 收来源学校名（与下发口径一致）：命中该校任一来源的条目即返回（跨源合并条目命中）；
+    未匹配到任何来源学校时返回空集。
+    """
     if sort not in ("time", "match"):
         raise BizException(ErrorCode.PARAM_INVALID, "sort 仅支持 time / match")
     if info_type is not None and info_type not in {item.value for item in InfoType}:
@@ -305,6 +310,10 @@ def list_campus_events(
     if keyword:
         conditions.append(
             or_(CampusEvent.title.like(f"%{keyword}%"), CampusEvent.company.like(f"%{keyword}%"))
+        )
+    if source_site:
+        conditions.append(
+            _source_site_condition(CampusEvent.source_site, _school_hosts(db, source_site))
         )
     if date_from:
         conditions.append(CampusEvent.event_date >= datetime.combine(date_from, time.min))
@@ -393,6 +402,38 @@ def _display_sites(raw: str | None, site_map: dict[str, str]) -> str | None:
     return ",".join(names) or None
 
 
+def _school_hosts(db: Session, school_name: str) -> list[str]:
+    """来源学校名 → 站点主机名集合（按 `crawl_source` 反查，一校多源返回多个、去重保序）。"""
+    hosts: list[str] = []
+    for (domain,) in db.execute(
+        select(CrawlSource.domain).where(CrawlSource.school_name == school_name)
+    ):
+        host = hostname_of(domain)
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def _source_site_condition(column: InstrumentedAttribute, hosts: list[str]) -> ColumnElement[bool]:
+    """source_site 串（逗号分隔主机名）精确命中任一所查主机名的条件；无匹配主机名时恒不命中。
+
+    按「整串 / 前缀 / 后缀 / 中段」四式精确匹配，避免域名后缀子串误撞（如 a.edu.cn 撞上 ba.edu.cn）。
+    """
+    if not hosts:
+        return false()
+    clauses: list[ColumnElement[bool]] = []
+    for host in hosts:
+        clauses.extend(
+            (
+                column == host,
+                column.like(f"{host},%"),
+                column.like(f"%,{host}"),
+                column.like(f"%,{host},%"),
+            )
+        )
+    return or_(*clauses)
+
+
 def _to_event_item(row: CampusEvent, score: int, site_map: dict[str, str]) -> CampusEventItem:
     return CampusEventItem(
         id=row.id,
@@ -425,6 +466,7 @@ def list_job_postings(
     company: str | None = None,
     job_type: str | None = None,
     keyword: str | None = None,
+    source_site: str | None = None,
     status: str | None = None,
     sort: str = "time",
     page: int = 1,
@@ -434,6 +476,8 @@ def list_job_postings(
 
     status 口径：不传或传 ACTIVE → ACTIVE + CHANGED（内容变更中的仍可见、前端打角标）；
     传 CHANGED / EXPIRED 精确过滤；其余值 → 10001。
+    source_site 收来源学校名（与下发口径一致），语义同宣讲会列表；投喂岗位无来源（source_site 为空），
+    不会被任何来源筛选命中。
     """
     if sort not in ("time", "match"):
         raise BizException(ErrorCode.PARAM_INVALID, "sort 仅支持 time / match")
@@ -455,6 +499,10 @@ def list_job_postings(
     if keyword:
         conditions.append(
             or_(JobPosting.title.like(f"%{keyword}%"), JobPosting.company.like(f"%{keyword}%"))
+        )
+    if source_site:
+        conditions.append(
+            _source_site_condition(JobPosting.source_site, _school_hosts(db, source_site))
         )
     rows = list(db.scalars(select(JobPosting).where(*conditions)))
     profile = db.scalar(select(UserProfile).where(UserProfile.user_id == user_id))

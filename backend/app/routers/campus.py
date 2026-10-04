@@ -28,6 +28,9 @@ def list_campus_events(
     info_type: str | None = Query(None, description="TALK 宣讲会 / FAIR 双选会；不传 = 全部"),
     city: str | None = Query(None, description="按地点文本模糊匹配（宣讲会地点多为校区，无独立城市字段）"),
     keyword: str | None = Query(None, description="标题 / 公司名模糊匹配"),
+    source_site: str | None = Query(
+        None, description="按来源学校名筛选（值同 `source_site` 下发口径，如「南京理工大学」）；含该校任一来源的条目命中，不传 = 全部"
+    ),
     date_from: date | None = Query(None, description="活动日期下界（含）YYYY-MM-DD"),
     date_to: date | None = Query(None, description="活动日期上界（含）YYYY-MM-DD"),
     include_expired: bool = Query(False, description="默认 false 只返回未过期；true = 含 EXPIRED"),
@@ -45,6 +48,7 @@ def list_campus_events(
         info_type=info_type,
         city=city,
         keyword=keyword,
+        source_site=source_site,
         date_from=date_from,
         date_to=date_to,
         include_expired=include_expired,
@@ -61,6 +65,9 @@ def list_job_postings(
     company: str | None = Query(None, description="公司名模糊匹配"),
     job_type: str | None = Query(None, description="CAMPUS 校招 / INTERN 实习 / SOCIAL 社招；不传 = 全部"),
     keyword: str | None = Query(None, description="岗位名 / 公司名模糊匹配"),
+    source_site: str | None = Query(
+        None, description="按来源学校名筛选（值同 `source_site` 下发口径）；投喂岗位无来源不会被命中，不传 = 全部"
+    ),
     status: str | None = Query(None, description="不传或 ACTIVE = 有效 + 已变更；CHANGED / EXPIRED 精确过滤"),
     sort: str = Query("time", description="time 按入库时间降序（默认）/ match 按画像匹配度降序"),
     page: int = Query(1, ge=1, description="页码，从 1 起"),
@@ -77,6 +84,7 @@ def list_job_postings(
         company=company,
         job_type=job_type,
         keyword=keyword,
+        source_site=source_site,
         status=status,
         sort=sort,
         page=page,
