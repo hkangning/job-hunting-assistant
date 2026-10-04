@@ -9,7 +9,6 @@
 
 from datetime import datetime, timedelta
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -314,10 +313,6 @@ def test_requires_token(anon_client: TestClient) -> None:
     assert anon_client.get(f"{API}/reminders").json()["code"] == 80001
 
 
-@pytest.mark.xfail(
-    reason="IS-62：/reminders/run 漏挂鉴权依赖，无 Token 返回 200（接口文档 §1.1 要求 401 + 80001）；后端修复后摘标",
-    strict=True,
-)
 def test_run_requires_token(anon_client: TestClient) -> None:
     """手动触发端点同受鉴权保护（接口文档 §1.1：除三个白名单外全部接口需 Token）。"""
     assert anon_client.post(f"{API}/reminders/run").status_code == 401

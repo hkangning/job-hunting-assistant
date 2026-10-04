@@ -12,7 +12,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Star } from '@element-plus/icons-vue'
-import { listCampusEvents, listJobPostings, deleteJobPosting } from '../api/campus'
+import { listCampusEvents, listJobPostings, deleteJobPosting, listCrawlSources } from '../api/campus'
+import { sourceSchoolOptions } from '../constants/campus'
 import { loadIngestText } from '../utils/campusStash'
 import CampusEventList from '../components/campus/CampusEventList.vue'
 import JobPostingList from '../components/campus/JobPostingList.vue'
@@ -62,13 +63,15 @@ const jobStatus = ref('')
 const includeExpired = ref(false)
 const dateRange = ref(null)
 const sort = ref('time')
+const sourceSite = ref('')
+const schoolOptions = ref([])
 
 const ingestVisible = ref(false)
 const subsVisible = ref(false)
 
 const isJob = computed(() => tab.value === 'job')
 const emptyText = computed(() => {
-  if (keyword.value || city.value || company.value) return '没有符合筛选条件的信息'
+  if (keyword.value || city.value || company.value || sourceSite.value) return '没有符合筛选条件的信息'
   return isJob.value ? '还没有聚合到岗位——可以「投喂一条」补充' : '还没有聚合到信息'
 })
 
@@ -84,6 +87,7 @@ async function load() {
           company: company.value || undefined,
           job_type: jobType.value || undefined,
           status: jobStatus.value || undefined,
+          source_site: sourceSite.value || undefined,
           sort: sort.value,
           page: page.value,
           page_size: pageSize.value
@@ -99,6 +103,7 @@ async function load() {
           info_type: tab.value === 'talk' ? 'TALK' : 'FAIR',
           keyword: keyword.value || undefined,
           city: city.value || undefined,
+          source_site: sourceSite.value || undefined,
           date_from: dateFrom || undefined,
           date_to: dateTo || undefined,
           include_expired: includeExpired.value,
@@ -140,11 +145,12 @@ function switchTab(value) {
   keyword.value = ''
   city.value = ''
   company.value = ''
+  sourceSite.value = ''
   page.value = 1
   load()
 }
 
-watch([sort, jobType, jobStatus, includeExpired], reload)
+watch([sort, jobType, jobStatus, includeExpired, sourceSite], reload)
 watch(dateRange, reload)
 
 function openUrl(url) {
@@ -203,6 +209,7 @@ function onCalendarEvent(event) {
   keyword.value = event.title || ''
   city.value = ''
   company.value = ''
+  sourceSite.value = ''
   view.value = 'list'
   page.value = 1
   load()
@@ -218,11 +225,25 @@ function onIngestSaved() {
   keyword.value = ''
   city.value = ''
   company.value = ''
+  sourceSite.value = ''
   page.value = 1
   load()
 }
 
-onMounted(load)
+/** 来源筛选下拉选项：随页面加载并行拉一次；失败 / 为空静默降级为仅「全部来源」（不影响列表）。 */
+async function loadSchoolOptions() {
+  try {
+    const data = await listCrawlSources({ silent: true })
+    schoolOptions.value = sourceSchoolOptions(data.items)
+  } catch {
+    schoolOptions.value = []
+  }
+}
+
+onMounted(() => {
+  load()
+  loadSchoolOptions()
+})
 </script>
 
 <template>
@@ -290,6 +311,10 @@ onMounted(load)
           }
         "
       />
+      <el-select v-model="sourceSite" class="campus__select campus__select--source" placeholder="全部来源">
+        <el-option label="全部来源" value="" />
+        <el-option v-for="name in schoolOptions" :key="name" :label="name" :value="name" />
+      </el-select>
       <el-input
         v-if="isJob"
         class="campus__input campus__input--sm"
@@ -440,6 +465,9 @@ onMounted(load)
 }
 .campus__select {
   width: 130px;
+}
+.campus__select--source {
+  width: 150px;
 }
 .campus__select--sort {
   margin-left: auto;

@@ -4,6 +4,7 @@ import {
   campusEventStatus,
   splitSourceSites,
   sourceSiteBrief,
+  sourceSchoolOptions,
   JOB_TYPE_META,
   INFO_TYPE_META,
   INGEST_SOURCE_META,
@@ -85,4 +86,26 @@ test('映射表把全部已知枚举登记齐（防漏登记）', () => {
   assert.deepEqual(Object.keys(INGEST_SOURCE_META).sort(), ['AUTO', 'FEED'])
   assert.deepEqual(Object.keys(CALENDAR_TYPE_META).sort(), ['EXAM', 'FAIR', 'INTERVIEW', 'TALK'])
   assert.deepEqual(Object.keys(CRAWL_STATUS_META).sort(), ['BLOCKED', 'FAILED', 'OK'])
+})
+
+test('sourceSchoolOptions：取学校名、去空白、去重、中文排序', () => {
+  const sources = [
+    { school_name: '南京理工大学' },
+    { school_name: '东南大学' },
+    { school_name: '南京理工大学' }, // 同校多源 → 去重
+    { school_name: ' 南京大学 ' }, // 去首尾空白
+    { school_name: '' },
+    { school_name: null },
+    { school_name: 123 },
+    {} // 缺字段
+  ]
+  assert.deepEqual(sourceSchoolOptions(sources), ['东南大学', '南京大学', '南京理工大学'])
+})
+
+test('sourceSchoolOptions：非数组 / 坏输入返回空数组，不炸', () => {
+  assert.deepEqual(sourceSchoolOptions(null), [])
+  assert.deepEqual(sourceSchoolOptions(undefined), [])
+  assert.deepEqual(sourceSchoolOptions('abc'), [])
+  assert.deepEqual(sourceSchoolOptions({}), [])
+  assert.deepEqual(sourceSchoolOptions([]), [])
 })

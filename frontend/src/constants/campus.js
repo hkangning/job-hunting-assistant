@@ -29,6 +29,18 @@ export function sourceSiteBrief(value) {
   return sites.length === 1 ? sites[0] : `${sites[0]} +${sites.length - 1}`
 }
 
+/**
+ * 来源筛选下拉的学校名选项（接口文档 §3.16「来源站点筛选」）：
+ * 取 crawl-sources 的 school_name，去空白、滤空值 / 非字符串、去重（同校多源）、按中文排序。
+ */
+export function sourceSchoolOptions(sources) {
+  if (!Array.isArray(sources)) return []
+  const names = sources
+    .map((s) => (typeof s?.school_name === 'string' ? s.school_name.trim() : ''))
+    .filter(Boolean)
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b, 'zh'))
+}
+
 // ---------- 岗位 / 类型 / 采集状态（接口文档 §3.16，步骤 23） ----------
 
 /** 岗位类型（job_posting.job_type）。 */
