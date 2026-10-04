@@ -65,6 +65,9 @@ _CANDIDATE_ANSWER_MAX = 5000
 # 点评首行的评分口径（与陪练同正则）：容忍冒号、空格等间隔符
 _SCORE_RE = re.compile(r"评分[^\d]{0,6}(\d{1,2})")
 
+# 0 条已完成问答时的固定总结文案（IS-63 方案 A：不走 LLM 直接落库，接口文档 3.7 实现口径 7）
+NO_ANSWER_SUMMARY = "本场未作答任何题目，无内容可总结。"
+
 
 def create_session(db: Session, *, user_id: int, payload: SessionCreateRequest) -> InterviewSessionDTO:
     """建会话：传投递则公司 / 岗位从中带入（越权 / 不存在 404 + 10002），否则手填两者必填。
@@ -170,14 +173,13 @@ def ensure_chattable(
 def ensure_summarizable(db: Session, *, user_id: int, session_id: int) -> InterviewSession:
     """生成总结前校验（在 SSE 建立之前执行，接口文档 3.7）：
 
-    会话不存在 / 不属于当前账号 → 404 + 10002；无任何已完成问答（作答或跳过）→ 400 + 10001。
-    进行中（ACTIVE）的会话同样允许——「提前结束」即从此端点生成总结并置 FINISHED。
+    会话不存在 / 不属于当前账号 → 404 + 10002。进行中（ACTIVE）的会话同样允许——
+    「提前结束」即从此端点生成总结并置 FINISHED；**0 条已完成问答（作答或跳过）亦允许**
+    （IS-63 方案 A）：落固定说明文案、不调用模型，见 `run_summary`。
     """
     session = db.get(InterviewSession, session_id)
     if session is None or session.user_id != user_id:
         raise BizException(ErrorCode.NOT_FOUND, "面试会话不存在")
-    if _answered_count(db, session.id) < 1:
-        raise BizException(ErrorCode.PARAM_INVALID, "本场还没有已作答的题目，无法生成总结")
     return session
 
 
@@ -190,8 +192,10 @@ def run_summary(
     （一次性 JSON 的错题候选，供前端出确认卡片）。已有总结时直接回放、不调 LLM
     （重复调用不重复计费，也不重出候选）；否则流式生成，**正文随流落库**
     （`summary` 列即正文 delta 拼接，候选段不落库、回放不含），同事务将会话置 FINISHED。
-    候选段缺失 / 非法一律静默跳过、照常落正文（`_extract_candidates`）；正文为空仍报 10011
-    且不落库。断连不落库（与 `interview-chat` 同口径）：`GeneratorExit` 沿链上抛，commit 不执行。
+    **0 条已完成问答**（IS-63 方案 A）：不调 LLM，直接落固定说明文案 `NO_ANSWER_SUMMARY`
+    并置 FINISHED。候选段缺失 / 非法一律静默跳过、照常落正文（`_extract_candidates`）；
+    正文为空仍报 10011 且不落库。断连不落库（与 `interview-chat` 同口径）：
+    `GeneratorExit` 沿链上抛，commit 不执行。
     """
     session = ensure_summarizable(db, user_id=user_id, session_id=session_id)
     if session.summary:
@@ -199,6 +203,16 @@ def run_summary(
         return {"record_id": session.id}
 
     qas = [qa for qa in _load_qas(db, session.id) if (qa.answer or "").strip() or qa.skipped]
+    if not qas:
+        # 0 条已完成问答：不调 LLM，落固定说明文案并置 FINISHED（候选段自然缺席）
+        yield SSE.delta(NO_ANSWER_SUMMARY, "summary")
+        session.summary = NO_ANSWER_SUMMARY
+        session.status = SessionStatus.FINISHED.value
+        if session.finished_at is None:
+            session.finished_at = datetime.now()
+        db.commit()
+        return {"record_id": session.id}
+
     turns = [
         {
             "seq": qa.seq,
