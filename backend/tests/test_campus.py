@@ -1,14 +1,19 @@
-"""校招情报采集测试：TC-23 / TC-73 ~ TC-78（步骤 21 多源采集层）。
+"""校招情报测试：TC-23 / TC-73 ~ TC-82（步骤 21 多源采集层 + 步骤 22 岗位与订阅）。
 
 分组（对齐测试计划 §用例）：
 - A 处理器纯函数：跨源去重指纹（TC-73）、变更判定与空值保护（TC-74）、归档边界（TC-75）、匹配打分（TC-78）；
 - B 适配器离线解析（TC-76）：三厂商快照经 stub 出网，全程不联网；
 - C 合规组件（TC-77）：UA 标识、robots 检查、状态码分流、跨域拦截、同域限频；
 - D 服务层编排：跨源合并与变更落库（TC-73/74）、归档执行与"全源失败不归档"（TC-75）、单源隔离与任务互斥（TC-23）；
-- E API：源配置 CRUD 错误口径、手动触发逐源结果、`GET /campus-events` 过滤 / 分页 / 排序 / 来源映射、概览接入。
+- E API：源配置 CRUD 错误口径、手动触发逐源结果、`GET /campus-events` 过滤 / 分页 / 排序 / 来源映射、概览接入；
+- F 岗位与投喂（步骤 22）：岗位列表隔离与状态口径、`is_applied` 归一比对、概览岗位、
+  投喂三条路径（文本成功 / 抽取失败 / 链接被拒）；
+- G 订阅与推送（步骤 22）：订阅 CRUD 与数组清洗、匹配语义（维度间 AND / 维度内 OR）、
+  多规则并集、同日去重、候选限公共信息（投喂记录不参与推送）；
+- H 日历（步骤 22）：四类事件聚合、区间边界、跨账号隔离。
 
-口径出处：接口文档 v1.44 §3.16、系统设计 v1.40 §5.9、数据库设计 v1.21 §3.13 / §3.20。
-服务层与 API 用例走真实测试库（conftest 每例清库）；出网一律 stub。
+口径出处：接口文档 v1.45 §3.4 / §3.14 / §3.16、系统设计 v1.41 §5.9、数据库设计 v1.24。
+服务层与 API 用例走真实测试库（conftest 每例清库）；出网一律 stub（投喂链接抓取同理）。
 """
 
 from __future__ import annotations
@@ -20,15 +25,34 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.clients.crawler import compliance, processor
 from app.clients.crawler.adapters import bysjy, job91, jysd
 from app.clients.crawler.base import RawItem, SourceError, parse_datetime_text
+from app.clients.llm_client import LLMError
 from app.database import SessionLocal
 from app.exceptions import BizException, ErrorCode
-from app.models import CampusEvent, Config, CrawlSource, UserProfile
-from app.models.enums import CrawlStatus, InfoStatus, InfoType
+from app.models import (
+    Application,
+    CampusEvent,
+    Config,
+    CrawlSource,
+    JobPosting,
+    Reminder,
+    Subscription,
+    User,
+    UserProfile,
+)
+from app.models.enums import (
+    ApplicationStatus,
+    CrawlStatus,
+    InfoStatus,
+    InfoType,
+    IngestSource,
+    JobType,
+    ReminderType,
+)
 from app.services import campus_service
 
 API = "/api/v1"
@@ -925,3 +949,521 @@ def test_overview_campus_events_and_last_crawl_at(client: TestClient):
     assert data["campus_events"][0]["source_site"] == "南京理工大学"
     assert data["campus_events"][0]["status"] == InfoStatus.CHANGED.value
     assert data["last_crawl_at"] is not None
+
+
+# ---------- F 岗位与投喂（TC-80 / TC-81，步骤 22） ----------
+
+
+def _add_posting(
+    db,
+    *,
+    user_id: int = 0,
+    title: str = "后端开发工程师",
+    company: str = "某科技有限公司",
+    **kw,
+) -> JobPosting:
+    """造一条落库岗位；默认公共（user_id=0）、ACTIVE、今天入库。"""
+    first_seen = kw.pop("first_seen_at", TODAY)
+    row = JobPosting(
+        user_id=user_id,
+        title=title,
+        company=company,
+        city=kw.pop("city", None),
+        edu_req=kw.pop("edu_req", None),
+        major_req=kw.pop("major_req", None),
+        salary_text=kw.pop("salary_text", None),
+        job_type=kw.pop("job_type", None),
+        deadline=kw.pop("deadline", None),
+        source_site=kw.pop("source_site", None),
+        source_url=kw.pop("source_url", None),
+        ingest_source=kw.pop("ingest_source", IngestSource.AUTO.value),
+        raw_excerpt=kw.pop("raw_excerpt", None),
+        dedup_key=kw.pop("dedup_key", None) or f"posting-{user_id}-{company}-{title}",
+        status=kw.pop("status", InfoStatus.ACTIVE.value),
+        first_seen_at=first_seen,
+        last_seen_at=kw.pop("last_seen_at", first_seen),
+        changed_at=kw.pop("changed_at", None),
+        **kw,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _add_subscription(db, user_id: int, *, name: str = "规则", enabled: int = 1, **arrays) -> Subscription:
+    """造一条订阅规则；四个数组维度以 JSON 文本落库（模拟库中形态），空数组存 NULL。"""
+
+    def dump(values: list[str]) -> str | None:
+        return json.dumps(values, ensure_ascii=False) if values else None
+
+    row = Subscription(
+        user_id=user_id,
+        name=name,
+        keywords=dump(arrays.pop("keywords", [])),
+        companies=dump(arrays.pop("companies", [])),
+        cities=dump(arrays.pop("cities", [])),
+        info_types=dump(arrays.pop("info_types", [])),
+        enabled=enabled,
+        created_at=datetime.now(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def test_posting_dedup_key_normalizes_company_title_city():
+    """TC-73（岗位侧）：指纹 = 归一公司 + 归一标题 + 归一城市——全半角括号与大小写／空白差异视为同一条，城市不同即不同。"""
+    base = processor.posting_dedup_key("腾讯（南京）有限公司", "Java 开发工程师", "南京")
+    assert base == processor.posting_dedup_key("腾讯(南京)有限公司", "java开发工程师", "南京")  # 同上一条
+    assert base != processor.posting_dedup_key("腾讯(南京)有限公司", "Java 开发工程师", "深圳")
+    assert base != processor.posting_dedup_key("字节跳动(南京)有限公司", "Java 开发工程师", "南京")
+
+
+def test_list_job_postings_scope_and_status(db_session, account_id):
+    """TC-81：结果 = 公共岗位 + 本账号投喂（他人投喂不可见）；status 三态口径与非法值 10001。"""
+    _add_posting(db_session, user_id=0, title="公共岗位")
+    _add_posting(db_session, user_id=account_id, title="我的投喂", ingest_source=IngestSource.FEED.value)
+    _add_posting(db_session, user_id=account_id + 100, title="他人投喂", ingest_source=IngestSource.FEED.value)
+    _add_posting(db_session, user_id=0, title="已变更岗位", status=InfoStatus.CHANGED.value, changed_at=TODAY)
+    _add_posting(db_session, user_id=0, title="过期岗位", status=InfoStatus.EXPIRED.value)
+
+    default = campus_service.list_job_postings(db_session, account_id)
+    titles = {item.title for item in default.items}
+    assert titles == {"公共岗位", "我的投喂", "已变更岗位"}  # 过期默认隐藏、他人投喂不可见
+
+    assert campus_service.list_job_postings(db_session, account_id, status="ACTIVE").total == 3  # ACTIVE + CHANGED
+    assert campus_service.list_job_postings(db_session, account_id, status="CHANGED").total == 1
+    assert campus_service.list_job_postings(db_session, account_id, status="EXPIRED").total == 1
+
+    with pytest.raises(BizException) as exc:
+        campus_service.list_job_postings(db_session, account_id, status="DRAFT")
+    assert exc.value.code == ErrorCode.PARAM_INVALID
+
+
+def test_list_job_postings_filters_and_match_sort(db_session, account_id):
+    """TC-78 / TC-81：过滤（城市等值 / 公司、关键词模糊 / job_type）与 sort=match 按画像打分降序、0 分不隐藏。"""
+    profile = db_session.scalar(select(UserProfile).where(UserProfile.user_id == account_id))
+    profile.target_city, profile.target_position, profile.major = "南京", "后端开发", "计算机"
+    db_session.commit()
+    _add_posting(db_session, title="低分岗位", company="甲公司", city="天津")
+    _add_posting(db_session, title="后端开发工程师", company="乙公司", city="南京", major_req="计算机")
+    _add_posting(db_session, title="实习岗位", company="丙公司", job_type=JobType.INTERN.value)
+
+    assert campus_service.list_job_postings(db_session, account_id, city="南京").total == 1
+    assert campus_service.list_job_postings(db_session, account_id, company="乙").total == 1
+    assert campus_service.list_job_postings(db_session, account_id, keyword="后端").total == 1
+    assert campus_service.list_job_postings(db_session, account_id, job_type="INTERN").total == 1
+    with pytest.raises(BizException):
+        campus_service.list_job_postings(db_session, account_id, job_type="XXX")
+    with pytest.raises(BizException):
+        campus_service.list_job_postings(db_session, account_id, sort="xxx")
+
+    matched = campus_service.list_job_postings(db_session, account_id, sort="match").items
+    assert matched[0].title == "后端开发工程师" and matched[0].match_score == 100
+    assert len(matched) == 3  # 低分条目不被隐藏
+
+
+def test_is_applied_normalized_comparison(db_session, account_id):
+    """TC-81：is_applied 按「归一公司 + 归一岗位名」比对当前账号投递记录（投递原文的全半角 / 空白差异不影响判定）。"""
+    db_session.add(
+        Application(
+            user_id=account_id,
+            company="腾讯(南京)有限公司",
+            position="Java 开发工程师",
+            status=ApplicationStatus.APPLIED.value,
+            applied_at=TODAY,
+        )
+    )
+    db_session.commit()
+    _add_posting(db_session, title="java开发工程师", company="腾讯（南京）有限公司")
+    _add_posting(db_session, title="Java开发工程师", company="字节跳动")
+
+    by_company = {item.company: item.is_applied for item in campus_service.list_job_postings(db_session, account_id).items}
+    assert by_company == {"腾讯（南京）有限公司": True, "字节跳动": False}
+
+
+def test_top_job_postings_limit_and_expired_filter(db_session, account_id):
+    """概览岗位：默认 3 条、按匹配分降序、过滤 EXPIRED；含本账号投喂（接口文档 v1.45 §3.4）。"""
+    profile = db_session.scalar(select(UserProfile).where(UserProfile.user_id == account_id))
+    profile.target_city, profile.target_position, profile.major = "南京", "后端开发", "计算机"
+    db_session.commit()
+    _add_posting(db_session, user_id=0, title="后端开发工程师", city="南京", major_req="计算机")  # 100 分
+    _add_posting(db_session, user_id=0, title="后端开发（天津）", city="天津")  # 40 分
+    _add_posting(db_session, user_id=account_id, title="后端开发实习", city="天津", ingest_source=IngestSource.FEED.value)
+    _add_posting(db_session, user_id=0, title="无关岗位", city="天津")  # 0 分，超默认条数（3）
+    _add_posting(db_session, user_id=0, title="过期高分岗位", city="南京", major_req="计算机", status=InfoStatus.EXPIRED.value)
+
+    top = campus_service.top_job_postings(db_session, account_id)
+    assert len(top) == 3
+    assert top[0].title == "后端开发工程师" and top[0].match_score == 100
+    assert all(item.title != "过期高分岗位" for item in top)
+    assert {item.title for item in top} == {"后端开发工程师", "后端开发（天津）", "后端开发实习"}
+
+
+def test_ingest_text_preview_and_confirm(client: TestClient, account, llm_configured, fake_llm_client):
+    """TC-80 ①：文本抽取返回 fields + missing、预览**不入库**；确认后以 FEED 通道入库并归属当前账号。"""
+    fake_llm_client.json_result = {
+        "title": "后端开发工程师",
+        "company": "某科技公司",
+        "city": "南京",
+        "edu_req": "本科",
+        "major_req": "计算机",
+        "salary_text": None,
+        "job_type": "CAMPUS",
+        "deadline": "2026-11-30",
+    }
+    resp = client.post(f"{API}/job-postings/ingest", json={"text": "某科技公司招聘后端开发工程师，本科，计算机专业……"})
+    data = resp.json()["data"]
+
+    assert resp.status_code == 200
+    assert data["fields"]["title"] == "后端开发工程师"
+    assert data["fields"]["deadline"] == "2026-11-30"  # 截止时间归一为日期串
+    assert data["missing"] == ["salary_text"]  # 未抽到的字段清单（按固定字段序）
+    assert data["source"] == "FEED" and data["fetched_from"] == "text"
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(JobPosting)) == 0  # 预览不落库
+
+    created = client.post(f"{API}/job-postings", json={**data["fields"], "raw_excerpt": "原文摘要"}).json()["data"]
+    assert created["ingest_source"] == IngestSource.FEED.value
+    assert created["status"] == InfoStatus.ACTIVE.value
+    assert created["job_type"] == JobType.CAMPUS.value
+    with SessionLocal() as db:
+        row = db.scalar(select(JobPosting))
+        assert row.user_id == account["id"] and row.raw_excerpt == "原文摘要"  # 投喂记录才有原文摘录
+
+
+def test_ingest_link_path_success(client: TestClient, llm_configured, fake_llm_client, monkeypatch: pytest.MonkeyPatch):
+    """TC-80 ③（成功支路）：链接通道经合规组件抓正文 → 抽取；fetched_from=url。"""
+    fake_llm_client.json_result = {"title": "前端开发工程师", "company": "某公司"}
+    monkeypatch.setattr(compliance, "fetch_article", lambda url: "招聘前端开发工程师。岗位职责与任职要求详见正文。" * 10)
+
+    data = client.post(f"{API}/job-postings/ingest", json={"url": "https://mock.edu.cn/job/1"}).json()["data"]
+
+    assert data["fetched_from"] == "url" and data["fields"]["title"] == "前端开发工程师"
+    assert data["missing"] == ["city", "edu_req", "major_req", "salary_text", "job_type", "deadline"]
+
+
+def test_ingest_link_private_address_rejected(client: TestClient, llm_configured, fake_llm_client):
+    """TC-80 ③：内网地址被 SSRF 防护拒绝 → 70003（走真实 check_public_url，环回地址无需出网）。"""
+    resp = client.post(f"{API}/job-postings/ingest", json={"url": "http://127.0.0.1/job"})
+
+    assert resp.status_code == 502
+    assert resp.json()["code"] == ErrorCode.INGEST_PARSE_FAILED
+    assert "内网" in resp.json()["message"]
+    assert fake_llm_client.json_calls == []  # 未到抽取环节
+
+
+def test_ingest_link_login_wall_rejected(client: TestClient, llm_configured, fake_llm_client, monkeypatch: pytest.MonkeyPatch):
+    """TC-80 ③：登录墙页面 → 70003（stub 出网，走真实正文提取与登录判定，message 与内网地址可区分）。"""
+    monkeypatch.setattr(compliance, "check_public_url", lambda url: None)
+    monkeypatch.setattr(compliance, "check_robots", lambda domain: None)
+    body = "<html><body><p>请先登录后查看该职位详情</p><p>" + "职位描述与任职要求。" * 12 + "</p></body></html>"
+    monkeypatch.setattr(compliance, "fetch", lambda url, *, method="GET", json_body=None: _ok(text=body))
+
+    resp = client.post(f"{API}/job-postings/ingest", json={"url": "https://mock.edu.cn/job/2"})
+
+    assert resp.json()["code"] == ErrorCode.INGEST_PARSE_FAILED
+    assert "登录" in resp.json()["message"]
+    assert "内网" not in resp.json()["message"]
+
+
+def test_ingest_llm_failure_and_param_guards(client: TestClient, llm_configured, fake_llm_client):
+    """TC-80 ②：抽取不可解析 → 70003；同传 / 均缺 → 10001；未配 AI → 10012（不降级为手动填表）。"""
+    fake_llm_client.error = LLMError(ErrorCode.LLM_OUTPUT_INVALID, "输出无法解析")
+    invalid = client.post(f"{API}/job-postings/ingest", json={"text": "招聘信息原文……"})
+    assert invalid.status_code == 502
+    assert invalid.json()["code"] == ErrorCode.INGEST_PARSE_FAILED
+
+    fake_llm_client.error = None
+    both = client.post(f"{API}/job-postings/ingest", json={"text": "原文", "url": "https://mock.edu.cn/job/3"})
+    assert both.status_code == 400 and both.json()["code"] == ErrorCode.PARAM_INVALID
+    neither = client.post(f"{API}/job-postings/ingest", json={})
+    assert neither.json()["code"] == ErrorCode.PARAM_INVALID
+
+
+def test_ingest_requires_ai_configuration(client: TestClient, fake_llm_client):
+    """TC-80：未配 AI 供应商 → 10012（引导配置，原文就绪可直接重试，不降级为手动填表）。"""
+    resp = client.post(f"{API}/job-postings/ingest", json={"text": "某公司招聘后端开发工程师……"})
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == ErrorCode.LLM_KEY_MISSING
+    assert fake_llm_client.json_calls == []
+
+
+def test_create_job_posting_validation_and_repeat_overwrite(client: TestClient, account):
+    """TC-80：title / company 必填（去空白后校验）；同账号重复投喂同一条 → 覆盖更新不报错、不新增行。"""
+    blank = client.post(f"{API}/job-postings", json={"title": "  ", "company": "某公司"})
+    assert blank.status_code == 400 and blank.json()["code"] == ErrorCode.PARAM_INVALID
+
+    first = client.post(
+        f"{API}/job-postings",
+        json={"title": "后端开发工程师", "company": "某公司", "city": "南京", "salary_text": "20k"},
+    ).json()["data"]
+    again = client.post(
+        f"{API}/job-postings",
+        json={"title": "后端开发工程师", "company": "某公司", "city": "南京", "salary_text": "25k"},
+    ).json()["data"]
+
+    assert again["id"] == first["id"] and again["salary_text"] == "25k"
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(JobPosting)) == 1
+
+
+def test_delete_job_posting_rules(client: TestClient, account, make_account):
+    """TC-81：投喂项可删；自动抓取项不可删 → 10001；他人 / 不存在的项 → 404 + 10002（不可区分）。"""
+    mine = client.post(f"{API}/job-postings", json={"title": "我的投喂", "company": "甲公司"}).json()["data"]
+    with SessionLocal() as db:
+        auto = _add_posting(db, user_id=0, title="公共岗位", company="乙公司", ingest_source=IngestSource.AUTO.value)
+        auto_id = auto.id
+    other = make_account("job_other")
+    others = client.post(
+        f"{API}/job-postings", json={"title": "他人投喂", "company": "丙公司"}, headers=other["headers"]
+    ).json()["data"]
+
+    assert client.delete(f"{API}/job-postings/{auto_id}").json()["code"] == ErrorCode.PARAM_INVALID
+    assert client.delete(f"{API}/job-postings/{others['id']}").status_code == 404
+    assert client.delete(f"{API}/job-postings/{others['id']}").json()["code"] == ErrorCode.NOT_FOUND
+    assert client.delete(f"{API}/job-postings/999999").json()["code"] == ErrorCode.NOT_FOUND
+    assert client.delete(f"{API}/job-postings/{mine['id']}").status_code == 200
+    assert client.get(f"{API}/job-postings").json()["data"]["total"] == 1  # 仅剩公共岗位
+
+
+def test_job_postings_requires_token(anon_client: TestClient):
+    """鉴权：岗位 / 投喂 / 订阅 / 日历接口均在 §1.1 白名单外 → 无 Token 一律 401 + 80001。"""
+    assert anon_client.get(f"{API}/job-postings").status_code == 401
+    assert anon_client.post(f"{API}/job-postings", json={"title": "a", "company": "b"}).status_code == 401
+    assert anon_client.post(f"{API}/job-postings/ingest", json={"text": "x"}).status_code == 401
+    assert anon_client.get(f"{API}/calendar?start=2026-01-01&end=2026-01-02").status_code == 401
+    assert anon_client.get(f"{API}/subscriptions").status_code == 401
+
+
+# ---------- G 订阅规则与推送（TC-79，步骤 22） ----------
+
+
+def test_subscription_crud_and_cleaning(client: TestClient, make_account):
+    """TC-79：订阅 CRUD——数组清洗（去空白 / 去重 / 单项截断 / 每维上限）、PUT 部分更新（空数组 = 清空）、越权 10002。"""
+    created = client.post(
+        f"{API}/subscriptions",
+        json={"name": " 后端岗 ", "keywords": [" 后端 ", "后端", "", "Java"], "cities": ["南京"], "info_types": ["JOB"]},
+    ).json()["data"]
+    assert created["name"] == "后端岗"
+    assert created["keywords"] == ["后端", "Java"]  # 去空白、去重、去空项
+    assert created["cities"] == ["南京"] and created["info_types"] == ["JOB"] and created["enabled"] is True
+    sid = created["id"]
+
+    capped = client.post(f"{API}/subscriptions", json={"name": "上限", "keywords": [f"k{i}" for i in range(30)]}).json()["data"]
+    assert len(capped["keywords"]) == 20  # 每维最多 20 项
+    clipped = client.post(f"{API}/subscriptions", json={"name": "截断", "keywords": ["x" * 80]}).json()["data"]
+    assert len(clipped["keywords"][0]) == 50  # 单项最多 50 字
+
+    # PUT 部分更新：未传字段保持原值；传空数组 = 清空该维度（回到「不限」）
+    updated = client.put(f"{API}/subscriptions/{sid}", json={"enabled": False}).json()["data"]
+    assert updated["enabled"] is False and updated["keywords"] == ["后端", "Java"]
+    cleared = client.put(f"{API}/subscriptions/{sid}", json={"keywords": []}).json()["data"]
+    assert cleared["keywords"] == [] and cleared["cities"] == ["南京"] and cleared["name"] == "后端岗"
+
+    # 列表只含本账号、按创建顺序；他人改 / 删 → 404 + 10002
+    other = make_account("sub_other")
+    assert [item["id"] for item in client.get(f"{API}/subscriptions").json()["data"]] == [sid, capped["id"], clipped["id"]]
+    assert client.get(f"{API}/subscriptions", headers=other["headers"]).json()["data"] == []
+    assert client.put(f"{API}/subscriptions/{sid}", headers=other["headers"], json={"name": "改名"}).status_code == 404
+    assert client.delete(f"{API}/subscriptions/{sid}", headers=other["headers"]).json()["code"] == ErrorCode.NOT_FOUND
+
+    assert client.delete(f"{API}/subscriptions/{sid}").status_code == 200
+    assert client.delete(f"{API}/subscriptions/{sid}").json()["code"] == ErrorCode.NOT_FOUND
+
+
+def test_rule_hits_dimensions_and_or():
+    """TC-79：匹配语义纯逻辑——维度间 AND、维度内 OR、留空维度不限；城市维度岗位读 city、活动回退 location。"""
+    rule = campus_service.SubscriptionRule
+    item = SimpleNamespace(title="Java 后端开发工程师", company="字节跳动（南京）有限公司", city="南京", location=None)
+
+    assert campus_service._rule_hits(rule(("java",), ("字节跳动",), ("南京",), ("JOB",)), item, "JOB") is True
+    assert campus_service._rule_hits(rule(("java",), ("字节跳动",), ("南京",), ("JOB",)), item, "TALK") is False  # 类型不符
+    assert campus_service._rule_hits(rule(("阿里", "后端"), (), (), ()), item, "JOB") is True  # 同维 OR
+    assert campus_service._rule_hits(rule(("阿里",), (), (), ()), item, "JOB") is False
+    assert campus_service._rule_hits(rule(("java",), ("阿里",), (), ()), item, "JOB") is False  # 维度间 AND
+    assert campus_service._rule_hits(rule((), (), (), ()), item, "JOB") is True  # 全留空 = 不限
+
+    event = SimpleNamespace(title="后端专场宣讲会", company="某公司", location="南京理工大学体育馆")
+    assert campus_service._rule_hits(rule((), (), ("南京",), ("TALK",)), event, "TALK") is True  # 活动回退 location
+    assert campus_service._rule_hits(rule((), (), ("天津",), ()), event, "TALK") is False
+
+
+def test_match_new_items_writes_reminder_and_dedup(db_session, account_id):
+    """TC-79：命中写 INFO_MATCH 提醒（ref_type 标识来源表、模板文案不调 LLM）；同信息同日不重复。"""
+    _add_subscription(db_session, account_id, keywords=["后端"])
+    # 两表自增 id 相互独立，撞值会合并提醒（已知边界，见下一条用例）——先各占位，使两条目标条目 id 不同
+    for index in range(2):
+        _add_posting(db_session, user_id=0, title=f"填充岗位{index}", company="填充公司")
+    _add_event(db_session, title="填充活动", dedup_key="filler")
+    posting = _add_posting(db_session, user_id=0, title="后端开发工程师", company="某公司")  # id=3
+    event = _add_event(db_session, title="后端专场宣讲会")  # id=2
+    assert posting.id != event.id
+
+    assert campus_service.match_new_items(db_session, now=TODAY) == 2
+    rows = db_session.scalars(select(Reminder).where(Reminder.reminder_type == ReminderType.INFO_MATCH.value)).all()
+    assert {(row.ref_type, row.ref_id) for row in rows} == {("job_posting", posting.id), ("campus_event", event.id)}
+    assert all(row.content.startswith("订阅命中：") for row in rows)  # 模板文案（不经 LLM）
+    assert all(row.checked == 0 and row.remind_date == TODAY.date() for row in rows)
+
+    assert campus_service.match_new_items(db_session, now=TODAY) == 0  # 同日同条目不重复
+
+
+def test_match_reminder_ref_id_collision_known_boundary(db_session, account_id):
+    """已知边界（数据库设计 v1.24 §3.12，**非缺陷**）：reminder 同日去重唯一键不含 ref_type——
+    `campus_event` 与 `job_posting` 两条 id 撞值时合并为一条提醒；本用例钉住该行为，若将来改口径此处会失败。"""
+    _add_subscription(db_session, account_id)  # 四维不限
+    posting = _add_posting(db_session, user_id=0, title="后端岗位")
+    event = _add_event(db_session, title="后端宣讲会")
+
+    assert posting.id == event.id == 1
+    assert campus_service.match_new_items(db_session, now=TODAY) == 1  # 撞值：只出一条
+    reminder = db_session.scalar(select(Reminder))
+    assert reminder.ref_id == 1 and reminder.ref_type in ("job_posting", "campus_event")
+
+
+def test_match_new_items_scope_excludes_feeds_and_others(db_session, account_id):
+    """TC-79 / TC-81：候选限当日新入库 / 变更的**公共**信息——投喂（本人或他人）不推送、EXPIRED 不推送、隔日不推送。"""
+    _add_subscription(db_session, account_id)  # 四维全空 = 不限，任何公共信息都命中
+    _add_posting(db_session, user_id=account_id, title="我投喂的后端岗", ingest_source=IngestSource.FEED.value)
+    _add_posting(db_session, user_id=account_id + 100, title="他人投喂的后端岗", ingest_source=IngestSource.FEED.value)
+    _add_posting(db_session, user_id=0, title="过期公共岗", status=InfoStatus.EXPIRED.value)
+    _add_posting(db_session, user_id=0, title="昨日公共岗", first_seen_at=TODAY - timedelta(days=1))
+
+    assert campus_service.match_new_items(db_session, now=TODAY) == 0  # 投喂 / 他人 / 过期 / 隔日 一律不推送
+
+    # 当日变更（changed_at 在今天）的公共岗位参与匹配
+    _add_posting(
+        db_session,
+        user_id=0,
+        title="今日变更岗",
+        status=InfoStatus.CHANGED.value,
+        first_seen_at=TODAY - timedelta(days=3),
+        changed_at=TODAY - timedelta(hours=1),
+    )
+    assert campus_service.match_new_items(db_session, now=TODAY) == 1
+
+
+def test_match_new_items_multi_rules_and_accounts(db_session, account_id):
+    """TC-79：多规则命中取并集（同一条信息两条规则命中仍只出一条提醒）；逐账号各自生成、停用规则跳过。"""
+    other = User(username="sub_other", password_hash="x")
+    db_session.add(other)
+    db_session.commit()
+    _add_subscription(db_session, account_id, name="规则一", keywords=["后端"])
+    _add_subscription(db_session, account_id, name="规则二", cities=["南京"])
+    _add_subscription(db_session, other.id, keywords=["后端"])
+    _add_subscription(db_session, other.id, name="停用规则", enabled=0, keywords=["后端"])
+
+    _add_posting(db_session, user_id=0, title="后端开发", company="甲公司", city="南京")
+
+    assert campus_service.match_new_items(db_session, now=TODAY) == 2  # 本账号并集 1 条 + 另一账号 1 条
+    mine = db_session.scalars(select(Reminder).where(Reminder.user_id == account_id)).all()
+    theirs = db_session.scalars(select(Reminder).where(Reminder.user_id == other.id)).all()
+    assert len(mine) == 1 and len(theirs) == 1
+
+
+def test_overview_top_job_postings_and_match_count(client: TestClient, account):
+    """概览接入：top_job_postings 按匹配分降序（过滤 EXPIRED）、match_reminder_count 为未读 INFO_MATCH 数。"""
+    with SessionLocal() as db:
+        profile = db.scalar(select(UserProfile).where(UserProfile.user_id == account["id"]))
+        profile.target_city, profile.target_position, profile.major = "南京", "后端开发", "计算机"
+        _add_posting(db, user_id=0, title="后端开发工程师", city="南京", major_req="计算机")
+        _add_posting(db, user_id=0, title="无关岗位", city="天津")
+        _add_posting(db, user_id=0, title="过期高分岗位", city="南京", major_req="计算机", status=InfoStatus.EXPIRED.value)
+        db.add(Reminder(
+            user_id=account["id"], reminder_type=ReminderType.INFO_MATCH.value, ref_id=1, ref_type="job_posting",
+            content="订阅命中：岗位……", remind_date=TODAY.date(), checked=0,
+        ))
+        db.add(Reminder(
+            user_id=account["id"], reminder_type=ReminderType.INFO_MATCH.value, ref_id=2, ref_type="campus_event",
+            content="订阅命中：宣讲会……", remind_date=TODAY.date(), checked=1,
+        ))
+        db.commit()
+
+    data = client.get(f"{API}/overview").json()["data"]
+
+    assert [item["title"] for item in data["top_job_postings"]] == ["后端开发工程师", "无关岗位"]
+    assert data["top_job_postings"][0]["match_score"] == 100
+    assert data["match_reminder_count"] == 1  # 已读的不计
+
+
+# ---------- H 日历（TC-82，步骤 22） ----------
+
+
+def test_calendar_four_types_and_order(client: TestClient, account):
+    """TC-82：一次请求返回四类事件、event_at 升序；EXAM / INTERVIEW 的 title 为岗位名、location 为空。"""
+    start = (TODAY + timedelta(days=1)).date()
+    end = (TODAY + timedelta(days=3)).date()
+    with SessionLocal() as db:
+        _add_event(
+            db, title="宣讲会A", location="大学生活动中心",
+            event_date=datetime.combine(start + timedelta(days=2), time(14, 0)),
+        )
+        _add_event(
+            db, title="双选会B", info_type=InfoType.FAIR.value, event_date=datetime.combine(start, time(9, 0))
+        )
+        db.add_all([
+            Application(
+                user_id=account["id"], company="甲公司", position="后端开发",
+                status=ApplicationStatus.WRITTEN.value, applied_at=TODAY,
+                next_event_at=datetime.combine(start + timedelta(days=1), time(10, 0)),
+            ),
+            Application(
+                user_id=account["id"], company="乙公司", position="前端开发",
+                status=ApplicationStatus.INTERVIEW.value, applied_at=TODAY,
+                next_event_at=datetime.combine(start + timedelta(days=2), time(16, 0)),
+            ),
+        ])
+        db.commit()
+
+    items = client.get(f"{API}/calendar?start={start}&end={end}").json()["data"]
+
+    assert [item["event_type"] for item in items] == ["FAIR", "EXAM", "TALK", "INTERVIEW"]
+    assert [item["event_at"] for item in items] == sorted(item["event_at"] for item in items)
+    exam = next(item for item in items if item["event_type"] == "EXAM")
+    assert exam["title"] == "后端开发" and exam["location"] is None  # 笔试 / 面试下发岗位名、无地点
+    assert exam["ref_type"] == "application" and exam["status"] == ApplicationStatus.WRITTEN.value
+    talk = next(item for item in items if item["event_type"] == "TALK")
+    assert talk["ref_type"] == "campus_event" and talk["location"] is not None
+
+
+def test_calendar_range_boundaries_and_isolation(client: TestClient, account, make_account):
+    """TC-82：跨月区间正常、空区间返回空数组、end < start → 10001；EXPIRED 命中区间即返回；笔试 / 面试只含本账号。"""
+    other = make_account("cal_other")
+    month_start = date.today().replace(day=1)
+    next_month = (month_start + timedelta(days=32)).replace(day=1)
+    month_end = next_month - timedelta(days=1)  # 本月最后一天
+    day2 = next_month + timedelta(days=1)
+    with SessionLocal() as db:
+        _add_event(db, title="月末宣讲会", event_date=datetime.combine(month_end, time(10, 0)))
+        _add_event(
+            db, title="下月初双选会", info_type=InfoType.FAIR.value, status=InfoStatus.EXPIRED.value,
+            event_date=datetime.combine(next_month, time(9, 0)),
+        )
+        db.add(Application(
+            user_id=account["id"], company="甲公司", position="后端开发",
+            status=ApplicationStatus.INTERVIEW.value, applied_at=TODAY,
+            next_event_at=datetime.combine(day2, time(14, 0)),
+        ))
+        db.add(Application(
+            user_id=other["id"], company="乙公司", position="前端开发",
+            status=ApplicationStatus.WRITTEN.value, applied_at=TODAY,
+            next_event_at=datetime.combine(day2, time(15, 0)),
+        ))
+        db.commit()
+
+    items = client.get(f"{API}/calendar?start={month_end}&end={day2}").json()["data"]
+    assert [item["event_type"] for item in items] == ["TALK", "FAIR", "INTERVIEW"]  # 跨月；他人笔试不可见
+    assert next(item for item in items if item["event_type"] == "FAIR")["status"] == InfoStatus.EXPIRED.value
+
+    empty = client.get(f"{API}/calendar?start={day2 + timedelta(days=30)}&end={day2 + timedelta(days=31)}")
+    assert empty.status_code == 200 and empty.json()["data"] == []
+
+    bad = client.get(f"{API}/calendar?start={day2}&end={month_end}")
+    assert bad.status_code == 400 and bad.json()["code"] == ErrorCode.PARAM_INVALID
+
+
+

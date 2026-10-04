@@ -5,7 +5,8 @@
 
 期望值来源：《数据库设计文档》v1.22 §3~§4，固化在 tests/expected_schema.py。
 
-**表数**：15 → 17（多账号）→ 19（八股训练系统）→ **20**（校招情报采集层）。该数字不再写进断言——用例 1 改为
+**表数**：15 → 17（多账号）→ 19（八股训练系统）→ 20（校招情报采集层）→ **22**（岗位与订阅）。
+该数字不再写进断言——用例 1 改为
 **与 `Base.metadata` 比对**，新增表时只改镜像、不改断言。
 
 约定：写数据的用例一律 flush + rollback，**不 commit**——保证用例之间互不残留，
@@ -34,8 +35,10 @@ from app.models import (
     InterviewQa,
     InterviewSession,
     JdAnalysisReport,
+    JobPosting,
     Question,
     Reminder,
+    Subscription,
     User,
     UserProfile,
     WrongQuestion,
@@ -355,6 +358,32 @@ def test_unique_constraints_enforced(client: TestClient, account, make_account):
         db.add(CampusEvent(title="宣讲会", event_date=event_date, dedup_key="dedup-key-1"))
         with pytest.raises(IntegrityError):
             db.flush()  # 同指纹第二条：被拒
+        db.rollback()
+
+    # job_posting：UNIQUE(user_id, dedup_key)——同归属内指纹唯一；公共（0）与账号各存一份互不冲突
+    with SessionLocal() as db:
+        db.add(JobPosting(
+            user_id=0, title="后端开发", company="某公司", ingest_source="AUTO",
+            dedup_key="job-key-1", first_seen_at=datetime.now(), last_seen_at=datetime.now(),
+        ))
+        db.add(JobPosting(
+            user_id=account["id"], title="后端开发", company="某公司", ingest_source="FEED",
+            dedup_key="job-key-1", first_seen_at=datetime.now(), last_seen_at=datetime.now(),
+        ))
+        db.flush()  # 同指纹分属公共与账号：允许（混合归属表的核心口径）
+        db.add(JobPosting(
+            user_id=account["id"], title="后端开发", company="某公司", ingest_source="FEED",
+            dedup_key="job-key-1", first_seen_at=datetime.now(), last_seen_at=datetime.now(),
+        ))
+        with pytest.raises(IntegrityError):
+            db.flush()  # 同账号同指纹第二条：被拒
+        db.rollback()
+
+    # subscription：user_id 外键——不存在的账号写入即被拒（账号私有表）
+    with SessionLocal() as db:
+        db.add(Subscription(user_id=999999, name="不存在的账号", enabled=1, created_at=datetime.now()))
+        with pytest.raises(IntegrityError):
+            db.flush()
         db.rollback()
 
     # user.username 唯一（库层只管精确重复；大小写变体由服务层拦，见 TC-52）
