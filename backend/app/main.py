@@ -1,6 +1,7 @@
 """FastAPI 应用入口：装配日志、生命周期钩子、中间件、异常处理与路由。"""
 
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -9,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.clients.asr_client import warmup_asr_model
 from app.config import settings
 from app.database import init_db
 from app.exceptions import register_exception_handlers
@@ -30,6 +32,7 @@ from app.routers import (
     settings as settings_router,
     stream,
     subscriptions,
+    voice,
     wrong_questions,
 )
 from app.services.reminder_engine import run_daily
@@ -43,10 +46,13 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动钩子：建库 + 种子导入（步骤 2，幂等）+ 每日任务定时器（步骤 20~21，可开关）。"""
+    """启动钩子：建库 + 种子导入（步骤 2，幂等）+ 每日任务定时器（步骤 20~21）+ 语音模型预热（步骤 24）。"""
     added = init_db()
     if added:
         logging.info("种子题库新增 %d 题", added)
+    if settings.asr_warmup_enabled:
+        # 后台线程预热语音模型，不阻塞启动；失败仅告警、首次转写仍懒加载兜底
+        threading.Thread(target=warmup_asr_model, daemon=True, name="asr-warmup").start()
     scheduler = None
     if settings.reminder_scheduler_enabled:
         scheduler = BackgroundScheduler()
@@ -98,6 +104,7 @@ app.include_router(llm_providers.router, prefix=settings.api_prefix)
 app.include_router(settings_router.router, prefix=settings.api_prefix)
 app.include_router(stream.router, prefix=settings.api_prefix)
 app.include_router(subscriptions.router, prefix=settings.api_prefix)
+app.include_router(voice.router, prefix=settings.api_prefix)
 app.include_router(wrong_questions.router, prefix=settings.api_prefix)
 
 # 头像静态访问：库中存的 uploads/avatars/xxx.png 直接拼后端地址即可（系统设计 3.5，本机运行）

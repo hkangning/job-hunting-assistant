@@ -38,6 +38,7 @@ class ErrorCode(IntEnum):
     EXPERIENCE_EXTRACT_FAILED = (40002, 502, "面经结构化提取失败")
     AGENT_TOOL_ARGS_MISSING = (50001, 400, "工具参数不完整")
     ASR_FAILED = (60001, 502, "语音转写失败")
+    TTS_FAILED = (60002, 502, "语音合成失败")
     CRAWL_FAILED = (70001, 502, "校招信息采集失败")
     CRAWL_PARSE_FAILED = (70002, 502, "信息源解析失败")
     INGEST_PARSE_FAILED = (70003, 502, "投喂内容解析失败")

@@ -9,7 +9,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.clients.tts_client import VOICE_IDS
 from app.database import ACCOUNT_CONFIG, SYSTEM_CONFIG, SYSTEM_USER_ID
+from app.exceptions import BizException, ErrorCode
 from app.models import Config
 from app.schemas.system import SettingsDTO, SettingsUpdateRequest
 from app.utils.security import encrypt_text
@@ -51,7 +53,10 @@ def update_settings(db: Session, user_id: int, payload: SettingsUpdateRequest) -
     if values.get("asr_provider") is not None:
         _set(db, user_id, "asr_provider", values["asr_provider"])
     if values.get("tts_voice") is not None:
-        _set(db, user_id, "tts_voice", values["tts_voice"])
+        voice = values["tts_voice"].strip()
+        if voice not in VOICE_IDS:  # 白名单校验（与 POST /tts/synthesize 同口径）
+            raise BizException(ErrorCode.PARAM_INVALID, "音色不存在，请在设置页重新选择")
+        _set(db, user_id, "tts_voice", voice)
 
     if values.get("crawl_enabled") is not None:  # 系统级：任一账号修改全局生效
         _set(db, SYSTEM_USER_ID, "crawl_enabled", "true" if values["crawl_enabled"] else "false")

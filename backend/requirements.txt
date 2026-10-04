@@ -1,5 +1,5 @@
 # 安装（backend/ 目录，Windows PowerShell）：python -m venv .venv → .\.venv\Scripts\Activate.ps1 → pip install -r requirements.txt
-# 版本锁定为 2026-09-24 首次安装实测版本（venv：Python 3.13.5）
+# 版本锁定为安装时实测版本（venv：Python 3.13.5）；语音链路依赖（步骤 24）为 2026-10-04 实测
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
 sqlalchemy==2.0.54
@@ -22,3 +22,10 @@ websockets==17.1
 pytest==9.1.1
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
+# —— 语音链路（步骤 24）——
+edge-tts==7.2.8
+av==19.0.1
+funasr==1.4.16
+# funasr 的推理后端需单独安装 PyTorch（CPU 版，避免 2GB+ 的 CUDA 默认包）：
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# 实测版本参考：torch==2.14.1+cpu / torchaudio==2.11.0+cpu

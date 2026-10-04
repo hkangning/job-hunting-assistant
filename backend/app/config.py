@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     reminder_scheduler_enabled: bool = True  # 每日提醒定时任务开关（APScheduler，每日 07:00）；置 false 可用于演示环境禁用后台调度
 
+    asr_warmup_enabled: bool = True  # 语音转写模型启动预热开关（后台线程提前加载 FunASR，省去首次转写冷加载）；测试与低配环境可置 false
+
 
 def _ensure_secret_key(config: Settings) -> None:
     """主密钥缺失时生成随机值并写回 .env（系统设计 3.5）。
