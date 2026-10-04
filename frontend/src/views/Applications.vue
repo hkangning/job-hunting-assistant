@@ -38,6 +38,7 @@ function onCityChange(path) {
 
 const formVisible = ref(false)
 const editingId = ref(null)
+const createPrefill = ref(null) // 新增模式的预填（校招情报「加入投递」）
 const importVisible = ref(false)
 const closeDialogVisible = ref(false)
 const closingItem = ref(null)
@@ -94,13 +95,39 @@ function onFilterInput() {
 }
 
 function openCreate() {
+  createPrefill.value = null
   editingId.value = null
   formVisible.value = true
 }
 
+/** 带预填的新增（校招情报「加入投递」）。 */
+function openCreateWith(prefill) {
+  createPrefill.value = prefill
+  editingId.value = null
+  formVisible.value = true
+}
+
+function openEditById(id) {
+  createPrefill.value = null
+  editingId.value = id
+  formVisible.value = true
+}
+
 function openEdit(item) {
+  createPrefill.value = null
   editingId.value = item.id
   formVisible.value = true
+}
+
+/** 校招情报「加入投递」带过来的预填字段（query 形态，见 Campus.vue 的 onApply）。 */
+function prefillFromQuery(query) {
+  const keys = ['company', 'position', 'city', 'channel', 'remark', 'jd_text']
+  const prefill = {}
+  for (const key of keys) {
+    const value = query?.[key]
+    if (typeof value === 'string' && value.trim()) prefill[key] = value
+  }
+  return Object.keys(prefill).length ? prefill : null
 }
 
 /** 删除一条投递：确认 → 调接口 → 刷新看板。返回是否真的删掉（供对话框决定关不关自己） */
@@ -207,12 +234,26 @@ function toggleTrend() {
   if (trendVisible.value && trendItems.value.length === 0) loadTrend()
 }
 
-// 顶栏「＋ 新增投递」带 query 跳转过来；消费后清掉 query，保证再次点击仍能触发
+// 顶栏「＋ 新增投递」带 query 跳转过来；消费后清掉 query，保证再次点击仍能触发。
+// 校招情报「加入投递」在此基础上带预填字段（company / position / city / channel / remark / jd_text）。
 watch(
   () => route.query.action,
   (action) => {
     if (action !== 'new') return
-    openCreate()
+    const prefill = prefillFromQuery(route.query)
+    if (prefill) openCreateWith(prefill)
+    else openCreate()
+    router.replace({ path: '/applications' })
+  },
+  { immediate: true }
+)
+
+// 站内日历点笔试 / 面试事件 -> 带 focus 跳过来，直接打开该条投递详情
+watch(
+  () => route.query.focus,
+  (focus) => {
+    if (!focus) return
+    openEditById(Number(focus))
     router.replace({ path: '/applications' })
   },
   { immediate: true }
@@ -282,6 +323,7 @@ onMounted(load)
     <ApplicationFormDialog
       v-model="formVisible"
       :application-id="editingId"
+      :prefill="createPrefill"
       @saved="onSaved"
       @delete="onDeleteFromDialog"
     />

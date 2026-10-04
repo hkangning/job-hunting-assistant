@@ -32,6 +32,12 @@ DateTime→DATETIME、Date→DATE、Integer→INTEGER）。
 `UNIQUE(title, event_date)` → **`UNIQUE(dedup_key)`**（跨源去重指纹），
 并新增 `idx_event_status`。`campus_event` 走手工 `ALTER`、`crawl_source`
 随 `create_all` 自动建（§7.3 有完整 SQL），开发库与测试库都要执行一次。
+
+校招情报岗位与订阅（数据库设计 v1.23 / v1.24）后：表数 20 → **22**（新增
+`job_posting` 与 `subscription`）。`job_posting` 为混合归属表——`user_id=0`
+自动抓取（公共）/ 账号 id 投喂（私有），故 **`user_id` 不建外键**；`subscription.user_id`
+建外键指向 `user.id`（账号私有）。两表随 `create_all` 自动建（§7.3 有等价 SQL），
+开发库与测试库都要执行一次。
 """
 
 # 每表结构：columns 元组为 (列名, 类型, 允许为空, 是否主键)
@@ -327,6 +333,55 @@ TABLES: dict[str, dict] = {
         # 多源采集改造前为 UNIQUE(title, event_date)：现按跨源去重指纹 dedup_key 唯一
         "uniques": [["dedup_key"]],
         "foreign_keys": [],
+    },
+    "job_posting": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
+            ("title", "VARCHAR(200)", False, False),
+            ("company", "VARCHAR(100)", False, False),
+            ("city", "VARCHAR(50)", True, False),
+            ("edu_req", "VARCHAR(50)", True, False),
+            ("major_req", "VARCHAR(300)", True, False),
+            ("salary_text", "VARCHAR(100)", True, False),
+            ("job_type", "VARCHAR(20)", True, False),
+            ("deadline", "DATETIME", True, False),
+            ("source_site", "VARCHAR(50)", True, False),
+            ("source_url", "VARCHAR(500)", True, False),
+            ("ingest_source", "VARCHAR(20)", False, False),
+            ("raw_excerpt", "TEXT", True, False),
+            ("dedup_key", "VARCHAR(64)", False, False),
+            ("content_hash", "VARCHAR(64)", True, False),
+            ("status", "VARCHAR(20)", False, False),
+            ("first_seen_at", "DATETIME", False, False),
+            ("last_seen_at", "DATETIME", False, False),
+            ("changed_at", "DATETIME", True, False),
+        ],
+        "indexes": {
+            "idx_job_user": ["user_id"],
+            "idx_job_status": ["status", "deadline"],
+            "idx_job_city": ["city"],
+        },
+        # 同归属内去重：公共岗位（user_id=0）与各账号投喂各按自己的指纹唯一
+        "uniques": [["user_id", "dedup_key"]],
+        # user_id 不建外键——取值 0（公共）非有效账号（数据库设计 §3.21）
+        "foreign_keys": [],
+    },
+    "subscription": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
+            ("name", "VARCHAR(50)", False, False),
+            ("keywords", "TEXT", True, False),
+            ("companies", "TEXT", True, False),
+            ("cities", "TEXT", True, False),
+            ("info_types", "TEXT", True, False),
+            ("enabled", "INTEGER", False, False),
+            ("created_at", "DATETIME", False, False),
+        ],
+        "indexes": {"idx_subscription_user": ["user_id"]},
+        "uniques": [],
+        "foreign_keys": [("user_id", "user", "id")],
     },
     "crawl_source": {
         "columns": [

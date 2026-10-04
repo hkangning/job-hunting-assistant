@@ -8,6 +8,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getSettingsApi, updateSettingsApi } from '../api/settings'
 import { useAppStore } from '../stores/app'
+import CrawlSourceCard from '../components/campus/CrawlSourceCard.vue'
 
 // 音色列表：GET /tts/voices 属步骤 24（尚未实现），本步用 SRS §3.12 列举的三个音色过渡；
 // 步骤 24 落地后改为从接口拉取并删除本常量。描述按音色实际听感归纳（试听待步骤 24）。
@@ -176,9 +177,10 @@ onMounted(load)
       <el-form label-width="120px">
         <el-form-item label="每日抓取">
           <el-switch v-model="form.crawl_enabled" />
-          <span class="settings__hint">多校信息源清单在「校招情报」页维护</span>
+          <span class="settings__hint">每日任务总开关；关闭后仍可在下方手动触发</span>
         </el-form-item>
       </el-form>
+      <CrawlSourceCard />
     </el-card>
 
     <div class="settings__footer">

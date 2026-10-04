@@ -22,13 +22,24 @@ const store = useOverviewStore()
 
 const stats = computed(() => store.data?.application_stats || null)
 
-// 空态判定：该账号**一件投递都没有**（而非「统计卡恰好全 0」——那可能只是各状态暂无记录）。
-// 此时统计卡与两个列表都没有信息量，首屏应改为「开始使用」的引导，而不是满屏 0 与空态文案。
-const isEmpty = computed(() => store.data?.stats?.application_count === 0)
 const wrongCount = computed(() => store.data?.wrong_question_count ?? 0)
 const campusEvents = computed(() => store.data?.campus_events || [])
 // 匹配度最高的岗位（步骤 22 落地后才有数据）；与宣讲会一并构成「校招情报」区块
 const jobPostings = computed(() => store.data?.top_job_postings || [])
+// 订阅命中的未读提醒数（步骤 22 的 match_reminder_count，>0 时在校招情报区块展示）
+const matchCount = computed(() => store.data?.match_reminder_count ?? 0)
+
+// 空态判定（IS-30 / 系统设计 §4.8）：以**「是否真的什么都看不到」**为准——
+// 零投递**且**校招情报也为空时才显示引导卡；只差投递（校招有内容）时，用户有东西可投，
+// 应直接把校招情报展示出来，而不是让用户先跳出去找信息。
+const campusHasContent = computed(() => campusEvents.value.length > 0 || jobPostings.value.length > 0)
+const isEmpty = computed(
+  () => store.data?.stats?.application_count === 0 && !campusHasContent.value
+)
+/** 只有「还没投递」但校招情报有内容：区块上空一行提示，把「从这里开始投」说出来。 */
+const newcomerHint = computed(
+  () => store.data?.stats?.application_count === 0 && campusHasContent.value
+)
 
 const p2 = (n) => String(n).padStart(2, '0')
 const tomorrowStr = (() => {
@@ -200,7 +211,21 @@ onUnmounted(() => clearInterval(timer))
         class="overview__card overview__card--link"
         @click="router.push('/campus')"
       >
-        <h3 class="overview__title dot-title">校招情报</h3>
+        <div class="overview__title-row">
+          <h3 class="overview__title dot-title">校招情报</h3>
+          <el-tag
+            v-if="matchCount > 0"
+            size="small"
+            effect="plain"
+            class="overview__match"
+            @click.stop="router.push('/campus')"
+          >
+            {{ matchCount }} 条订阅命中
+          </el-tag>
+        </div>
+        <p v-if="newcomerHint" class="overview__hint overview__hint--newcomer">
+          还没有投递记录——看看这些机会，合适的可以直接一键加入投递。
+        </p>
         <div v-if="campusEvents.length || jobPostings.length" class="evlist">
           <div
             v-for="e in campusEvents"
@@ -358,6 +383,24 @@ onUnmounted(() => clearInterval(timer))
   font-weight: 700;
   color: var(--c-text);
   margin: 0 0 12px;
+}
+/* 校招情报区块标题行：标题 + 订阅命中计数（计数点击跳 /campus） */
+.overview__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.overview__title-row .overview__title {
+  margin: 0;
+}
+.overview__match {
+  cursor: pointer;
+}
+/* 还没投递但校招情报有内容：一句「从这里开始」的引导（IS-30 的「仅无投递」场景） */
+.overview__hint--newcomer {
+  margin: 0 0 10px;
+  color: var(--m-campus);
 }
 /* 「今天无事可做」的一句说明（各区块按「有内容才显示」收起后的兜底文案） */
 .overview__quiet {

@@ -21,7 +21,8 @@
 **不碰开发者自己注册的账号**——开发库的账号列表被测试残留淹没时用它清理。
 
 **范围**：覆盖当前已实现的功能——投递、画像、AI 配置、错题、JD 分析、模拟面试、面经、陪练，
-以及校招情报（信息源配置 + 宣讲会 / 双选会，步骤 21 公共数据）。Agent（步骤 18/19）数据待补充。
+以及校招情报（信息源配置 + 宣讲会 / 双选会，步骤 21 公共数据；公共岗位 + 订阅规则，步骤 22）。
+Agent（步骤 18/19）数据待补充。
 
 **时间一律相对「导入当天」计算**（如「明天有面试」「9 天前投递」），
 故数据不会随时间失效——这正是不能写死日期的原因。
@@ -36,7 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.clients.crawler import processor
 from app.clients.crawler.base import RawItem
-from app.database import SessionLocal, init_db
+from app.database import SYSTEM_USER_ID, SessionLocal, init_db
 from app.models import (
     AgentConversation,
     AgentMessage,
@@ -50,11 +51,13 @@ from app.models import (
     InterviewQa,
     InterviewSession,
     JdAnalysisReport,
+    JobPosting,
     LlmProviderConfig,
     PracticeRecord,
     PracticeSession,
     Question,
     Reminder,
+    Subscription,
     User,
     UserProfile,
     WrongQuestion,
@@ -70,6 +73,8 @@ from app.models.enums import (
     InfoType,
     InterviewIntensity,
     InterviewStage,
+    IngestSource,
+    JobType,
     PracticeMode,
     PracticeSessionStatus,
     QuestionSource,
@@ -515,6 +520,8 @@ def _delete_account_data(db: Session, user_ids: list[int], *, keep_llm: bool = F
         Experience,
         DomainMastery,
         AgentConversation,
+        Subscription,
+        JobPosting,
         Config,
         UserProfile,
     ):
@@ -912,6 +919,76 @@ def _add_campus_events(db: Session) -> int:
     return len(rows)
 
 
+def _add_job_postings(db: Session) -> int:
+    """校招情报：公共岗位（`user_id=0` 自动抓取）——覆盖高分命中 / 已变更 / 已过期 / 多来源合并。
+
+    只清公共行（`user_id=0`）：开发者自己投喂的私有岗位（`FEED`）不属演示数据，不动。
+    """
+    db.execute(delete(JobPosting).where(JobPosting.user_id == SYSTEM_USER_ID))
+    db.flush()
+
+    now = _now()
+    rows = [
+        # (标题, 公司, 城市, 学历, 专业, 薪资, 类型, 截止距今天数, 来源站点, 状态, 变更距今年数, 首次入库距今天数)
+        ("Java 后端开发工程师", "华为技术有限公司", "南京", "硕士", "计算机科学与技术", "25-35K·14薪", JobType.CAMPUS.value, 20, "njust.91job.org.cn", InfoStatus.ACTIVE.value, None, 0),
+        ("后端开发工程师（实习）", "北京字节跳动科技有限公司", "南京", "本科", "计算机科学与技术", "300/天", JobType.INTERN.value, 12, "cqu.edu.cn,njust.91job.org.cn", InfoStatus.ACTIVE.value, None, 0),
+        ("前端开发工程师", "深圳市腾讯计算机系统有限公司", "南京", "本科", "计算机科学与技术", "20-30K", JobType.CAMPUS.value, 25, "cqu.edu.cn", InfoStatus.ACTIVE.value, None, 1),
+        ("数据开发工程师", "美团", "上海", "本科", None, "22-32K", JobType.CAMPUS.value, 15, "seu.jysd.com", InfoStatus.ACTIVE.value, None, 2),
+        ("Java 后端开发工程师", "中国电子科技集团有限公司", "南京", "硕士", "计算机科学与技术", "18-25K", JobType.CAMPUS.value, 30, "njust.91job.org.cn", InfoStatus.CHANGED.value, 4, 3),
+        ("Java 开发工程师（已过期）", "小米科技有限责任公司", "南京", "本科", "计算机", "20-28K", JobType.CAMPUS.value, -8, "njust.91job.org.cn", InfoStatus.EXPIRED.value, None, 40),
+    ]
+    for index, (title, company, city, edu, major, salary, job_type, days, site, status, changed_hours, seen_days) in enumerate(rows):
+        deadline = now + timedelta(days=days)
+        row = JobPosting(
+            user_id=SYSTEM_USER_ID,
+            title=title,
+            company=company,
+            city=city,
+            edu_req=edu,
+            major_req=major,
+            salary_text=salary,
+            job_type=job_type,
+            deadline=deadline,
+            source_site=site,
+            source_url=f"https://{site.split(',')[0]}/job/demo{index}",
+            ingest_source=IngestSource.AUTO.value,
+            dedup_key=processor.posting_dedup_key(company, title, city),
+            status=status,
+            first_seen_at=now - timedelta(days=seen_days),
+            last_seen_at=now - timedelta(hours=2),
+            changed_at=(now - timedelta(hours=changed_hours)) if changed_hours else None,
+        )
+        row.content_hash = processor.posting_content_hash(row)
+        db.add(row)
+    db.flush()
+    return len(rows)
+
+
+def _add_subscriptions(db: Session, user_id: int) -> int:
+    """订阅规则（账号私有）：两条演示规则——跑一次每日任务后概览即出现「订阅命中」提醒。"""
+    now = _now()
+    rules = [
+        # (名称, 关键词, 城市, 信息类型)
+        ("后端岗位", ["后端"], None, ["JOB"]),
+        ("南京宣讲会", None, ["南京"], ["TALK"]),
+    ]
+    for name, keywords, cities, info_types in rules:
+        db.add(
+            Subscription(
+                user_id=user_id,
+                name=name,
+                keywords=json.dumps(keywords, ensure_ascii=False) if keywords else None,
+                companies=None,
+                cities=json.dumps(cities, ensure_ascii=False) if cities else None,
+                info_types=json.dumps(info_types, ensure_ascii=False),
+                enabled=1,
+                created_at=now - timedelta(days=10),
+            )
+        )
+    db.flush()
+    return len(rules)
+
+
 def _load_business_data(db: Session, user_id: int, *, with_llm: bool = True) -> dict[str, int]:
     """把整套业务数据写入指定账号（调用方负责清场策略）。"""
     _fill_profile(db, user_id)
@@ -925,6 +1002,8 @@ def _load_business_data(db: Session, user_id: int, *, with_llm: bool = True) -> 
         "wrong_questions": _add_wrong_questions(db, user_id),
         "practice_sessions": _add_practice(db, user_id),
         "campus_events": _add_campus_events(db),  # 公共数据（信息源 + 宣讲会/双选会），随全套数据一并重建
+        "job_postings": _add_job_postings(db),  # 公共岗位（步骤 22），同上
+        "subscriptions": _add_subscriptions(db, user_id),  # 订阅规则（账号私有，步骤 22）
         "profiles": len(PROFILE),
     }
 
@@ -1003,6 +1082,7 @@ def _print_summary(target: str, summary: dict[str, int]) -> None:
         f"  错题 {summary['wrong_questions']} 条（含面试知识点与选择题形态）\n"
         f"  陪练 {summary['practice_sessions']} 场（已完成结算 / 追问链进行中）+ 掌握度 4 域\n"
         f"  校招情报 {summary['campus_events']} 条（TALK / FAIR，「已变更」与已过期各覆盖）+ 信息源 3 个\n"
+        f"  校招岗位 {summary['job_postings']} 条（公共；高分命中 / 已变更 / 已过期 / 多来源合并）+ 订阅规则 {summary['subscriptions']} 条\n"
         f"  画像 {summary['profiles']} 个字段 + 经历条目 {len(PROFILE_EXPERIENCES)} 条"
     )
 
