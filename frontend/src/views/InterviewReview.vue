@@ -50,11 +50,6 @@ const directionText = computed(() => {
   return map[session.value.direction] || session.value.direction
 })
 
-/** 有可总结的内容：至少一条已完成问答（答过或跳过）——契约要求 summary 的会话须含 ≥1 条。 */
-const canSummarize = computed(() =>
-  messages.value.some((m) => m.kind === 'answer')
-)
-
 async function load() {
   loading.value = true
   errorMsg.value = ''
@@ -63,8 +58,9 @@ async function load() {
     session.value = data
     messages.value = buildMessages(data, data.qa_list || []).messages
     summary.value = data.summary || ''
-    // 无总结且有可总结内容 → 自动生成一次（进行中会话从这里「结束本场」）
-    if (!summary.value && canSummarize.value) startSummary()
+    // 无总结即自动生成一次（进行中会话从这里「结束本场」）——含 0 条已完成问答
+    // （IS-63 方案 A：后端落固定说明文案、不调模型）
+    if (!summary.value) startSummary()
   } catch (error) {
     errorMsg.value = error?.message || '加载失败，请返回列表重试'
   } finally {
@@ -213,12 +209,10 @@ onUnmounted(() => {
           <el-button type="primary" plain @click="retrySummary">重新生成</el-button>
         </template>
 
-        <template v-else-if="canSummarize">
+        <template v-else>
           <p class="review-page__summary-hint">本场尚未生成总结报告</p>
           <el-button type="primary" @click="startSummary">生成总结报告</el-button>
         </template>
-
-        <p v-else class="review-page__summary-hint">本场还没有已作答的题目，暂无总结。</p>
 
         <!-- 错题候选：本次流专属（不落库），刷新/回放不再出现属正常 -->
         <div v-if="candidates.length" class="review-page__candidates">

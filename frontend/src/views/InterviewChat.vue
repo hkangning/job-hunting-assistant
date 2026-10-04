@@ -74,8 +74,18 @@ const progressPct = computed(() => {
  */
 const stageInfo = computed(() => stageProgress(session.value?.stages, currentSeq.value))
 
-/** 作答过至少一条（含跳过）——「结束本场」的可用条件（总结要求 ≥1 条已完成问答）。 */
+/** 作答过至少一条（含跳过）——供「结束本场」的确认文案分场景（IS-63 方案 A：未作答也可结束）。 */
 const hasAnswer = computed(() => messages.value.some((m) => m.kind === 'answer'))
+
+/** 「结束本场」确认框标题与按钮提示：未作答时不提「总结报告」（后端落固定说明、无总结内容）。 */
+const finishTitle = computed(() =>
+  hasAnswer.value
+    ? '结束本场并生成总结报告？已作答的题目会保留'
+    : '结束本场？本场还没有作答，无内容可总结。'
+)
+const finishHint = computed(() =>
+  hasAnswer.value ? '提前结束本场面试，生成总结报告' : '结束本场面试（本场还没有作答）'
+)
 
 const canSubmit = computed(
   () => !streaming.value && !isFinished.value && input.value.trim().length > 0
@@ -307,7 +317,7 @@ onUnmounted(() => {
         />
         <div class="chat__actions">
           <el-popconfirm
-            title="结束本场并生成总结报告？已作答的题目会保留"
+            :title="finishTitle"
             confirm-button-text="确认结束"
             cancel-button-text="继续作答"
             width="260"
@@ -317,8 +327,8 @@ onUnmounted(() => {
               <el-button
                 link
                 class="chat__finish"
-                :disabled="streaming || !hasAnswer"
-                title="提前结束本场面试，生成总结报告"
+                :disabled="streaming"
+                :title="finishHint"
               >
                 结束本场
               </el-button>

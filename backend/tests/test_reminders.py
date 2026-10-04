@@ -18,7 +18,9 @@ from app.models.enums import ApplicationStatus, ReminderType, WrongSourceType
 from app.services import reminder_engine
 
 API = "/api/v1"
-TODAY = datetime.now()
+# 截断微秒：造数入库经 MySQL DATETIME(0) 会四舍五入到秒，内存原值带微秒时会在秒点附近
+# （xx:xx:59.5+）与读库值差 1 分钟——截断后与秒精度存储完全一致（台账 #115，0.83%/次 偶发）
+TODAY = datetime.now().replace(microsecond=0)
 
 
 def _add_application(

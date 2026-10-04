@@ -7,7 +7,6 @@
 
 import json
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
@@ -512,23 +511,46 @@ class TestSummary:
         assert _sections(events) == ["summary"]
         assert all(name != "error" for name, _ in events)
 
-    @pytest.mark.xfail(
-        reason="IS-63 / 台账 #112（方案 A）：0 条问答的会话应可生成总结（不走 LLM、直接落固定说明并置 FINISHED）；"
-        "后端放宽「≥1 条」后 XPASS 转失败，届时摘标",
-        strict=True,
-    )
-    def test_summary_without_answers(self, client: TestClient, account):
-        """IS-63 方案 A：0 条已完成问答（未作答 / 未跳过）的会话也可生成总结。
+    def test_summary_without_answers(self, client: TestClient, account, fake_llm_client):
+        """IS-63 方案 A（TC-08 补验证点）：0 条问答的会话也可生成总结——固定文案 + 置 FINISHED，不走模型。
 
-        不挂 `llm_configured`——方案 A 的 0 条分支「不走 LLM」，放弃面试不应依赖 AI 配置。
+        不挂 `llm_configured`——该分支不应依赖账号 AI 配置（未配 Key 也不得报 10012）。
         """
         session = _create(client, account, company="云器科技", position="后端开发", question_count=3)
         events = _summary(client, account, session["id"])
-        assert all(name != "error" for name, _ in events)
-        body = "".join(
-            d["text"] for name, d in events if name == "delta" and d.get("section") == "summary"
-        )
-        assert body.strip(), "固定说明文案不应为空"
+        names = [name for name, _ in events]
+        assert names[0] == "start" and names[-1] == "done", names
+        deltas = [d for name, d in events if name == "delta"]
+        assert all(d.get("section") == "summary" for d in deltas)
+        assert "".join(d["text"] for d in deltas) == "本场未作答任何题目，无内容可总结。"
+        assert fake_llm_client.stream_calls == [] and fake_llm_client.json_calls == []
+
         detail = client.get(f"{API}/{session['id']}", headers=_auth(account)).json()["data"]
         assert detail["status"] == "FINISHED"
-        assert (detail["summary"] or "").strip()
+        assert detail["summary"] == "本场未作答任何题目，无内容可总结。"
+        assert detail["finished_at"] is not None
+
+        # 重复调用 = 回放同文案，仍不调模型
+        replay = _summary(client, account, session["id"])
+        assert (
+            "".join(d["text"] for name, d in replay if name == "delta")
+            == "本场未作答任何题目，无内容可总结。"
+        )
+        assert fake_llm_client.stream_calls == [] and fake_llm_client.json_calls == []
+
+    def test_summary_with_question_but_no_answer(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """IS-63 边界（TC-08）：已出题但一题未答同样走 0 条分支——判据是**已完成问答数为 0**，非「无问答记录」。"""
+        session = _create(client, account, company="云器科技", position="后端开发", question_count=3)
+        _ask_turn(fake_llm_client, client, account, session["id"], answer="")  # 出首题（未作答）
+        calls_before = len(fake_llm_client.stream_calls)
+        events = _summary(client, account, session["id"])
+        assert (
+            "".join(d["text"] for name, d in events if name == "delta")
+            == "本场未作答任何题目，无内容可总结。"
+        )
+        assert len(fake_llm_client.stream_calls) == calls_before  # 总结阶段未新增模型调用
+        detail = client.get(f"{API}/{session['id']}", headers=_auth(account)).json()["data"]
+        assert detail["status"] == "FINISHED"
+        assert detail["summary"] == "本场未作答任何题目，无内容可总结。"
