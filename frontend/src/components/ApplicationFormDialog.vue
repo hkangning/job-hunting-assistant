@@ -8,7 +8,9 @@ import { CITY_OPTIONS } from '../constants/regions'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
-  applicationId: { type: Number, default: null }
+  applicationId: { type: Number, default: null },
+  /** 新增模式的预填（步骤 23「加入投递」用）：公司 / 岗位 / 城市 / 渠道 / 备注 / JD 原文，仅取有值字段 */
+  prefill: { type: Object, default: null }
 })
 const emit = defineEmits(['update:modelValue', 'saved', 'delete'])
 
@@ -93,7 +95,8 @@ function todayString() {
   return `${now.getFullYear()}-${m}-${d}`
 }
 
-function resetForm() {
+/** 新增模式初始化：清空 + 当天日期；带 prefill（校招情报「加入投递」）时覆盖对应字段。 */
+function resetForm(prefill = null) {
   Object.assign(form, {
     company: '',
     position: '',
@@ -107,7 +110,19 @@ function resetForm() {
     next_event_at: null,
     remark: ''
   })
-  cityPath.value = []
+  if (prefill) {
+    const text = (key, max) => {
+      const value = String(prefill[key] ?? '').trim()
+      return value ? value.slice(0, max) : ''
+    }
+    form.company = text('company', 100)
+    form.position = text('position', 100)
+    form.city = text('city', 50)
+    form.channel = text('channel', 50)
+    form.remark = text('remark', 500)
+    form.jd_text = text('jd_text', 10000) // 表单上限 10000 字（投喂原文暂存可能更长）
+  }
+  cityPath.value = pathOfCity(form.city)
   formRef.value?.clearValidate()
 }
 
@@ -134,14 +149,17 @@ async function loadDetail(id) {
   }
 }
 
-// 打开时初始化：新增→清空并取当天；编辑→回填全部字段（PUT 是全量更新，必须回填）
+// 打开时初始化：新增→清空并取当天（带 prefill 时覆盖）；编辑→回填全部字段（PUT 是全量更新，必须回填）。
+// `immediate` 是必需的：从 query 跳转（顶栏新增 / 校招情报「加入投递」）时，本组件**挂载那一刻
+// modelValue 就已经是 true**，非 immediate 的 watch 不会触发，表单会停在空态。
 watch(
   () => props.modelValue,
   (visible) => {
     if (!visible) return
     if (isEdit.value) loadDetail(props.applicationId)
-    else resetForm()
-  }
+    else resetForm(props.prefill)
+  },
+  { immediate: true }
 )
 
 /** 请求删除当前记录：确认与接口调用交由父组件（删除流程保持单一出处），成功后才关闭本对话框 */

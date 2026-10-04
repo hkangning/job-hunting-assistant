@@ -6,7 +6,7 @@
  * 全部 delta 拼接」，若按 section 重新拼装会让标题重复；`section` 只用来显示当前生成进度。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import StreamText from '../components/StreamText.vue'
 import { streamSSE } from '../utils/sse'
@@ -40,10 +40,12 @@ const WAIT_HINTS = [
 const TIMEOUT_MS = 60000
 
 const router = useRouter()
+const route = useRoute()
 
 const jdText = ref('')
 const applicationId = ref(null)
 const applications = ref([])
+const prefillHint = ref('') // 校招情报带过来的说明（有原文 / 需粘贴）
 
 const streaming = ref(false)
 const reportText = ref('')
@@ -216,7 +218,28 @@ function changePage(delta) {
   loadReports()
 }
 
+/**
+ * 校招情报「分析匹配度」带 query 跳转过来（Campus.vue 的 onAnalyze）：
+ * 有暂存的投喂原文就直接填进 JD 输入框；自动抓取的岗位没有正文（NFR-016 只存元数据），
+ * 提示用户粘贴后再分析。消费完清掉 query，避免刷新时重复带入。
+ */
+function consumeQueryPrefill() {
+  const query = route.query
+  const jd = typeof query.jd_text === 'string' ? query.jd_text.trim() : ''
+  const position = typeof query.position === 'string' ? query.position.trim() : ''
+  const company = typeof query.company === 'string' ? query.company.trim() : ''
+  if (!jd && !position && !company) return
+  if (jd) {
+    jdText.value = jd.slice(0, JD_MAX)
+    prefillHint.value = `已从校招情报带入「${company}${company && position ? ' · ' : ''}${position}」的 JD 原文`
+  } else {
+    prefillHint.value = `${company}${company && position ? ' · ' : ''}${position} 没有可带入的 JD 原文（自动抓取只存元数据），请粘贴 JD 后再分析`
+  }
+  router.replace({ path: '/jd-analysis' })
+}
+
 onMounted(() => {
+  consumeQueryPrefill()
   loadApplications()
   loadReports()
 })
@@ -232,6 +255,7 @@ onUnmounted(() => {
     <aside class="jd__side">
       <section class="jd__card">
         <h3 class="jd__card-title dot-title">粘贴 JD</h3>
+        <p v-if="prefillHint" class="jd__prefill">{{ prefillHint }}</p>
         <el-input
           v-model="jdText"
           type="textarea"
@@ -381,6 +405,14 @@ onUnmounted(() => {
   font-size: var(--fs-title);
   font-weight: 600;
   color: var(--c-text);
+}
+.jd__prefill {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  color: var(--c-text-2);
+  background: color-mix(in srgb, var(--m-campus) 10%, var(--c-card));
+  border-radius: var(--r-mark);
 }
 .jd__select {
   width: 100%;
