@@ -7,6 +7,7 @@
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
@@ -510,3 +511,24 @@ class TestSummary:
         events = _summary(client, account, session["id"])
         assert _sections(events) == ["summary"]
         assert all(name != "error" for name, _ in events)
+
+    @pytest.mark.xfail(
+        reason="IS-63 / 台账 #112（方案 A）：0 条问答的会话应可生成总结（不走 LLM、直接落固定说明并置 FINISHED）；"
+        "后端放宽「≥1 条」后 XPASS 转失败，届时摘标",
+        strict=True,
+    )
+    def test_summary_without_answers(self, client: TestClient, account):
+        """IS-63 方案 A：0 条已完成问答（未作答 / 未跳过）的会话也可生成总结。
+
+        不挂 `llm_configured`——方案 A 的 0 条分支「不走 LLM」，放弃面试不应依赖 AI 配置。
+        """
+        session = _create(client, account, company="云器科技", position="后端开发", question_count=3)
+        events = _summary(client, account, session["id"])
+        assert all(name != "error" for name, _ in events)
+        body = "".join(
+            d["text"] for name, d in events if name == "delta" and d.get("section") == "summary"
+        )
+        assert body.strip(), "固定说明文案不应为空"
+        detail = client.get(f"{API}/{session['id']}", headers=_auth(account)).json()["data"]
+        assert detail["status"] == "FINISHED"
+        assert (detail["summary"] or "").strip()
