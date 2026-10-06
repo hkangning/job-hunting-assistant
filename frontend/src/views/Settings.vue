@@ -76,7 +76,7 @@ function preview(voiceId) {
     return
   }
   const option = voiceOptions.value.find((o) => o.value === voiceId)
-  ttsPlayer.play(previewScript(option?.name || '语音助手'), { voice: voiceId, key: voiceId })
+  ttsPlayer.play([{ text: previewScript(option?.name || '语音助手'), key: voiceId }], { voice: voiceId })
 }
 
 function applySettings(data) {

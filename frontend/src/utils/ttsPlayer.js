@@ -1,15 +1,18 @@
 /**
  * 播报单例（SRS §3.11 / 接口文档 §3.13）。
  *
- * - 逐段合成（`splitForTts` 切 ≤2000 字）顺序连播，播放第 n 段时**预取**第 n+1 段
- *   （段间无缝衔接，且同文案同音色后端有缓存、命中毫秒级）；
+ * - 播放单元为**段数组** `[{text, key}]`（key = 该段归属的消息对象，用于段级点亮）：
+ *   段内按 ≤2000 字切 chunk 顺序连播，播放第 n 个 chunk 时预取第 n+1 个（段间无缝，
+ *   同文案同音色后端有缓存、命中毫秒级）；
+ * - **段级点亮**：播到某段时 `ttsSpeakingKey` = 该段 key——自动播报「点评 + 下一题」
+ *   整轮时，对应消息的图标随之逐个亮起；
  * - 可随时打断：`stop()` 停音频、作废旧异步链路（token 防竞态串音）；
  * - 任一段失败（60002 / 网络）→ 整条队列**静默停止**（不弹错，用户可手动再点播报）；
- * - 全局同一时刻只播一条——`ttsSpeakingKey` 标记「谁在播」，供按钮显停止态。
+ * - 全局同一时刻只播一条。
  */
 import { ref } from 'vue'
 import { synthesizeSpeech } from '../api/voice.js'
-import { splitForTts } from './ttsText.js'
+import { expandSpeechChunks, toSpeakableText } from './ttsText.js'
 
 export const ttsPlaying = ref(false)
 export const ttsSpeakingKey = ref(null)
@@ -54,23 +57,23 @@ function playUrl(url) {
   })
 }
 
-export async function playSpeech(text, { voice, key } = {}) {
+export async function playSpeech(segments, { voice } = {}) {
   stopSpeech()
   const my = ++token
-  const parts = splitForTts(text)
-  if (!parts.length) return
+  const chunks = expandSpeechChunks(segments)
+  if (!chunks.length) return
   ttsPlaying.value = true
-  ttsSpeakingKey.value = key ?? null
 
-  let next = synthUrl(parts[0], voice).catch(() => null)
-  for (let i = 0; i < parts.length; i++) {
+  let next = synthUrl(chunks[0].text, voice).catch(() => null)
+  for (let i = 0; i < chunks.length; i++) {
     const url = await next
     if (my !== token) {
       if (url) URL.revokeObjectURL(url)
       return
     }
     if (!url) break // 合成失败：静默停
-    next = i + 1 < parts.length ? synthUrl(parts[i + 1], voice).catch(() => null) : null
+    ttsSpeakingKey.value = chunks[i].key // 段级点亮（同段多 chunk 保持同 key）
+    next = i + 1 < chunks.length ? synthUrl(chunks[i + 1].text, voice).catch(() => null) : null
     const ok = await playUrl(url)
     if (my !== token) return
     URL.revokeObjectURL(url)
@@ -81,6 +84,23 @@ export async function playSpeech(text, { voice, key } = {}) {
     ttsPlaying.value = false
     ttsSpeakingKey.value = null
   }
+}
+
+/** 播放一条消息（所见即所播）：点评播点评正文、提问播题干。 */
+export function speakMessage(m) {
+  if (!m) return
+  const text = toSpeakableText(m.kind, m.text)
+  if (text) playSpeech([{ text, key: m }])
+}
+
+/** 「朗读 / 停止」toggle：正在播这条即停，否则播放它。 */
+export function toggleSpeakMessage(m) {
+  if (!m) return
+  if (ttsSpeakingKey.value === m) {
+    stopSpeech()
+    return
+  }
+  speakMessage(m)
 }
 
 export const ttsPlayer = { play: playSpeech, stop: stopSpeech }

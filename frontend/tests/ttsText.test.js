@@ -1,23 +1,36 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRoundSpeech, splitForTts } from '../src/utils/ttsText.js'
+import { toSpeakableText, expandSpeechChunks, splitForTts } from '../src/utils/ttsText.js'
 
-test('buildRoundSpeech：剥标题行与评分行、两段拼接', () => {
+test('toSpeakableText：点评剥标题行与评分行', () => {
   const review = '## 点评\n评分 8/10，亮点：条理清晰。\n不足：缺少示例。'
-  const question = '## 下一题\n请讲讲缓存雪崩的成因。'
-  const text = buildRoundSpeech(review, question)
-  assert.ok(!text.includes('##'))
-  assert.ok(!text.includes('评分'))
-  assert.ok(text.includes('亮点：条理清晰。'))
-  assert.ok(text.includes('请讲讲缓存雪崩的成因。'))
-  assert.ok(text.indexOf('亮点') < text.indexOf('请讲讲')) // 点评在前、下一题在后
+  const t = toSpeakableText('review', review)
+  assert.ok(!t.includes('##'))
+  assert.ok(!t.includes('评分'))
+  assert.ok(t.includes('亮点：条理清晰。'))
 })
 
-test('buildRoundSpeech：单段缺省与全空', () => {
-  assert.equal(buildRoundSpeech('', '## 下一题\n题目'), '题目')
-  assert.equal(buildRoundSpeech('## 点评\n直接给结论。', ''), '直接给结论。')
-  assert.equal(buildRoundSpeech('', ''), '')
-  assert.equal(buildRoundSpeech(null, undefined), '')
+test('toSpeakableText：提问走纯文本、空值安全', () => {
+  assert.equal(toSpeakableText('question', '## 下一题\n请讲讲缓存雪崩的成因。'), '请讲讲缓存雪崩的成因。')
+  assert.equal(toSpeakableText('review', ''), '')
+  assert.equal(toSpeakableText('question', null), '')
+  assert.equal(toSpeakableText('question', undefined), '')
+})
+
+test('expandSpeechChunks：多段展开、段内切分、key 透传、空段过滤', () => {
+  const long = '句子。'.repeat(900) // 2700 字 → 段内切 2 块
+  const chunks = expandSpeechChunks([
+    { text: '第一段。', key: 'k1' },
+    { text: long, key: 'k2' },
+    { text: '   ', key: 'k3' } // 空段不产生块
+  ])
+  assert.equal(chunks[0].text, '第一段。')
+  assert.equal(chunks[0].key, 'k1')
+  assert.ok(chunks.length >= 3)
+  assert.ok(chunks.slice(1).every((c) => c.key === 'k2'))
+  for (const c of chunks) assert.ok(c.text.length <= 2000)
+  assert.deepEqual(expandSpeechChunks(null), [])
+  assert.deepEqual(expandSpeechChunks([]), [])
 })
 
 test('splitForTts：段落切分与空白过滤', () => {

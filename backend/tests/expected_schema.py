@@ -114,6 +114,7 @@ TABLES: dict[str, dict] = {
             ("is_voice", "INTEGER", False, False),
             ("score", "INTEGER", True, False),
             ("review", "TEXT", True, False),
+            ("voice_metrics", "TEXT", True, False),
             ("skipped", "INTEGER", False, False),
             ("created_at", "DATETIME", False, False),
         ],

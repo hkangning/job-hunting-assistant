@@ -17,8 +17,8 @@ import { useAppStore } from '../stores/app'
 import { directionLabelMap } from '../utils/practiceMeta'
 import { parseRoundScore } from '../utils/practiceStream'
 import { addSegment, toSegmentsPayload } from '../utils/voiceSegments'
-import { buildRoundSpeech } from '../utils/ttsText'
-import { ttsPlayer, ttsSpeakingKey } from '../utils/ttsPlayer'
+import { toSpeakableText } from '../utils/ttsText'
+import { ttsPlayer, ttsSpeakingKey, toggleSpeakMessage } from '../utils/ttsPlayer'
 import {
   appendAnswer,
   applyDelta,
@@ -219,36 +219,27 @@ function onVoiceRecording(v) {
   voiceRecording.value = v
 }
 
-/** 组装某条点评所在轮的播报文本（点评 + 紧随其后的一条提问）。 */
-function roundSpeechFor(index) {
-  const review = messages.value[index]
-  if (!review || review.kind !== 'review') return ''
-  let question = ''
-  for (let j = index + 1; j < messages.value.length; j++) {
+/** 消息卡「朗读 / 停止」：所见即所播（点评播点评、提问播题干），同一条再点即停。 */
+function onSpeak(index) {
+  toggleSpeakMessage(messages.value[index])
+}
+
+/** 自动播报（每轮 done 后）：整轮「点评 + 下一题」两段；播到哪段、哪段的图标亮起。 */
+function speakRound(reviewIndex) {
+  const review = messages.value[reviewIndex]
+  if (!review) return
+  const segs = []
+  const reviewText = toSpeakableText('review', review.text)
+  if (reviewText) segs.push({ text: reviewText, key: review })
+  for (let j = reviewIndex + 1; j < messages.value.length; j++) {
     if (messages.value[j].kind === 'question') {
-      question = messages.value[j].text
+      const q = messages.value[j]
+      const qText = toSpeakableText('question', q.text)
+      if (qText) segs.push({ text: qText, key: q })
       break
     }
   }
-  return buildRoundSpeech(review.text, question)
-}
-
-/** 点评卡「播报 / 停止」按钮：同一条再点即停。 */
-function onSpeak(index) {
-  const review = messages.value[index]
-  if (!review) return
-  if (ttsSpeakingKey.value === review) {
-    ttsPlayer.stop()
-    return
-  }
-  const text = roundSpeechFor(index)
-  if (text) ttsPlayer.play(text, { key: review })
-}
-
-/** 自动播报（每轮 done 后）：总是播，不做 toggle。 */
-function speakRound(index) {
-  const text = roundSpeechFor(index)
-  if (text) ttsPlayer.play(text, { key: messages.value[index] })
+  if (segs.length) ttsPlayer.play(segs)
 }
 
 function submitAnswer() {

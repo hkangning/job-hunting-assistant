@@ -23,6 +23,7 @@
  */
 import StreamText from '../StreamText.vue'
 import ReviewBody from './ReviewBody.vue'
+import { Headset, VideoPause } from '@element-plus/icons-vue'
 import { parseRoundScore, toPlainText } from '../../utils/practiceStream'
 
 defineProps({
@@ -51,6 +52,19 @@ function reviewBody(text) {
           <div class="msgs__meta">
             <span class="msgs__who msgs__who--interviewer">面试官</span>
             <span v-if="m.seq != null" class="msgs__seq">第 {{ m.seq }} 题</span>
+            <el-tooltip
+              v-if="speakEnabled && !m.streaming"
+              :content="speakingKey === m ? '停止朗读' : '朗读本题'"
+              placement="top"
+            >
+              <el-button
+                class="msgs__speak"
+                :class="{ 'msgs__speak--on': speakingKey === m }"
+                link
+                :icon="speakingKey === m ? VideoPause : Headset"
+                @click="$emit('speak', i)"
+              />
+            </el-tooltip>
           </div>
           <StreamText v-if="m.streaming" :text="toPlainText(m.text)" :streaming="true" />
           <span v-else class="msgs__static">{{ toPlainText(m.text) }}</span>
@@ -71,15 +85,19 @@ function reviewBody(text) {
         <div class="msgs__review-head">
           <span class="msgs__review-title">点评</span>
           <span class="msgs__review-tools">
-            <el-button
+            <el-tooltip
               v-if="speakEnabled && !m.streaming"
-              link
-              size="small"
-              class="msgs__speak"
-              @click="$emit('speak', i)"
+              :content="speakingKey === m ? '停止朗读' : '朗读点评'"
+              placement="top"
             >
-              {{ speakingKey === m ? '停止' : '播报' }}
-            </el-button>
+              <el-button
+                class="msgs__speak"
+                :class="{ 'msgs__speak--on': speakingKey === m }"
+                link
+                :icon="speakingKey === m ? VideoPause : Headset"
+                @click="$emit('speak', i)"
+              />
+            </el-tooltip>
             <span v-if="m.score != null" class="msgs__score">{{ m.score }}<i>分</i></span>
           </span>
         </div>
@@ -159,6 +177,20 @@ function reviewBody(text) {
   gap: 8px;
   margin-bottom: 4px;
 }
+/* 朗读图标：常显（可发现性——不做 hover 隐藏）、播放中高亮并变停止图标 */
+.msgs__speak.el-button {
+  padding: 0 2px;
+  font-size: 16px;
+  color: var(--c-text-3);
+}
+.msgs__speak.el-button:hover,
+.msgs__speak--on.el-button {
+  color: var(--m-interview);
+}
+.msgs__meta .msgs__speak.el-button {
+  align-self: center;
+  margin-left: auto;
+}
 .msgs__who {
   font-size: var(--fs-xs);
 }
@@ -204,13 +236,6 @@ function reviewBody(text) {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-}
-.msgs__speak.el-button {
-  font-size: var(--fs-xs);
-  color: var(--c-text-3);
-}
-.msgs__speak.el-button:hover {
-  color: var(--m-interview);
 }
 .msgs__score {
   font-size: 22px;

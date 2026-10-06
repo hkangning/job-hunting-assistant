@@ -16,9 +16,12 @@ import { Back } from '@element-plus/icons-vue'
 import { getInterviewSession, interviewSummaryStream } from '../api/interview'
 import { addWrongQuestion } from '../api/wrongQuestions'
 import { getPracticeMeta } from '../api/practice'
+import { getSettingsApi } from '../api/settings'
+import { useAppStore } from '../stores/app'
 import { directionLabelMap } from '../utils/practiceMeta'
 import { toPlainText } from '../utils/practiceStream'
 import { buildMessages, INTENSITY_LABELS, parseCandidates } from '../utils/interviewStream'
+import { ttsPlayer, ttsSpeakingKey, toggleSpeakMessage } from '../utils/ttsPlayer'
 import { shortDateTime } from '../utils/datetime'
 import InterviewMessages from '../components/interview/InterviewMessages.vue'
 import ReviewBody from '../components/interview/ReviewBody.vue'
@@ -151,8 +154,28 @@ function backToList() {
   router.push('/interview')
 }
 
+// 朗读：与进行页同款——进页面 silent 拉一次设置取开关（失败降级用 store 旧值）
+const appStore = useAppStore()
+const ttsEnabled = ref(false)
+
+async function loadSettings() {
+  try {
+    const data = await getSettingsApi({ silent: true })
+    appStore.setSettings(data)
+    ttsEnabled.value = !!data.tts_enabled
+  } catch {
+    ttsEnabled.value = !!appStore.settings.tts_enabled
+  }
+}
+
+/** 历史消息「朗读 / 停止」：所见即所播（点评播点评、提问播题干），同一条再点即停。 */
+function onSpeak(index) {
+  toggleSpeakMessage(messages.value[index])
+}
+
 onMounted(() => {
   load()
+  loadSettings()
   getPracticeMeta()
     .then((data) => (meta.value = data))
     .catch(() => {}) // 拉不到就显示枚举值兜底
@@ -160,6 +183,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   summaryStream?.abort() // 离开页面断流：避免后台跑完却没人消费（内容仍会由后端落库）
+  ttsPlayer.stop() // 朗读同停
 })
 </script>
 
@@ -250,7 +274,12 @@ onUnmounted(() => {
       <!-- 完整回顾 -->
       <section class="review-page__history">
         <h3 class="review-page__section-title">完整回顾</h3>
-        <InterviewMessages :messages="messages" />
+        <InterviewMessages
+          :messages="messages"
+          :speak-enabled="ttsEnabled"
+          :speaking-key="ttsSpeakingKey"
+          @speak="onSpeak"
+        />
       </section>
     </div>
   </section>
