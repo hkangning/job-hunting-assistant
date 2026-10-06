@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.clients.llm_client import LLMClient, LLMConfig, parse_json_block, resolve_config
 from app.exceptions import BizException, ErrorCode
 from app.models import Application, InterviewQa, InterviewSession, JdAnalysisReport, UserProfile
-from app.models.enums import Direction, InterviewIntensity, InterviewStage, SessionStatus
+from app.models.enums import Direction, InterviewIntensity, InterviewStage, SessionStatus, VoiceQuality
 from app.prompts import (
     INTERVIEW_EXPERIENCE_LIMIT,
     INTERVIEW_JD_LIMIT,
@@ -47,6 +47,7 @@ from app.schemas.interview import (
 )
 from app.services.practice_service import STACKS
 from app.utils.section_splitter import SectionSplitter
+from app.utils.speech_metrics import compute_voice_metrics
 from app.utils.sse import SSE
 
 logger = logging.getLogger(__name__)
@@ -307,9 +308,14 @@ def run_chat(
     session_id: int,
     answer: str | None,
     skip: bool,
+    segments: list[dict] | None = None,
     client: LLMClient,
 ) -> Iterator[str]:
-    """作答入口（业务生成器）：按当前进度分派四类轮次，`yield` SSE 事件、`return` done 载荷。"""
+    """作答入口（业务生成器）：按当前进度分派四类轮次，`yield` SSE 事件、`return` done 载荷。
+
+    `segments` 为语音作答的分句时间轴（`[{seq, start_ms, end_ms, text}]`，接口文档 3.13），
+    仅作答轮参与表达力指标计算；跳过 / 出题轮无本轮作答，一律忽略。
+    """
     session = ensure_chattable(
         db, user_id=user_id, session_id=session_id, answer=answer, skip=skip
     )
@@ -333,7 +339,9 @@ def run_chat(
             yield from _question_round(db, session, qas, asked=asked, client=client)
         )
     return (
-        yield from _answer_round(db, session, qas, pending, text, asked=asked, client=client)
+        yield from _answer_round(
+            db, session, qas, pending, text, asked=asked, segments=segments, client=client
+        )
     )
 
 
@@ -379,7 +387,7 @@ def _question_round(
         asked=asked,
         stage_note=interview_stage_note(stage, index=index, count=count, plan=plan) if plan else "",
     )
-    sections = yield from _stream(client, config, messages, drop_next=False)
+    sections = yield from _stream(client, config, messages, drop_next=False, drop_review=True)
     question_text = sections["next_question"]
     if not question_text:
         raise BizException(ErrorCode.LLM_OUTPUT_INVALID, "模型未产出题目，请重试")
@@ -404,13 +412,20 @@ def _answer_round(
     answer: str,
     *,
     asked: list[str],
+    segments: list[dict] | None,
     client: LLMClient,
 ) -> Iterator[str]:
     """作答轮：点评 + 下一题；答满题量轮只点评并同事务置会话 FINISHED。
 
     点评按本题阶段定侧重（自我介绍 / 技术 / 项目的评判标准不同），下一题按阶段计划推进——
     进入项目深挖段时逐字告诉模型「接下来问什么」，并注入画像经历供其抓项目细节。
+
+    语音作答（`segments` 非空）先算表达力指标（纯函数、零 token）：quality=OK 时注入点评
+    prompt、随整轮落库并 `done.extra.voice_metrics` 下发；作答过短（TOO_SHORT）时不产出
+    表达维度（不注入不下发不落库），仅记 `is_voice=1`（接口文档 3.7 / 数据库设计 §3.4）。
     """
+    metrics = compute_voice_metrics(segments)
+    voice_metrics = metrics if metrics["quality"] == VoiceQuality.OK.value else None
     last = pending.seq >= session.question_count
     plan = _stage_plan_of(session)
     next_seq = pending.seq + 1
@@ -430,6 +445,7 @@ def _answer_round(
             if plan and not last
             else ""
         ),
+        voice_metrics=voice_metrics,
     )
     sections = yield from _stream(client, config, messages, drop_next=last)
     review = sections["review"]
@@ -440,6 +456,10 @@ def _answer_round(
     pending.answer = answer
     pending.review = review
     pending.score = _extract_score(review)
+    if segments is not None:
+        pending.is_voice = 1
+    if voice_metrics is not None:
+        pending.voice_metrics = json.dumps(voice_metrics, ensure_ascii=False)
     if last:
         _finish(session, now=now)
         record = pending
@@ -454,7 +474,7 @@ def _answer_round(
         db.add(record)
     db.commit()
     db.refresh(record)
-    return _done(record.id, seq=record.seq, finished=last)
+    return _done(record.id, seq=record.seq, finished=last, voice_metrics=voice_metrics)
 
 
 def _stream(
@@ -463,18 +483,23 @@ def _stream(
     messages: list[dict],
     *,
     drop_next: bool,
+    drop_review: bool = False,
 ) -> Iterator[str]:
     """流式下发 delta，返回 `{"review": ..., "next_question": ...}`（段内文本恒等于 delta 拼接）。
 
     段落归属只看标题行：**首个标题出现前的内容（模型的寒暄或没按格式输出）整段丢弃**，
     既不下发也不落库——落库文本恒等于 delta 拼接，且没按格式输出时对应段为空、由调用方报 10011。
-    `drop_next=True`（答满题量轮）时模型多输出的下一题段同样整段丢弃。
+    `drop_next=True`（答满题量轮）时模型多输出的下一题段整段丢弃；`drop_review=True`（出题轮）
+    时多余输出的点评段同样丢弃——两种都是防御模型越轮输出，保证契约「开场 / 跳过轮只有
+    next_question、答满轮只有 review」（接口文档 3.7）。
     """
     buckets: dict[str, list[str]] = {"review": [], "next_question": []}
     for text, section in _iter_pieces(client, config, messages):
         if section is None:
             continue
         if section == "next_question" and drop_next:
+            continue
+        if section == "review" and drop_review:
             continue
         buckets[section].append(text)
         yield SSE.delta(text, section)
@@ -649,13 +674,17 @@ def _extract_score(review: str) -> int | None:
     return score if 0 <= score <= 10 else None
 
 
-def _done(record_id: int, *, seq: int, finished: bool = False) -> dict:
-    """done 载荷（协议层组装事件）：`seq` = 本轮内容对应的题序，答满题量附 `session_finished`。"""
-    return {
-        "record_id": record_id,
-        "seq": seq,
-        "extra": {"session_finished": True} if finished else None,
-    }
+def _done(
+    record_id: int, *, seq: int, finished: bool = False, voice_metrics: dict | None = None
+) -> dict:
+    """done 载荷（协议层组装事件）：`seq` = 本轮内容对应的题序；答满题量附 `session_finished`，
+    语音作答且指标算出（quality=OK）附 `voice_metrics`；两者皆无时 extra 为 null。"""
+    extra: dict = {}
+    if finished:
+        extra["session_finished"] = True
+    if voice_metrics is not None:
+        extra["voice_metrics"] = voice_metrics
+    return {"record_id": record_id, "seq": seq, "extra": extra or None}
 
 
 def _stages_of(session: InterviewSession) -> list[StagePlanItem] | None:
@@ -703,8 +732,19 @@ def _to_qa_item(qa: InterviewQa) -> QaItem:
         question=qa.question,
         answer=qa.answer,
         is_voice=qa.is_voice,
+        voice_metrics=_load_metrics(qa.voice_metrics),
         score=qa.score,
         review=qa.review,
         skipped=qa.skipped,
         created_at=qa.created_at,
     )
+
+
+def _load_metrics(raw: str | None) -> dict | None:
+    """回看时把 voice_metrics JSON 列解析为对象下发；空值或脏数据按 null 处理。"""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None

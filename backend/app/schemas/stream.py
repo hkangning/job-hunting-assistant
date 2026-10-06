@@ -23,6 +23,15 @@ class JdAnalysisRequest(BaseModel):
     application_id: int | None = Field(default=None, description="关联的投递记录 id，可选；传入时须属当前账号，否则 10002")
 
 
+class SegmentItem(BaseModel):
+    """语音作答的分句时间轴片段（VAD 在前端执行，接口文档 3.13）。"""
+
+    seq: int = Field(ge=1, description="句序，从 1 开始")
+    start_ms: int = Field(ge=0, description="该句开始时间（毫秒）")
+    end_ms: int = Field(ge=0, description="该句结束时间（毫秒）")
+    text: str = Field(description="该句原始转写文本")
+
+
 class InterviewChatRequest(BaseModel):
     """模拟面试作答请求体（POST /stream/interview-chat，接口文档 3.7）。"""
 
@@ -32,8 +41,9 @@ class InterviewChatRequest(BaseModel):
         description="本题作答；**空串 = 请出当前该出的题**（首题开场 / 续出下一题 / 重发未答题，见接口文档 3.7 实现口径 3）",
     )
     skip: bool = Field(default=False, description="true = 跳过当前未作答的题（不计分，直接下一题）")
-    segments: list[dict] | None = Field(
-        default=None, description="语音作答的 VAD 分句时间轴（步骤 24 语音落地后启用，本版忽略该字段）"
+    segments: list[SegmentItem] | None = Field(
+        default=None,
+        description="语音作答时必传：VAD 分句时间轴 `[{seq, start_ms, end_ms, text}]`（见接口文档 3.13），供计算表达力指标；文字作答不传",
     )
 
 
