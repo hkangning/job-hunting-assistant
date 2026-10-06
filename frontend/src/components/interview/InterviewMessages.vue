@@ -27,8 +27,13 @@ import { parseRoundScore, toPlainText } from '../../utils/practiceStream'
 
 defineProps({
   /** `{ kind, seq?, text, skipped?, score?, streaming? }[]` */
-  messages: { type: Array, default: () => [] }
+  messages: { type: Array, default: () => [] },
+  /** 播报开关（settings.tts_enabled）：关时不显示播报按钮 */
+  speakEnabled: { type: Boolean, default: false },
+  /** 正在播报的消息对象引用（该条按钮显示「停止」态） */
+  speakingKey: { type: Object, default: null }
 })
+defineEmits(['speak'])
 
 /** 点评正文：剥标题行 / 行内标记，并去掉首行评分（格式不符时原样返回，剥不掉也无害）。 */
 function reviewBody(text) {
@@ -65,7 +70,18 @@ function reviewBody(text) {
       <div v-else-if="m.kind === 'review'" class="msgs__review">
         <div class="msgs__review-head">
           <span class="msgs__review-title">点评</span>
-          <span v-if="m.score != null" class="msgs__score">{{ m.score }}<i>分</i></span>
+          <span class="msgs__review-tools">
+            <el-button
+              v-if="speakEnabled && !m.streaming"
+              link
+              size="small"
+              class="msgs__speak"
+              @click="$emit('speak', i)"
+            >
+              {{ speakingKey === m ? '停止' : '播报' }}
+            </el-button>
+            <span v-if="m.score != null" class="msgs__score">{{ m.score }}<i>分</i></span>
+          </span>
         </div>
         <div class="msgs__review-body">
           <!-- 流式期间整段打字机；定稿后切分段着色（与回看页的总结卡共用 ReviewBody） -->
@@ -182,6 +198,18 @@ function reviewBody(text) {
 .msgs__review-title {
   font-size: var(--fs-sm);
   font-weight: 600;
+  color: var(--m-interview);
+}
+.msgs__review-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.msgs__speak.el-button {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.msgs__speak.el-button:hover {
   color: var(--m-interview);
 }
 .msgs__score {

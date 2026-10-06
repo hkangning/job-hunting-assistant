@@ -58,6 +58,10 @@ os.environ.setdefault("SSE_PACE_CPS", "0")
 # 避免测试期起后台调度线程干扰；手动触发接口 `/reminders/run` 不受该开关影响（仍可调用）。
 os.environ.setdefault("REMINDER_SCHEDULER_ENABLED", "false")
 
+# ASR 本地模型启动预热（步骤 24）：默认开启，测试里关掉——预热会加载约 0.9GB 模型；
+# 语音用例全 mock 本不需要模型，环境变量兜底防「子进程方式跑测试 / 测试进程保护被误删」时误加载。
+os.environ.setdefault("ASR_WARMUP_ENABLED", "false")
+
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.database import Base, SessionLocal, engine  # noqa: E402

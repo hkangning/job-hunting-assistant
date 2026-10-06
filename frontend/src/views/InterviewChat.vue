@@ -12,8 +12,13 @@ import { ElMessage } from 'element-plus'
 import { Back, CircleCheck } from '@element-plus/icons-vue'
 import { getInterviewSession, interviewChatStream } from '../api/interview'
 import { getPracticeMeta } from '../api/practice'
+import { getSettingsApi } from '../api/settings'
+import { useAppStore } from '../stores/app'
 import { directionLabelMap } from '../utils/practiceMeta'
 import { parseRoundScore } from '../utils/practiceStream'
+import { addSegment, toSegmentsPayload } from '../utils/voiceSegments'
+import { buildRoundSpeech } from '../utils/ttsText'
+import { ttsPlayer, ttsSpeakingKey } from '../utils/ttsPlayer'
 import {
   appendAnswer,
   applyDelta,
@@ -25,6 +30,7 @@ import {
 } from '../utils/interviewStream'
 import InterviewMessages from '../components/interview/InterviewMessages.vue'
 import ResizableTextarea from '../components/ResizableTextarea.vue'
+import VoiceInput from '../components/VoiceInput.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,6 +48,14 @@ const errorMsg = ref('')
 const errorCode = ref(null)
 const meta = ref(null)
 const scroller = ref(null)
+
+// 语音（步骤 24）：voice_enabled 控制作答区语音工具条显隐；tts_enabled 控制播报
+const appStore = useAppStore()
+const voiceEnabled = ref(false)
+const ttsEnabled = ref(false)
+const voiceRecording = ref(false)
+const voiceRef = ref(null)
+let segments = [] // 分句时间轴（原始转写）；提交 / 跳过后清空
 
 let stream = null // 当前 SSE 句柄
 let lastPayload = null // 失败重试的原参数
@@ -88,8 +102,22 @@ const finishHint = computed(() =>
 )
 
 const canSubmit = computed(
-  () => !streaming.value && !isFinished.value && input.value.trim().length > 0
+  () =>
+    !streaming.value && !isFinished.value && !voiceRecording.value && input.value.trim().length > 0
 )
+
+/** 拉一次设置：语音作答 / 播报两个开关（失败降级用 store 旧值，默认关）。 */
+async function loadSettings() {
+  try {
+    const data = await getSettingsApi({ silent: true })
+    appStore.setSettings(data)
+    ttsEnabled.value = !!data.tts_enabled
+    voiceEnabled.value = !!data.voice_enabled
+  } catch {
+    ttsEnabled.value = !!appStore.settings.tts_enabled
+    voiceEnabled.value = !!appStore.settings.voice_enabled
+  }
+}
 
 async function load() {
   loading.value = true
@@ -134,6 +162,15 @@ function requestNext(payload) {
         if (d.seq != null && last?.kind === 'question') last.seq = d.seq
         attachScore()
         tail.value = d.extra?.session_finished ? 'finished' : 'awaiting-answer'
+        // 自动播报：本轮点评 + 下一题（开关开时；手动按钮共用同一组装口径）
+        if (ttsEnabled.value) {
+          for (let i = messages.value.length - 1; i >= 0; i--) {
+            if (messages.value[i].kind === 'review') {
+              speakRound(i)
+              break
+            }
+          }
+        }
       },
       onError: (e) => {
         sealStreaming(messages.value)
@@ -170,22 +207,76 @@ function attachScore() {
   }
 }
 
+/** 转写结果回填：拼到作答框末尾并记入 segments（空文本由 addSegment 过滤）。 */
+function onVoiceAppend({ text, startMs, endMs }) {
+  const t = String(text ?? '').trim()
+  if (!t) return
+  input.value = input.value ? `${input.value}${t}` : t
+  addSegment(segments, { text: t, startMs, endMs })
+}
+
+function onVoiceRecording(v) {
+  voiceRecording.value = v
+}
+
+/** 组装某条点评所在轮的播报文本（点评 + 紧随其后的一条提问）。 */
+function roundSpeechFor(index) {
+  const review = messages.value[index]
+  if (!review || review.kind !== 'review') return ''
+  let question = ''
+  for (let j = index + 1; j < messages.value.length; j++) {
+    if (messages.value[j].kind === 'question') {
+      question = messages.value[j].text
+      break
+    }
+  }
+  return buildRoundSpeech(review.text, question)
+}
+
+/** 点评卡「播报 / 停止」按钮：同一条再点即停。 */
+function onSpeak(index) {
+  const review = messages.value[index]
+  if (!review) return
+  if (ttsSpeakingKey.value === review) {
+    ttsPlayer.stop()
+    return
+  }
+  const text = roundSpeechFor(index)
+  if (text) ttsPlayer.play(text, { key: review })
+}
+
+/** 自动播报（每轮 done 后）：总是播，不做 toggle。 */
+function speakRound(index) {
+  const text = roundSpeechFor(index)
+  if (text) ttsPlayer.play(text, { key: messages.value[index] })
+}
+
 function submitAnswer() {
   if (!canSubmit.value) return
   const text = input.value.trim()
   input.value = ''
   appendAnswer(messages.value, text)
   scrollToBottom(true)
-  requestNext({ answer: text })
+  const payload = { answer: text }
+  const segs = toSegmentsPayload(segments)
+  if (segs) payload.segments = segs
+  segments = []
+  voiceRef.value?.reset()
+  ttsPlayer.stop() // 切换题目即停（正在播报上一轮时）
+  requestNext(payload)
 }
 
 function skip() {
+  segments = []
+  voiceRef.value?.reset()
+  ttsPlayer.stop()
   insertSkipped(messages.value)
   scrollToBottom(true)
   requestNext({ skip: true })
 }
 
 function continueNext() {
+  ttsPlayer.stop()
   requestNext({ answer: '' })
 }
 
@@ -235,6 +326,7 @@ let observer = null
 
 onMounted(() => {
   load()
+  loadSettings()
   getPracticeMeta()
     .then((data) => (meta.value = data))
     .catch(() => {}) // 拉不到就显示枚举值兜底
@@ -245,10 +337,11 @@ onMounted(() => {
   observer.observe(scroller.value, { childList: true, subtree: true, characterData: true })
 })
 
-// 离开页面时断流：避免后台跑完却没人消费（内容仍会由后端落库）
+// 离开页面时断流：避免后台跑完却没人消费（内容仍会由后端落库）；播报同停
 onUnmounted(() => {
   stream?.abort()
   observer?.disconnect()
+  ttsPlayer.stop()
 })
 </script>
 
@@ -275,7 +368,12 @@ onUnmounted(() => {
     </header>
 
     <div ref="scroller" v-loading="loading" class="chat__stream" @scroll.passive="onStreamScroll">
-      <InterviewMessages :messages="messages" />
+      <InterviewMessages
+        :messages="messages"
+        :speak-enabled="ttsEnabled"
+        :speaking-key="ttsSpeakingKey"
+        @speak="onSpeak"
+      />
       <p v-if="thinking" class="chat__thinking">{{ thinking }}</p>
     </div>
 
@@ -306,11 +404,21 @@ onUnmounted(() => {
       </template>
 
       <template v-else>
+        <!-- 语音作答（voice_enabled 开时显示）：连续说话、停顿自动断句、逐句回填 -->
+        <VoiceInput
+          v-if="voiceEnabled"
+          ref="voiceRef"
+          :disabled="streaming"
+          @append="onVoiceAppend"
+          @recording="onVoiceRecording"
+        />
         <!-- 固定高度 + 顶部拖拽条手动调整（ResizableTextarea）：高度由用户自己拖出，
-             输入不改变高度（与 autosize 互斥）；拖拽条整条宽、命中面积大 -->
+             输入不改变高度（与 autosize 互斥）；拖拽条整条宽、命中面积大。
+             录音中只读：转写回填与手动编辑同时发生会抢光标，停止后立即可编辑 -->
         <ResizableTextarea
           v-model="input"
           :disabled="streaming"
+          :readonly="voiceRecording"
           maxlength="5000"
           placeholder="输入你的作答（Ctrl + Enter 提交）"
           @submit="submitAnswer"
@@ -327,7 +435,7 @@ onUnmounted(() => {
               <el-button
                 link
                 class="chat__finish"
-                :disabled="streaming"
+                :disabled="streaming || voiceRecording"
                 :title="finishHint"
               >
                 结束本场
@@ -342,7 +450,7 @@ onUnmounted(() => {
             @confirm="skip"
           >
             <template #reference>
-              <el-button :disabled="streaming">跳过</el-button>
+              <el-button :disabled="streaming || voiceRecording">跳过</el-button>
             </template>
           </el-popconfirm>
           <el-button type="primary" :disabled="!canSubmit" :loading="streaming" @click="submitAnswer">

@@ -4,19 +4,18 @@
  * 保存方式：快照 diff + 统一「保存设置」按钮（接口为部分更新语义，只提交变更字段）。
  * 原设置页的 LLM 字段已全部迁至 AI 配置页（步骤 8 瘦身）。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getSettingsApi, updateSettingsApi } from '../api/settings'
+import { getTtsVoices } from '../api/voice'
+import { ttsPlayer, ttsSpeakingKey } from '../utils/ttsPlayer'
 import { useAppStore } from '../stores/app'
 import CrawlSourceCard from '../components/campus/CrawlSourceCard.vue'
 
-// 音色列表：GET /tts/voices 属步骤 24（尚未实现），本步用 SRS §3.12 列举的三个音色过渡；
-// 步骤 24 落地后改为从接口拉取并删除本常量。描述按音色实际听感归纳（试听待步骤 24）。
-const TTS_VOICES = [
-  { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', desc: '女声 · 亲切自然，适合点评与讲解' },
-  { id: 'zh-CN-YunxiNeural', name: '云希', desc: '男声 · 清朗年轻，适合轻松对话' },
-  { id: 'zh-CN-YunyangNeural', name: '云扬', desc: '男声 · 沉稳专业，适合正式播报' }
-]
+// 音色清单来自 GET /tts/voices（步骤 24：14 个中文音色，账号所配音色置顶）；
+// 拉取失败降级为空列表——下方 voiceOptions 会补「当前已存音色」兜底项，回显不丢。
+const GENDER_LABELS = { Female: '女声', Male: '男声' }
+const previewScript = (name) => `你好，我是${name}。这是一段语音播报试听。`
 
 // 参与 diff 的字段（asr_app_id / asr_api_key 不在其中：留空 = 不修改，不是"清空"）
 // crawl_url 已于 SRS v1.11 废弃——抓取目标改由「信息源清单」多行承载，不再有单一目标地址
@@ -34,6 +33,7 @@ const appStore = useAppStore()
 const loading = ref(true)
 const saving = ref(false)
 const asrKeySet = ref(false)
+const voiceList = ref([])
 
 const form = reactive({
   voice_enabled: false,
@@ -48,14 +48,36 @@ const form = reactive({
 
 let snapshot = {} // 加载时的原始值，用于 diff
 
-// 已存音色不在过渡列表中时补一项，避免回显被静默清空（同投递表单城市字段的兜底思路）
+// 已存音色不在清单中时补一项，避免回显被静默清空（同投递表单城市字段的兜底思路）
 const voiceOptions = computed(() => {
-  const options = TTS_VOICES.map((v) => ({ value: v.id, name: v.name, desc: v.desc }))
+  const options = voiceList.value.map((v) => ({
+    value: v.id,
+    name: v.name,
+    desc: `${GENDER_LABELS[v.gender] || v.gender} · ${v.style}`
+  }))
   if (form.tts_voice && !options.some((o) => o.value === form.tts_voice)) {
     options.unshift({ value: form.tts_voice, name: form.tts_voice, desc: '当前已存音色' })
   }
   return options
 })
+
+async function loadVoices() {
+  try {
+    voiceList.value = await getTtsVoices()
+  } catch {
+    voiceList.value = []
+  }
+}
+
+/** 试听：用界面当前选中的音色合成一段固定文案（不受「AI 回复朗读」开关限制）；再点停止。 */
+function preview(voiceId) {
+  if (ttsSpeakingKey.value === voiceId) {
+    ttsPlayer.stop()
+    return
+  }
+  const option = voiceOptions.value.find((o) => o.value === voiceId)
+  ttsPlayer.play(previewScript(option?.name || '语音助手'), { voice: voiceId, key: voiceId })
+}
 
 function applySettings(data) {
   Object.assign(form, {
@@ -104,7 +126,15 @@ async function save() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadVoices()
+})
+
+// 离开设置页停试听（单例播放器全局只有一个）
+onUnmounted(() => {
+  ttsPlayer.stop()
+})
 </script>
 
 <template>
@@ -139,11 +169,7 @@ onMounted(load)
           <el-switch v-model="form.tts_enabled" />
         </el-form-item>
         <el-form-item label="播报音色">
-          <el-radio-group
-            v-model="form.tts_voice"
-            :disabled="!form.tts_enabled"
-            class="settings__voices"
-          >
+          <el-radio-group v-model="form.tts_voice" class="settings__voices">
             <el-radio
               v-for="o in voiceOptions"
               :key="o.value"
@@ -152,9 +178,13 @@ onMounted(load)
             >
               <span class="settings__voice-name">{{ o.name }}</span>
               <span class="settings__voice-desc">{{ o.desc }}</span>
-              <el-tooltip content="语音播报功能上线后可用" placement="top">
-                <span class="settings__voice-try" @click.stop.prevent>试听</span>
-              </el-tooltip>
+              <span
+                class="settings__voice-try"
+                :class="{ 'settings__voice-try--playing': ttsSpeakingKey === o.value }"
+                @click.stop.prevent="preview(o.value)"
+              >
+                {{ ttsSpeakingKey === o.value ? '停止' : '试听' }}
+              </span>
             </el-radio>
           </el-radio-group>
         </el-form-item>
@@ -210,12 +240,12 @@ onMounted(load)
   color: var(--c-text-2);
   margin: 0 0 12px;
 }
-/* 音色：场景化单选——名称 + 听感描述 + 试听占位（步骤 24 接通） */
+/* 音色：两列网格（14 个音色单列过长）——名称 + 性别/听感描述 + 试听（点击合成播放） */
 .settings__voices {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 24px;
+  width: 100%;
 }
 .settings__voice {
   height: auto;
@@ -235,7 +265,12 @@ onMounted(load)
   font-size: var(--fs-xs);
   color: var(--c-text-3);
   border-bottom: 1px dashed var(--c-border);
-  cursor: not-allowed;
+  cursor: pointer;
+}
+.settings__voice-try:hover,
+.settings__voice-try--playing {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
 }
 .settings__footer {
   display: flex;
