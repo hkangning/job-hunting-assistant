@@ -189,9 +189,12 @@ def interview_chat_stream(
 
     事件流 `start → delta×N → done`：作答轮 delta 依次 `review` → `next_question`，开场轮与
     跳过轮只有 `next_question`，答满题量轮只有 `review` 且 `done.extra.session_finished=true`。
-    整轮内容生成完才一次性落库，断连或中途失败不落任何记录（重试 = 整轮重发）。
+    语音作答（`segments` 非空）时作答轮先算表达力指标（纯函数、零 token），算出（quality=OK）
+    则注入点评 prompt 并随 `done.extra.voice_metrics` 下发；整轮内容生成完才一次性落库，
+    断连或中途失败不落任何记录（重试 = 整轮重发）。
     """
     user_id = current_user.id
+    segments = [item.model_dump() for item in payload.segments] if payload.segments is not None else None
     # 会话与参数校验必须在流式响应建立之前完成（404+10002 / 40001 / 400+10001 按普通响应体返回）
     interview_service.ensure_chattable(
         db, user_id=user_id, session_id=payload.session_id, answer=payload.answer, skip=payload.skip
@@ -205,6 +208,7 @@ def interview_chat_stream(
                 session_id=payload.session_id,
                 answer=payload.answer,
                 skip=payload.skip,
+                segments=segments,
                 client=client,
             )
         )

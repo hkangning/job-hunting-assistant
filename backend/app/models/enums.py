@@ -237,3 +237,11 @@ class UserPlan(StrEnum):
 
     FREE = "FREE"  # 免费版
     PRO = "PRO"  # 高级版（预留）
+
+
+class VoiceQuality(StrEnum):
+    """表达力指标数据质量（voice_metrics.quality，JSON 内部字段非表列，数据库设计 §5）。"""
+
+    OK = "OK"  # 正常分析（产出五项指标）
+    TOO_SHORT = "TOO_SHORT"  # 作答不足 10 秒（不产出表达维度）
+    TEXT_ONLY = "TEXT_ONLY"  # 纯文字作答（不产出表达维度）

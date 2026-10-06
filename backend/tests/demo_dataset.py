@@ -2,7 +2,7 @@
 
 一套可重复导入的标准数据，覆盖**当前已实现功能的各类场景**，供：
 - **手动测试**：导入后打开界面即见完整效果（投递看板五种状态、概览的待面试与跟进、错题各档位、
-  JD 报告、面试已结束与进行中、面经、陪练会话与掌握度、个人中心画像、AI 配置）；
+  JD 报告、面试已结束与进行中、面经、陪练会话与掌握度、Agent 会话、个人中心画像、AI 配置）；
 - **演示准备**：开发计划步骤 29「预置演示账号与一套数据」的落地件。
 
 用法（在 `backend/` 目录下）：
@@ -20,9 +20,9 @@
 **`--purge`** 只按前缀（见 `_TEST_ACCOUNT_PREFIXES`）清除验证过程中产生的临时账号，
 **不碰开发者自己注册的账号**——开发库的账号列表被测试残留淹没时用它清理。
 
-**范围**：覆盖当前已实现的功能——投递、画像、AI 配置、错题、JD 分析、模拟面试、面经、陪练，
-以及校招情报（信息源配置 + 宣讲会 / 双选会，步骤 21 公共数据；公共岗位 + 订阅规则，步骤 22）。
-Agent（步骤 18/19）数据待补充。
+**范围**：覆盖当前已实现的功能——投递、画像、AI 配置、错题、JD 分析、模拟面试、面经、陪练、
+全局 Agent（步骤 18/19）与校招情报（信息源配置 + 宣讲会 / 双选会，步骤 21 公共数据；
+公共岗位 + 订阅规则，步骤 22）。
 
 **时间一律相对「导入当天」计算**（如「明天有面试」「9 天前投递」），
 故数据不会随时间失效——这正是不能写死日期的原因。
@@ -75,6 +75,7 @@ from app.models.enums import (
     InterviewStage,
     IngestSource,
     JobType,
+    MessageRole,
     PracticeMode,
     PracticeSessionStatus,
     QuestionSource,
@@ -85,7 +86,7 @@ from app.models.enums import (
     WrongSourceType,
 )
 from app.schemas.auth import RegisterRequest
-from app.services import auth_service
+from app.services import agent_service, auth_service
 from app.utils.security import encrypt_text
 
 # ---------- 账号 ----------
@@ -470,6 +471,89 @@ INTERVIEW_WRONG_QUESTION = dict(
            "导致其他线程拿到未初始化完成的对象；同时保证可见性。",
     stack=Stack.JAVA_BACKEND, direction=Direction.CONCURRENCY,
 )
+
+# ---------- 全局 Agent 会话（查询工具执行 / 写操作确认卡 / 多轮纯文本 三种形态）----------
+#
+# 消息形态与真实链路落库一致（见 agent_service.run_agent_chat）：
+#   · 查询类：USER → TOOL（工具结果 JSON，带 tool_name）→ ASSISTANT（总结，带 tool_name）
+#   · 写操作：USER → ASSISTANT（引导文本 + tool_args JSON）——确认卡点「确认」后的执行
+#     走独立端点、不写回会话，故会话停在这一步
+#   · 纯文本：USER → ASSISTANT（tool_name 为 null）
+#
+# 消息元组：(role, 距会话开始的分钟数, content, tool_name, tool_args)；
+# content 可为 callable（`(db, user_id) -> str`，装载时生成）。
+# 会话 A 的 TOOL 结果不写死——经真实工具 handler 按导入后的库内数据生成（与概览页口径一致），
+# 其总结文本里的数字与该数据集口径对齐（改动数据集时同步）。
+# 会话列表按 updated_at 倒序（「今天」的排最前）；`title` 按真实规则取首条用户输入
+# 前 30 字——改首条消息时记得同步。
+
+
+def _today_summary_tool_result(db: Session, user_id: int) -> str:
+    """查询类会话的 TOOL 结果文本：走真实工具 handler，按 `json.dumps` 落库口径序列化。
+
+    handler 读的是当次导入后的库内数据，日期字段也相对导入当天——结果卡与概览页自洽。
+    """
+    data = agent_service.TOOLS["get_today_summary"].handler(db, user_id, {})
+    return json.dumps(data, ensure_ascii=False)
+
+
+AGENT_CONVERSATIONS = [
+    dict(  # 查询类工具真实执行：三种形态里信息最全（会话列表最新一条）
+        title="今天有什么要跟进的？",
+        ago=timedelta(hours=3),
+        messages=[
+            (MessageRole.USER, 0, "今天有什么要跟进的？", None, None),
+            (MessageRole.TOOL, 1, _today_summary_tool_result, "get_today_summary", None),
+            (MessageRole.ASSISTANT, 2,
+             "帮你把今天的待办过了一遍：\n\n"
+             "**要盯的笔试 / 面试**\n"
+             "- 浩鲸科技 · Java 后端开发：明天 14:00 面试，按面试官偏好重点过 JVM 与并发；\n"
+             "- 美团 · Java 开发工程师：后天 19:00 笔试，算法与 SQL 先热身；\n"
+             "- 字节跳动 · 后端开发工程师：3 天后下午面试，注意算法。\n\n"
+             "**需要跟进的投递**\n"
+             "- 星环数据投了 9 天没动静，今天补一条跟进；\n"
+             "- 云启信息（5 天）、某某科技（4 天）也超过 3 天没更新了。\n\n"
+             "**错题复习**\n"
+             "- 有到期未复习的错题，抽 10 分钟过一下。",
+             "get_today_summary", None),
+        ],
+    ),
+    dict(  # 写操作确认卡：出卡后停住（点「确认」的执行不写回会话）
+        title="帮我记一条投递：携程，Java 后端开发，上海",
+        ago=timedelta(days=1),
+        messages=[
+            (MessageRole.USER, 0, "帮我记一条投递：携程，Java 后端开发，上海", None, None),
+            (MessageRole.ASSISTANT, 1,
+             "好的，我整理成了这条投递记录，确认没问题就点「确认入库」；有出入直接改～",
+             "create_application",
+             '{"company": "携程", "position": "Java 后端开发", "city": "上海"}'),
+        ],
+    ),
+    dict(  # 纯文本多轮：无工具调用（最简形态）
+        title="分布式的问题我没什么实战经验，面试怎么答稳妥？",
+        ago=timedelta(days=5),
+        messages=[
+            (MessageRole.USER, 0, "分布式的问题我没什么实战经验，面试怎么答稳妥？", None, None),
+            (MessageRole.ASSISTANT, 2,
+             "没做过分布式系统不代表这道题没法答，关键是划清边界、把话题拉回能撑住的地方：\n\n"
+             "1. 先坦诚边界——一句话带过「没有生产级分布式系统的完整实践」，不装懂；\n"
+             "2. 接上手里的牌——选课系统重构里有 Redis 缓存、Lua 原子扣减，"
+             "这些本来就是分布式场景的基础件，讲清用它们解决过什么问题；\n"
+             "3. 原理层按「是什么 → 为什么 → 失效边界」答，比如一致性哈希、CAP 取舍，"
+             "把理解的取舍逻辑说清楚，比背诵结论可信。\n\n"
+             "面试官更在意你「知道自己不知道什么」，而不是硬凑场景。",
+             None, None),
+            (MessageRole.USER, 6, "那项目经历部分怎么讲比较好？", None, None),
+            (MessageRole.ASSISTANT, 8,
+             "按「背景 → 我的动作 → 结果 → 取舍」四段组织，重点是后两段：\n\n"
+             "- **结果**要有数字：慢查询占比 12% → 3%、P99 1.2s → 260ms，这类量化最有说服力；\n"
+             "- **取舍**是拉开差距的地方：为什么用 Lua 而不是分布式锁、为什么先上缓存而不是直接加索引，"
+             "把「为什么不用另一条路」想明白；\n"
+             "- 每个项目准备一个「如果重做会怎么改」的收尾，这是深度追问的预埋答案。",
+             None, None),
+        ],
+    ),
+]
 
 
 def _now() -> datetime:
@@ -989,6 +1073,35 @@ def _add_subscriptions(db: Session, user_id: int) -> int:
     return len(rules)
 
 
+def _add_agent_conversations(db: Session, user_id: int) -> int:
+    """全局 Agent 会话（三种形态见定义处注释）。放在数据装载最后——查询工具的结果要读全量数据。"""
+    now = _now()
+    for item in AGENT_CONVERSATIONS:
+        started_at = now - item["ago"]
+        conversation = AgentConversation(
+            user_id=user_id, title=item["title"], created_at=started_at, updated_at=started_at
+        )
+        db.add(conversation)
+        db.flush()
+        for role, offset_minutes, content, tool_name, tool_args in item["messages"]:
+            if callable(content):
+                content = content(db, user_id)  # 查询类 TOOL 结果按当前库内数据生成
+            sent_at = started_at + timedelta(minutes=offset_minutes)
+            db.add(
+                AgentMessage(
+                    conversation_id=conversation.id,
+                    role=role.value,
+                    content=content,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    created_at=sent_at,
+                )
+            )
+            conversation.updated_at = sent_at
+    db.flush()
+    return len(AGENT_CONVERSATIONS)
+
+
 def _load_business_data(db: Session, user_id: int, *, with_llm: bool = True) -> dict[str, int]:
     """把整套业务数据写入指定账号（调用方负责清场策略）。"""
     _fill_profile(db, user_id)
@@ -1004,6 +1117,7 @@ def _load_business_data(db: Session, user_id: int, *, with_llm: bool = True) -> 
         "campus_events": _add_campus_events(db),  # 公共数据（信息源 + 宣讲会/双选会），随全套数据一并重建
         "job_postings": _add_job_postings(db),  # 公共岗位（步骤 22），同上
         "subscriptions": _add_subscriptions(db, user_id),  # 订阅规则（账号私有，步骤 22）
+        "agent_conversations": _add_agent_conversations(db, user_id),  # 步骤 18/19
         "profiles": len(PROFILE),
     }
 
@@ -1083,6 +1197,7 @@ def _print_summary(target: str, summary: dict[str, int]) -> None:
         f"  陪练 {summary['practice_sessions']} 场（已完成结算 / 追问链进行中）+ 掌握度 4 域\n"
         f"  校招情报 {summary['campus_events']} 条（TALK / FAIR，「已变更」与已过期各覆盖）+ 信息源 3 个\n"
         f"  校招岗位 {summary['job_postings']} 条（公共；高分命中 / 已变更 / 已过期 / 多来源合并）+ 订阅规则 {summary['subscriptions']} 条\n"
+        f"  Agent 会话 {summary['agent_conversations']} 个（查询工具执行 / 写操作确认卡 / 多轮纯文本）\n"
         f"  画像 {summary['profiles']} 个字段 + 经历条目 {len(PROFILE_EXPERIENCES)} 条"
     )
 

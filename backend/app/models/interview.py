@@ -54,6 +54,9 @@ class InterviewQa(Base):
     question: Mapped[str] = mapped_column(Text)  # AI 提问原文
     answer: Mapped[str | None] = mapped_column(Text)  # 用户作答（跳题为空）
     is_voice: Mapped[int] = mapped_column(Integer, default=0)  # 是否语音作答（0 文字 / 1 语音，P2）
+    voice_metrics: Mapped[str | None] = mapped_column(
+        Text
+    )  # 表达力指标快照 JSON（语音作答且 quality=OK 时落库；非语音或作答过短为空，数据库设计 §3.4/§3.19）
     score: Mapped[int | None] = mapped_column(Integer)  # 得分 0~10（跳题为空）
     review: Mapped[str | None] = mapped_column(Text)  # AI 点评（亮点/不足/参考要点）
     skipped: Mapped[int] = mapped_column(Integer, default=0)  # 是否跳过（0 否 / 1 是）

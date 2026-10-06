@@ -78,7 +78,11 @@ class QaItem(BaseModel):
     seq: int = Field(description="题序，从 1 开始")
     question: str = Field(description="AI 提问原文")
     answer: str | None = Field(description="用户作答，未作答 / 跳题为 null")
-    is_voice: int = Field(description="是否语音作答（0 文字 / 1 语音），本版恒为 0")
+    is_voice: int = Field(description="是否语音作答（0 文字 / 1 语音）")
+    voice_metrics: dict | None = Field(
+        default=None,
+        description="表达力指标快照（语音作答且 quality=OK 时下发，结构见数据库设计 §3.19）；非语音作答 / 作答过短为 null",
+    )
     score: int | None = Field(description="本题得分 0~10，未作答 / 跳题为 null")
     review: str | None = Field(description="AI 点评全文，未作答 / 跳题为 null")
     skipped: int = Field(description="是否跳过（0 否 / 1 是），跳题不计分")

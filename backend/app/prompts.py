@@ -554,7 +554,8 @@ INTERVIEW_REVIEW_SYSTEM = """你是求职者的模拟面试官，正在点评他
 - 亮点要具体到他说的哪句话、哪个知识点，不要空夸；
 - 不足要指出漏掉或答错的关键点，并给出可操作的补充方向，禁止「回答不够全面」「再深入一些」这类空话；
 - 参考要点给出这题理想的回答骨架，不超过 150 字；
-- 按【本题阶段】给出的侧重点评——自我介绍与项目题的评判标准不同于八股题。
+- 按【本题阶段】给出的侧重点评——自我介绍与项目题的评判标准不同于八股题；
+- 若给了【表达力指标】，结合指标与他的作答原话点评表达表现（引用原话，如「讲到缓存雪崩时停了 3 秒」）；描述停顿统一用「停顿」，不要用「卡壳」「结巴」；参考区间是经验值、只用于措辞分档，不作为评分依据。
 
 输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
 - 不要 markdown 表格、不要加粗与反引号，不要「①②③」类符号编号，分条一律用「- 」开头；
@@ -603,11 +604,14 @@ def build_interview_turn_messages(
     last: bool,
     stage_note: str = "",
     next_stage_note: str = "",
+    voice_metrics: dict | None = None,
 ) -> list[dict]:
     """作答轮：点评 + 下一题；`last=True`（答满题量）只点评。输出 = `review`（+ `next_question`）。
 
     `stage_note` / `next_stage_note` 分别为本题与下一题的阶段块：前者决定点评侧重，
     后者决定下一题考什么（跨阶段时逐字告诉模型「进入项目深挖环节」）。
+    `voice_metrics` 为语音作答的表达力指标快照（quality=OK 时传入，见 `_voice_metrics_block`）；
+    文字作答与作答过短传 None、prompt 不含表达维度。
     """
     structure = (
         "**这是本场最后一题，点评之后面试结束——不要输出「## 下一题」段。**"
@@ -631,7 +635,7 @@ def build_interview_turn_messages(
 【他的作答】
 {answer}
 
-按以下结构输出，标题原样保留：
+{_voice_metrics_block(voice_metrics)}按以下结构输出，标题原样保留：
 
 ## 点评
 第一行「评分 X/10」（0~10 的整数）；随后用「- 」分条给出三节：亮点（他答到的关键点，引他的原话）、不足（漏掉或答错的关键点）、参考要点（本题理想回答的骨架，不超过 150 字）。
@@ -641,6 +645,45 @@ def build_interview_turn_messages(
         {"role": "system", "content": INTERVIEW_REVIEW_SYSTEM},
         {"role": "user", "content": user},
     ]
+
+
+# 流畅度趋势方向 → 中文（与 speech_metrics 模块的三值对应）
+VOICE_TREND_LABELS: dict[str, str] = {"IMPROVING": "递增", "STABLE": "平稳", "DECLINING": "下降"}
+
+
+def _voice_metrics_block(metrics: dict | None) -> str:
+    """表达力指标块（点评 prompt 用，SRS §3.11 / 系统设计 §5.7）：五项指标 + 参考区间 + 解读约束。
+
+    无指标（文字作答 / 作答过短）返回空串——prompt 不含表达维度，只出内容点评。
+    停顿点最多列 3 处（含停顿前一句末尾原话，供模型判断是否构成知识点），其余只报数量。
+    """
+    if not metrics:
+        return ""
+    lines = ["【表达力指标】（基于语音作答的分句时间轴统计，与内容点评分开呈现）"]
+    lines.append(f"语速：{metrics['speech_rate']} 字/分（参考 180~240）")
+    detail = "、".join(f"{name} {count} 次" for name, count in metrics["filler_detail"].items() if count) or "无"
+    lines.append(
+        f"填充词：{metrics['filler_count']} 次、密度 {metrics['filler_rate'] * 100:.1f}%（参考 <2%；明细：{detail}）"
+    )
+    pauses = metrics["pauses"]
+    if pauses:
+        spots = "；".join(
+            f"「{p['context']}」之后停顿 {p['duration_ms'] / 1000:.1f} 秒（{p['level']}）" for p in pauses[:3]
+        )
+        if len(pauses) > 3:
+            spots += f"；另有 {len(pauses) - 3} 处"
+        lines.append(f"停顿点：{len(pauses)} 处（>1.5 秒；最长 {metrics['longest_pause_ms'] / 1000:.1f} 秒）：{spots}")
+    else:
+        lines.append("停顿点：无（没有超过 1.5 秒的句间停顿）")
+    lines.append(f"有效时长占比：{metrics['speech_ratio'] * 100:.0f}%（参考 >70%）")
+    trend = metrics["fluency_trend"]
+    segments = trend["segments"]
+    trend_line = f"流畅度趋势：{VOICE_TREND_LABELS.get(trend['direction'], trend['direction'])}"
+    if len(segments) >= 2:
+        trend_line += f"（前段 {segments[0]['speech_rate']} 字/分 → 后段 {segments[-1]['speech_rate']} 字/分）"
+    lines.append(trend_line)
+    lines.append("参考区间为经验值，只用于措辞分档、不作为评分依据。")
+    return "\n".join(lines) + "\n\n"
 
 
 INTERVIEW_SUMMARY_LIMIT = 8000  # 总结输入上限（字符）：整场问答回顾拼接后截断，控制 prefill 长度
