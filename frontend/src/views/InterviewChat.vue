@@ -22,6 +22,7 @@ import { ttsPlayer, ttsSpeakingKey, toggleSpeakMessage } from '../utils/ttsPlaye
 import {
   appendAnswer,
   applyDelta,
+  applyMetrics,
   buildMessages,
   insertSkipped,
   INTENSITY_LABELS,
@@ -161,6 +162,8 @@ function requestNext(payload) {
         const last = messages.value[messages.value.length - 1]
         if (d.seq != null && last?.kind === 'question') last.seq = d.seq
         attachScore()
+        // 表达力指标（步骤 25）：done 下发即插入本轮指标卡（作答与点评之间；仅语音作答且 quality=OK）
+        applyMetrics(messages.value, d.extra?.voice_metrics)
         tail.value = d.extra?.session_finished ? 'finished' : 'awaiting-answer'
         // 自动播报：本轮点评 + 下一题（开关开时；手动按钮共用同一组装口径）
         if (ttsEnabled.value) {

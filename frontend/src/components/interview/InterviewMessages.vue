@@ -23,6 +23,7 @@
  */
 import StreamText from '../StreamText.vue'
 import ReviewBody from './ReviewBody.vue'
+import MetricsCard from './MetricsCard.vue'
 import { Headset, VideoPause } from '@element-plus/icons-vue'
 import { parseRoundScore, toPlainText } from '../../utils/practiceStream'
 
@@ -78,6 +79,11 @@ function reviewBody(text) {
           <span v-else class="msgs__answer-text">{{ m.text }}</span>
         </div>
         <span class="msgs__avatar msgs__avatar--me">我</span>
+      </div>
+
+      <!-- 表达力指标卡（步骤 25）：作答与点评之间——先看「说得怎么样」再看「答得怎么样」 -->
+      <div v-else-if="m.kind === 'metrics'" class="msgs__metrics">
+        <MetricsCard :metrics="m.metrics" />
       </div>
 
       <!-- 点评卡片 -->

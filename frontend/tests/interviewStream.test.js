@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildMessages, applyDelta, appendAnswer, insertSkipped, sealStreaming, splitReview, stageProgress,
-  INTENSITY_LABELS, parseCandidates
+  INTENSITY_LABELS, parseCandidates, applyMetrics
 } from '../src/utils/interviewStream.js'
 
 // ---------------- buildMessages：qa_list 展开 ----------------
@@ -244,4 +244,50 @@ test('parseCandidates：坏 JSON / 空 / 结构不符返回 []', () => {
   assert.deepEqual(parseCandidates('not json'), [])
   assert.deepEqual(parseCandidates('{"foo":1}'), [])
   assert.deepEqual(parseCandidates('{"candidates":[{"answer":"无题干"}]}'), [])
+})
+
+// ---------------- 表达力指标（voice_metrics，步骤 25） ----------------
+
+const VM = { version: 1, quality: 'OK', speech_rate: 96, filler_count: 2, pauses: [], speech_ratio: 0.82 }
+
+test('buildMessages：有 voice_metrics 的轮次在作答与点评之间生成指标消息', () => {
+  const qa = [{ seq: 1, question: 'Q1', answer: 'A1', skipped: 0, score: 8, review: 'R1', voice_metrics: VM }]
+  const { messages } = buildMessages({ question_count: 8 }, qa)
+  assert.deepEqual(messages.map((m) => m.kind), ['question', 'answer', 'metrics', 'review'])
+  assert.equal(messages[2].metrics, VM)
+})
+
+test('buildMessages：voice_metrics 为 null 的轮次不生成指标消息', () => {
+  const qa = [{ seq: 1, question: 'Q1', answer: 'A1', skipped: 0, score: 8, review: 'R1', voice_metrics: null }]
+  const { messages } = buildMessages({ question_count: 8 }, qa)
+  assert.deepEqual(messages.map((m) => m.kind), ['question', 'answer', 'review'])
+})
+
+test('applyMetrics：插到最后一条作答之后（本轮点评之前）', () => {
+  const messages = [
+    { kind: 'question', seq: 1, text: 'Q1' },
+    { kind: 'answer', text: 'A1', skipped: false },
+    { kind: 'review', score: 8, text: 'R1' },
+    { kind: 'question', seq: 2, text: 'Q2' },
+    { kind: 'answer', text: 'A2', skipped: false },
+    { kind: 'review', score: 6, text: 'R2', streaming: true }
+  ]
+  applyMetrics(messages, VM)
+  assert.deepEqual(
+    messages.map((m) => m.kind),
+    ['question', 'answer', 'review', 'question', 'answer', 'metrics', 'review']
+  )
+  assert.equal(messages[5].metrics, VM)
+})
+
+test('applyMetrics：空值不插、重复调用不重复插', () => {
+  const messages = [
+    { kind: 'answer', text: 'A', skipped: false },
+    { kind: 'review', text: 'R' }
+  ]
+  applyMetrics(messages, null)
+  assert.equal(messages.length, 2)
+  applyMetrics(messages, VM)
+  applyMetrics(messages, VM)
+  assert.deepEqual(messages.map((m) => m.kind), ['answer', 'metrics', 'review'])
 })

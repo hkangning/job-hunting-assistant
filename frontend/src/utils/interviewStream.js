@@ -7,6 +7,7 @@
  * 消息形态：
  *   { kind: 'question', seq, text, streaming? }
  *   { kind: 'answer',   text, skipped }
+ *   { kind: 'metrics',  metrics }（表达力指标卡，步骤 25——插在本轮作答与点评之间）
  *   { kind: 'review',   score, text, streaming? }
  *
  * 尾态 `tail` 的判定口径见设计稿 §4.3；`midway` 是**容错分支**——后端一轮一次性落库、
@@ -24,12 +25,33 @@ export function buildMessages(session, qaList) {
     messages.push({ kind: 'question', seq: qa.seq, text: qa.question || '' })
     if (qa.answer || qa.skipped) {
       messages.push({ kind: 'answer', text: qa.answer || '', skipped: !!qa.skipped })
+      // 表达力指标（仅语音作答且 quality=OK 时后端下发非空对象；其余为 null）
+      if (qa.voice_metrics) messages.push({ kind: 'metrics', metrics: qa.voice_metrics })
     }
     if (qa.review || qa.score != null) {
       messages.push({ kind: 'review', score: qa.score ?? null, text: qa.review || '' })
     }
   }
   return { messages, tail: inferTail(session, qaList || []) }
+}
+
+/**
+ * 插入表达力指标消息（步骤 25）：位置在**最后一条作答之后**（本轮点评之前）——
+ * 「先看说得怎么样、再看答得怎么样」的阅读顺序。仅 `quality=OK` 时后端才下发该对象
+ * （TOO_SHORT / TEXT_ONLY 无该键——前端「有则渲染、无则跳过」）；重复调用不重复插
+ * （重发 / 恢复两条路径可能都到达）。
+ */
+export function applyMetrics(messages, metrics) {
+  if (!metrics) return
+  let idx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].kind === 'answer') {
+      idx = i
+      break
+    }
+  }
+  if (idx < 0 || messages[idx + 1]?.kind === 'metrics') return
+  messages.splice(idx + 1, 0, { kind: 'metrics', metrics })
 }
 
 function inferTail(session, qaList) {
