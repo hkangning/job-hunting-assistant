@@ -99,6 +99,26 @@ const routes = [
     }
   },
   {
+    // 练习模式（步骤 26 前端部分，FR-020）：我的题目列表
+    path: '/drill',
+    name: 'DrillList',
+    component: () => import('../views/DrillList.vue'),
+    meta: { title: '练习模式', group: '能力提升', color: 'var(--m-drill)' }
+  },
+  {
+    // 题目详情：历次记录时间线 + 跨次进步对比 + 继续练
+    path: '/drill/:topicId',
+    name: 'DrillDetail',
+    component: () => import('../views/DrillDetail.vue'),
+    meta: {
+      title: '题目详情',
+      group: '能力提升',
+      color: 'var(--m-drill)',
+      hidden: true,
+      activeMenu: '/drill'
+    }
+  },
+  {
     path: '/practice',
     name: 'Practice',
     component: () => import('../views/Practice.vue'),

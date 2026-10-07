@@ -11,6 +11,9 @@
   --m-jd: #4FA8A8;
   --m-interview: #D9A24E;
   --m-practice: #5BAE84;
+  /* 练习模式（步骤 26）：靛蓝——与投递蓝（#5B8DD9）、系统灰紫（#8E88A3）都拉开距离，
+     也不落在被弃用的品牌紫上（见上条「主色由紫改蓝」） */
+  --m-drill: #6C7BC9;
   --m-wrong: #D4708D;
   --m-experience: #DD7A62;
   --m-campus: #93AE55;
