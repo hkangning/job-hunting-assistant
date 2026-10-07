@@ -32,7 +32,11 @@ defineProps({
   messages: { type: Array, default: () => [] },
   /** 播报开关（settings.tts_enabled）：关时不显示播报按钮 */
   speakEnabled: { type: Boolean, default: false },
-  /** 正在播报的消息对象引用（该条按钮显示「停止」态） */
+  /**
+   * 正在播报的消息对象引用（该条按钮显示「停止」态）。
+   * 流式中的消息**只在正在被念时**显示按钮（停止态）——边播边停的入口，
+   * 同时充当「正在播报」的信号；没在播的流式消息不显示。
+   */
   speakingKey: { type: Object, default: null }
 })
 defineEmits(['speak'])
@@ -54,7 +58,7 @@ function reviewBody(text) {
             <span class="msgs__who msgs__who--interviewer">面试官</span>
             <span v-if="m.seq != null" class="msgs__seq">第 {{ m.seq }} 题</span>
             <el-tooltip
-              v-if="speakEnabled && !m.streaming"
+              v-if="speakEnabled && (!m.streaming || speakingKey === m)"
               :content="speakingKey === m ? '停止朗读' : '朗读本题'"
               placement="top"
             >
@@ -92,7 +96,7 @@ function reviewBody(text) {
           <span class="msgs__review-title">点评</span>
           <span class="msgs__review-tools">
             <el-tooltip
-              v-if="speakEnabled && !m.streaming"
+              v-if="speakEnabled && (!m.streaming || speakingKey === m)"
               :content="speakingKey === m ? '停止朗读' : '朗读点评'"
               placement="top"
             >

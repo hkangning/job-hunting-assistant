@@ -17,7 +17,7 @@ import { useAppStore } from '../stores/app'
 import { directionLabelMap } from '../utils/practiceMeta'
 import { parseRoundScore } from '../utils/practiceStream'
 import { addSegment, toSegmentsPayload } from '../utils/voiceSegments'
-import { toSpeakableText } from '../utils/ttsText'
+import { createSpeechSegmenter } from '../utils/ttsStream'
 import { ttsPlayer, ttsSpeakingKey, toggleSpeakMessage } from '../utils/ttsPlayer'
 import {
   appendAnswer,
@@ -145,6 +145,7 @@ function requestNext(payload) {
   errorMsg.value = ''
   errorCode.value = null
   thinking.value = ''
+  startRoundSpeech()
   stream = interviewChatStream(
     { session_id: Number(sessionId), ...payload },
     {
@@ -153,6 +154,7 @@ function requestNext(payload) {
       },
       onDelta: (d) => {
         applyDelta(messages.value, d)
+        feedSpeech(d) // 逐句播报：文字出一句、念一句
       },
       onDone: (d) => {
         sealStreaming(messages.value)
@@ -165,20 +167,13 @@ function requestNext(payload) {
         // 表达力指标（步骤 25）：done 下发即插入本轮指标卡（作答与点评之间；仅语音作答且 quality=OK）
         applyMetrics(messages.value, d.extra?.voice_metrics)
         tail.value = d.extra?.session_finished ? 'finished' : 'awaiting-answer'
-        // 自动播报：本轮点评 + 下一题（开关开时；手动按钮共用同一组装口径）
-        if (ttsEnabled.value) {
-          for (let i = messages.value.length - 1; i >= 0; i--) {
-            if (messages.value[i].kind === 'review') {
-              speakRound(i)
-              break
-            }
-          }
-        }
+        endRoundSpeech() // 余量吐完，队列播空自然收尾
       },
       onError: (e) => {
         sealStreaming(messages.value)
         streaming.value = false
         thinking.value = ''
+        endRoundSpeech() // 已入队的句子自然播完，不掐断
         errorCode.value = e?.code ?? null
         // 会话状态已变（已结束 / 题量答满 / 被其他端消费）：本地已过时，
         // 直接重新拉取回到真实状态，而不是让用户对着重试按钮反复撞 409
@@ -220,29 +215,55 @@ function onVoiceAppend({ text, startMs, endMs }) {
 
 function onVoiceRecording(v) {
   voiceRecording.value = v
+  // 开麦即停播报：避免播报声灌进麦克风污染转写
+  if (v) cancelRoundSpeech()
 }
 
 /** 消息卡「朗读 / 停止」：所见即所播（点评播点评、提问播题干），同一条再点即停。 */
 function onSpeak(index) {
+  cancelRoundSpeech() // 手动介入：本轮不再自动接上
   toggleSpeakMessage(messages.value[index])
 }
 
-/** 自动播报（每轮 done 后）：整轮「点评 + 下一题」两段；播到哪段、哪段的图标亮起。 */
-function speakRound(reviewIndex) {
-  const review = messages.value[reviewIndex]
-  if (!review) return
-  const segs = []
-  const reviewText = toSpeakableText('review', review.text)
-  if (reviewText) segs.push({ text: reviewText, key: review })
-  for (let j = reviewIndex + 1; j < messages.value.length; j++) {
-    if (messages.value[j].kind === 'question') {
-      const q = messages.value[j]
-      const qText = toSpeakableText('question', q.text)
-      if (qText) segs.push({ text: qText, key: q })
-      break
-    }
+// ---- 逐句流式播报：delta → 分句 → 队列（边输出边念，图文基本同步）----
+
+let speechMsg = null // 当前正在喂的段（消息对象；点评 → 下一题时换人）
+let speechSeg = null // 该段的增量分句器
+let speechCancelled = false // 本轮自动播报已被用户手动终止
+
+/** 开一轮播报（每轮请求前调；会停掉上一轮）。 */
+function startRoundSpeech() {
+  speechCancelled = false
+  speechMsg = null
+  speechSeg = null
+  if (ttsEnabled.value) ttsPlayer.startStream()
+}
+
+/** 喂一个 delta：凑满一句播一句（句子的 key = 所属消息对象，用于段级点亮）。 */
+function feedSpeech(delta) {
+  if (!ttsEnabled.value || speechCancelled) return
+  const text = delta?.text
+  if (!text) return
+  const last = messages.value[messages.value.length - 1]
+  if (!last || (last.kind !== 'review' && last.kind !== 'question')) return
+  if (last !== speechMsg) {
+    speechMsg = last
+    speechSeg = createSpeechSegmenter(last.kind)
   }
-  if (segs.length) ttsPlayer.play(segs)
+  for (const sentence of speechSeg.feed(text)) ttsPlayer.pushSpeech(sentence, last)
+}
+
+/** 本轮收尾（done / error）：吐余量，队列播完自然结束。 */
+function endRoundSpeech() {
+  if (!ttsEnabled.value || speechCancelled || !speechSeg) return
+  for (const sentence of speechSeg.flush()) ttsPlayer.pushSpeech(sentence, speechMsg)
+  ttsPlayer.finishStream()
+}
+
+/** 用户手动介入（点耳机 / 开麦）：停播报，且本轮后续 delta 不再入队。 */
+function cancelRoundSpeech() {
+  speechCancelled = true
+  ttsPlayer.stop()
 }
 
 function submitAnswer() {

@@ -1,89 +1,128 @@
 /**
  * 播报单例（SRS §3.11 / 接口文档 §3.13）。
  *
- * - 播放单元为**段数组** `[{text, key}]`（key = 该段归属的消息对象，用于段级点亮）：
- *   段内按 ≤2000 字切 chunk 顺序连播，播放第 n 个 chunk 时预取第 n+1 个（段间无缝，
- *   同文案同音色后端有缓存、命中毫秒级）；
- * - **段级点亮**：播到某段时 `ttsSpeakingKey` = 该段 key——自动播报「点评 + 下一题」
- *   整轮时，对应消息的图标随之逐个亮起；
- * - 可随时打断：`stop()` 停音频、作废旧异步链路（token 防竞态串音）；
- * - 任一段失败（60002 / 网络）→ 整条队列**静默停止**（不弹错，用户可手动再点播报）；
- * - 全局同一时刻只播一条。
+ * 本模块是**浏览器适配层**：把 `Audio`、blob URL、`ttsSpeakingKey` 接进
+ * `utils/speechQueue.js` 的队列核心（顺序、抢跑、作废、失败静默停都在那里，纯逻辑可单测）。
+ *
+ * 两种播法共用同一条队列，天然互斥：
+ * - **整段播**（`play`）：手动点播报 / 设置页试听——段数组 `[{text, key}]` 展开成
+ *   ≤2000 字的 chunk 后一次播完；key = 该段归属的消息对象，用于段级点亮；
+ * - **流式播**（`start` / `push` / `finish`）：模拟面试边输出边念——`utils/ttsStream.js`
+ *   在页面上把 delta 切成句子，凑满一句 `push` 一句，图文基本同步。
+ *
+ * 打断：`stop()` 停音频并作废整条队列；手动播放与流式播放互相打断。
+ * 失败（60002 / 网络 / `play()` 被拒）：整轮静默停止，不弹错——用户可手动再点播报。
  */
 import { ref } from 'vue'
 import { synthesizeSpeech } from '../api/voice.js'
 import { expandSpeechChunks, toSpeakableText } from './ttsText.js'
+import { createSpeechQueue } from './speechQueue.js'
 
 export const ttsPlaying = ref(false)
 export const ttsSpeakingKey = ref(null)
 
-let token = 0
 let audio = null
-let liveUrls = new Set()
+let settleCurrent = null
+const liveUrls = new Set()
 
-export function stopSpeech() {
-  token += 1
-  if (audio) {
-    audio.onended = null
-    audio.onerror = null
+const queue = createSpeechQueue({
+  synthesize: async (text, ctx) => {
+    const blob = await synthesizeSpeech(text, ctx?.voice)
+    const url = URL.createObjectURL(blob)
+    liveUrls.add(url)
+    return url
+  },
+  play: playUrl,
+  release: (url) => {
+    liveUrls.delete(url)
+    URL.revokeObjectURL(url)
+  },
+  onKey: (key) => {
+    ttsSpeakingKey.value = key
+  },
+  onActive: (on) => {
+    ttsPlaying.value = on
+    // 播完 / 被停：点亮态一并收回（否则最后一句的图标会一直停在「停止」态）
+    if (!on) ttsSpeakingKey.value = null
+  }
+})
+
+/** 播放一个 blob URL；返回是否正常播完（被打断 / 播错都返回 false）。 */
+function playUrl(url) {
+  return new Promise((resolve) => {
+    const a = new Audio(url)
+    let settled = false
+    const settle = (ok) => {
+      if (settled) return
+      settled = true
+      if (audio === a) {
+        audio = null
+        settleCurrent = null
+      }
+      resolve(ok)
+    }
+    audio = a
+    settleCurrent = settle
+    a.onended = () => settle(true)
+    a.onerror = () => settle(false)
+    a.play().catch(() => settle(false))
+  })
+}
+
+/** 掐掉正在播的音频，并让挂起的 `play` 以 false 结束（队列的旧泵据此退出）。 */
+function stopAudio() {
+  const a = audio
+  audio = null
+  if (a) {
+    a.onended = null
+    a.onerror = null
     try {
-      audio.pause()
+      a.pause()
     } catch {
       /* 忽略 */
     }
-    audio = null
   }
-  for (const u of liveUrls) URL.revokeObjectURL(u)
+  const settle = settleCurrent
+  settleCurrent = null
+  settle?.(false)
+}
+
+/** 开一轮播报：先掐掉上一轮（音频 + 队列），再换上新参数。 */
+function beginRun(ctx) {
+  stopAudio()
+  queue.start(ctx)
+}
+
+/** 立即停：停音频、作废队列、收回点亮态。 */
+export function stopSpeech() {
+  queue.stop()
+  stopAudio()
+  for (const url of liveUrls) URL.revokeObjectURL(url)
   liveUrls.clear()
   ttsPlaying.value = false
   ttsSpeakingKey.value = null
 }
 
-async function synthUrl(text, voice) {
-  const blob = await synthesizeSpeech(text, voice)
-  const url = URL.createObjectURL(blob)
-  liveUrls.add(url)
-  return url
+/** 流式播报：开一轮（每轮作答开始时调，会停掉上一轮）。 */
+export function startStream() {
+  beginRun({ voice: null }) // 会话内用账号设置音色，由后端取默认
 }
 
-/** 播放一个 blob URL，返回是否正常播完（被打断 / 播错都返回 false）。 */
-function playUrl(url) {
-  return new Promise((resolve) => {
-    const a = new Audio(url)
-    audio = a
-    a.onended = () => resolve(true)
-    a.onerror = () => resolve(false)
-    a.play().catch(() => resolve(false))
-  })
+/** 流式播报：追加一句（句子来自 `ttsStream` 的增量分句）。 */
+export function pushSpeech(text, key) {
+  if (text) queue.push(text, key)
 }
 
-export async function playSpeech(segments, { voice } = {}) {
-  stopSpeech()
-  const my = ++token
-  const chunks = expandSpeechChunks(segments)
-  if (!chunks.length) return
-  ttsPlaying.value = true
+/** 流式播报：本轮不再有新句子（余量播完自然收尾）。 */
+export function finishStream() {
+  queue.finish()
+}
 
-  let next = synthUrl(chunks[0].text, voice).catch(() => null)
-  for (let i = 0; i < chunks.length; i++) {
-    const url = await next
-    if (my !== token) {
-      if (url) URL.revokeObjectURL(url)
-      return
-    }
-    if (!url) break // 合成失败：静默停
-    ttsSpeakingKey.value = chunks[i].key // 段级点亮（同段多 chunk 保持同 key）
-    next = i + 1 < chunks.length ? synthUrl(chunks[i + 1].text, voice).catch(() => null) : null
-    const ok = await playUrl(url)
-    if (my !== token) return
-    URL.revokeObjectURL(url)
-    liveUrls.delete(url)
-    if (!ok) break
-  }
-  if (my === token) {
-    ttsPlaying.value = false
-    ttsSpeakingKey.value = null
-  }
+/** 整段播放：段数组 `[{text, key}]`（手动播报 / 回看页 / 设置页试听）。 */
+export function playSpeech(segments, { voice } = {}) {
+  beginRun({ voice })
+  for (const chunk of expandSpeechChunks(segments)) queue.push(chunk.text, chunk.key)
+  queue.finish()
 }
 
 /** 播放一条消息（所见即所播）：点评播点评正文、提问播题干。 */
@@ -103,4 +142,10 @@ export function toggleSpeakMessage(m) {
   speakMessage(m)
 }
 
-export const ttsPlayer = { play: playSpeech, stop: stopSpeech }
+export const ttsPlayer = {
+  play: playSpeech,
+  stop: stopSpeech,
+  startStream,
+  pushSpeech,
+  finishStream
+}
