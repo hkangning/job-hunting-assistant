@@ -135,7 +135,11 @@ export async function createDrill(req) {
   if (!title) return [fail(10001, '题目标题不能为空'), 400]
   if (title.length > 50) return [fail(10001, '题目标题不能超过 50 字'), 400]
   const source = body.source || 'CUSTOM'
-  if (source !== 'CUSTOM' && body.ref_id == null) return [fail(10001, '来源题目必须给出 ref_id'), 400]
+  // ref_id 口径与后端 §3.15 实现口径 1 同步（IS-68）：CUSTOM / INTRO 免 ref_id，RESUME 暂缓
+  if (source === 'RESUME') return [fail(10001, '暂不支持从画像经历导入，请改用手动写题'), 400]
+  if (!['CUSTOM', 'INTRO'].includes(source) && body.ref_id == null) {
+    return [fail(10001, '该来源必须提供 ref_id'), 400]
+  }
   const state = bucket(user.id)
   const topic = {
     id: ++state.seq,

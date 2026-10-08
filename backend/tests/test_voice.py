@@ -160,6 +160,48 @@ def test_transcribe_silence_short_circuit(client: Any, fake_asr: FakeAsrClient) 
     assert fake_asr.calls == []
 
 
+def test_transcribe_decode_dependency_missing_is_10000(
+    client: Any,
+    fake_asr: FakeAsrClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """解码依赖缺失（ImportError 家族）→ 10000「服务环境未就绪」，与坏音频（10001）分道（IS-64）。
+
+    依赖为延迟导入，直接在 `decode_audio` 注入异常覆盖该态、无需真装卸依赖；
+    warning 携带原始异常类型，换机少装 numpy / av 时排查不被误导到音频字节上。
+    """
+    import app.clients.asr_client as asr_module
+
+    def _missing(audio: bytes):
+        raise ModuleNotFoundError("No module named 'av'")
+
+    monkeypatch.setattr(asr_module, "decode_audio", _missing)
+    resp = _post_audio(client, _speech_wav(1.0))
+
+    assert resp.status_code == 500
+    assert resp.json()["code"] == 10000
+    assert fake_asr.calls == []  # 校验先于引擎调用
+    assert "音频解码依赖缺失" in caplog.text
+
+
+def test_transcribe_broken_audio_remains_10001(
+    client: Any, fake_asr: FakeAsrClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """分道另一侧：非 ImportError 的解码异常仍按 400 + 10001（IS-64 不改其口径）。"""
+    import app.clients.asr_client as asr_module
+
+    def _broken(audio: bytes):
+        raise ValueError("Invalid data found when processing input")
+
+    monkeypatch.setattr(asr_module, "decode_audio", _broken)
+    resp = _post_audio(client, _speech_wav(1.0))
+
+    assert resp.status_code == 400
+    assert resp.json()["code"] == 10001
+    assert fake_asr.calls == []
+
+
 def test_build_asr_client_xunfei_without_credential() -> None:
     """讯飞未配凭据 → 60001（直接单测真实工厂）。"""
     with pytest.raises(BizException) as exc_info:

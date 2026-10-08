@@ -5,7 +5,7 @@
  * 纯函数（无 IO / 无 DOM），单测 `tests/drillMeta.test.js`。
  */
 
-/** 题目来源六值（SRS §4.1）。RESUME / INTRO 目前不可导入（ref_id 语义未定，见问题记录），仅用于展示历史数据。 */
+/** 题目来源六值（SRS §4.1）。INTRO 建题已支持（免 ref_id，IS-68 定夺）；RESUME 导入暂缓、仅用于展示历史数据。 */
 export const SOURCE_LABELS = {
   CUSTOM: '手动新建',
   INTRO: '自我介绍',

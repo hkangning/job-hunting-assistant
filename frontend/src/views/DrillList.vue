@@ -29,7 +29,7 @@ const loading = ref(true)
 const loadError = ref('')
 const addVisible = ref(false)
 
-/** 来源筛选项：六值全给（历史数据里可能存在已不可导入的 RESUME / INTRO）。 */
+/** 来源筛选项：六值全给（RESUME 导入暂缓、只会出现在历史数据；其余五值均可建题）。 */
 const SOURCE_OPTIONS = [
   { value: 'CUSTOM', label: '手动新建' },
   { value: 'WRONG', label: '错题本' },

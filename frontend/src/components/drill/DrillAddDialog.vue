@@ -3,13 +3,13 @@
  * 新建练习题（FR-020 / 接口文档 §3.15）。
  *
  * 两种建题形态：
- * - **手动写题**（`source=CUSTOM`）：标题 + 题面；
+ * - **免来源实体**（`CUSTOM` 手动写题 / `INTRO` 自我介绍）：标题 + 题面，**题面留空由 AI 生成**；
  * - **从既有数据导入**（`WRONG` 错题本 / `EXPERIENCE` 面经条目 / `JD` 投递记录）：先选来源条目，
  *   **只记来源不复制内容**——`ref_id` 记来源实体 id，题面以本次写入的 `question` 为准
  *   （标题回填来源条目标题，可改）。
  *
- * `RESUME`（画像经历）/ `INTRO` 暂不提供：`ref_id` 语义文档未定义（画像经历存在
- * `user_profile.experiences` JSON 数组里、条目没有独立 id），登记为待后端确认项，不在此造契约。
+ * `RESUME`（画像经历）导入暂缓（IS-68 定夺，后端恒 400 + 10001）：画像经历存在
+ * `user_profile.experiences` JSON 数组里、条目没有独立 id，`ref_id` 无处可指，不提供入口。
  */
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -23,12 +23,18 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'created'])
 
-/** 来源选项：手动 + 三个可导入来源（顺序按使用频次）。 */
+/** 来源选项（顺序按使用频次）。`needRef=true` 的来源须先选条目（`ref_id` 记来源实体 id）。 */
 const SOURCES = [
-  { value: 'CUSTOM', label: '手动写题', hint: '自己拟题面，例如「自我介绍」' },
-  { value: 'WRONG', label: '从错题本导入', hint: '把一道错题变成练习题' },
-  { value: 'EXPERIENCE', label: '从面经导入', hint: '把面经里的题目拿过来练' },
-  { value: 'JD', label: '从投递记录导入', hint: '按目标岗位的 JD 练讲解' }
+  { value: 'CUSTOM', label: '手动写题', hint: '自己拟题面，例如「自我介绍」', needRef: false },
+  {
+    value: 'INTRO',
+    label: '自我介绍',
+    hint: '练自我介绍——题面留空则由 AI 拟一份经典问法',
+    needRef: false
+  },
+  { value: 'WRONG', label: '从错题本导入', hint: '把一道错题变成练习题', needRef: true },
+  { value: 'EXPERIENCE', label: '从面经导入', hint: '把面经里的题目拿过来练', needRef: true },
+  { value: 'JD', label: '从投递记录导入', hint: '按目标岗位的 JD 练讲解', needRef: true }
 ]
 
 const formRef = ref(null)
@@ -44,8 +50,15 @@ const rules = {
   ]
 }
 
-const isImport = computed(() => form.source !== 'CUSTOM')
 const currentSource = computed(() => SOURCES.find((s) => s.value === form.source))
+/** 是否需要先选来源条目（WRONG / EXPERIENCE / JD 三类）；CUSTOM / INTRO 免 ref_id。 */
+const needsRef = computed(() => currentSource.value?.needRef ?? false)
+/** 题面占位文案：免来源实体的来源可留空由 AI 生成，手写题提示完整题面。 */
+const questionPlaceholder = computed(() => {
+  if (needsRef.value) return '留空则由 AI 按标题 + 来源生成题面'
+  if (form.source === 'INTRO') return '留空则由 AI 按标题拟一份经典问法'
+  return '完整题目，例如：请用一分钟做个自我介绍'
+})
 
 /** 来源条目在列表里的显示文案（三类实体的字段名各不相同）。 */
 function candidateLabel(item) {
@@ -56,7 +69,7 @@ function candidateLabel(item) {
 
 /** 拉候选来源条目：三个来源各走自己的列表接口（只取前 50 条，够挑题用）。 */
 async function loadCandidates() {
-  if (!isImport.value) return
+  if (!needsRef.value) return
   loadingSource.value = true
   candidates.value = []
   try {
@@ -110,7 +123,7 @@ async function submit() {
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
-  if (isImport.value && form.refId == null) {
+  if (needsRef.value && form.refId == null) {
     ElMessage.warning('请先选择来源条目')
     return
   }
@@ -119,7 +132,7 @@ async function submit() {
   try {
     const payload = { title: form.title.trim(), source: form.source }
     if (form.question.trim()) payload.question = form.question.trim()
-    if (isImport.value) payload.ref_id = form.refId
+    if (needsRef.value) payload.ref_id = form.refId
     const topic = await createDrill(payload)
     ElMessage.success('题目已创建')
     emit('created', topic)
@@ -147,7 +160,7 @@ async function submit() {
         <p class="add__hint">{{ currentSource?.hint }}</p>
       </el-form-item>
 
-      <el-form-item v-if="isImport" label="来源条目" required>
+      <el-form-item v-if="needsRef" label="来源条目" required>
         <el-select
           v-model="form.refId"
           v-loading="loadingSource"
@@ -178,11 +191,7 @@ async function submit() {
           :rows="4"
           maxlength="2000"
           show-word-limit
-          :placeholder="
-            isImport
-              ? '留空则由 AI 按标题 + 来源生成题面'
-              : '完整题目，例如：请用一分钟做个自我介绍'
-          "
+          :placeholder="questionPlaceholder"
         />
       </el-form-item>
     </el-form>

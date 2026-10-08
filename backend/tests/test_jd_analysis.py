@@ -382,3 +382,38 @@ def test_partial_report_marked_unfinished(jd_client: TestClient):
     assert listed["is_finished"] is False
     assert detail["is_finished"] is False
     assert detail["score"] == 89  # 分数已有值——旧判据（score 为空）在这里会漏判
+
+
+# ---------- 步骤 27：超长 JD 送模截断（IS-31 落地，台账 #124①） ----------
+
+
+def test_long_jd_truncated_for_model_stored_intact(jd_client: TestClient, fake_llm_client):
+    """>6000 字：送模截断至前 6000 字 + 附注原文字数；落库仍为完整原文；start 文案即时报出。
+
+    接口上限保持 10000 字不变（外层校验），截断只发生在组 prompt 时。
+    """
+    long_jd = "岗" * 7000
+    _, events = _run_analysis(jd_client, fake_llm_client, SAMPLE_REPORT, jd_text=long_jd)
+
+    assert events[0][1]["message"] == "正在分析你的 JD…（原文较长，已按前 6000 字分析）"
+    _, messages, _ = fake_llm_client.stream_calls[0]
+    sent = messages[-1]["content"]
+    assert "岗" * 6000 in sent and "岗" * 6001 not in sent
+    assert "JD 原文共 7000 字，以上为前 6000 字" in sent
+
+    record_id = events[-1][1]["record_id"]
+    detail = jd_client.get(f"{API}/jd-reports/{record_id}").json()["data"]
+    assert detail["jd_text"] == long_jd  # 落库完整原文，可回溯
+
+
+def test_jd_truncation_boundary(jd_client: TestClient, fake_llm_client):
+    """边界：正好 6000 字不截断（普通 start 文案、无附注）；6001 字起截断。"""
+    _, events = _run_analysis(jd_client, fake_llm_client, SAMPLE_REPORT, jd_text="岗" * 6000)
+    sent = fake_llm_client.stream_calls[0][1][-1]["content"]
+    assert events[0][1]["message"] == "正在分析你的 JD…"
+    assert "（注：JD 原文共" not in sent
+
+    _, events = _run_analysis(jd_client, fake_llm_client, SAMPLE_REPORT, jd_text="岗" * 6001)
+    sent = fake_llm_client.stream_calls[1][1][-1]["content"]
+    assert events[0][1]["message"] == "正在分析你的 JD…（原文较长，已按前 6000 字分析）"
+    assert "JD 原文共 6001 字" in sent

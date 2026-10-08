@@ -495,7 +495,7 @@ def test_init_db_idempotent(client: TestClient):
 
 
 def test_enum_members_match_doc():
-    """用例 15：14 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。
+    """用例 15：15 个枚举类的成员取值与设计文档 §5 逐值一致（纯 Python 断言，不碰库）。
 
     枚举类由 `ENUM_MEMBERS` 的键经 `getattr` 取，新增枚举只改期望镜像即可，本用例无需改动。
     """

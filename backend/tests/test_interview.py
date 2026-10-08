@@ -653,22 +653,28 @@ class TestVoiceMetrics:
             assert resp.json()["code"] == 10001
             assert "text/event-stream" not in resp.headers.get("content-type", "")
 
-    @pytest.mark.xfail(strict=True, reason="IS-65：起止颠倒未校验（后端修复后转正摘标）")
     def test_reversed_segments_rejected(
         self, client: TestClient, account, fake_llm_client, llm_configured
     ):
-        """IS-65 钉子：起止颠倒应 400 + 10001——当前未拦截（修复后本用例转正）。"""
+        """IS-65 转正：起止颠倒 / 零长片段 → 400 + 10001，校验先于流式建立。
+
+        `end_ms <= start_ms` 由 `SegmentItem` 跨字段校验拦截（后端 2026-10-08 修复，
+        原 `xfail(strict=True)` 钉子按承诺口径转正为强断言）。
+        """
         session_id = self._ready_session(client, account, fake_llm_client)
-        resp = client.post(
-            STREAM,
-            json={
-                "session_id": session_id,
-                "answer": "x",
-                "segments": [{"seq": 1, "start_ms": 9000, "end_ms": 1000, "text": "x"}],
-            },
-            headers=_auth(account),
-        )
-        assert resp.status_code == 400
+        bad_cases = [
+            [{"seq": 1, "start_ms": 9000, "end_ms": 1000, "text": "x"}],  # 起止颠倒
+            [{"seq": 1, "start_ms": 1000, "end_ms": 1000, "text": "x"}],  # 零长片段
+        ]
+        for bad in bad_cases:
+            resp = client.post(
+                STREAM,
+                json={"session_id": session_id, "answer": "x", "segments": bad},
+                headers=_auth(account),
+            )
+            assert resp.status_code == 400, resp.text
+            assert resp.json()["code"] == 10001
+            assert "text/event-stream" not in resp.headers.get("content-type", "")
 
     def test_question_turn_discards_review_section(
         self, client: TestClient, account, fake_llm_client, llm_configured

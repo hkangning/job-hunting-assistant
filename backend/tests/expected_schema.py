@@ -38,6 +38,12 @@ DateTime→DATETIME、Date→DATE、Integer→INTEGER）。
 自动抓取（公共）/ 账号 id 投喂（私有），故 **`user_id` 不建外键**；`subscription.user_id`
 建外键指向 `user.id`（账号私有）。两表随 `create_all` 自动建（§7.3 有等价 SQL），
 开发库与测试库都要执行一次。
+
+练习模式（数据库设计 v1.28）后：表数 22 → **24**（新增 `drill_topic` 9 列
+与 `drill_attempt` 10 列）。`drill_attempt` 是 `drill_topic` 的子表——
+**不冗余 `user_id`**，经题目的 `user_id` 归属账号。两表随 `create_all` 自动建
+（§7.3 有等价 SQL），开发库与测试库都要执行一次；`source` / `archived` / `is_voice`
+与时间列的默认值由应用层提供，DDL 无 `DEFAULT` 子句。
 """
 
 # 每表结构：columns 元组为 (列名, 类型, 允许为空, 是否主键)
@@ -474,6 +480,40 @@ TABLES: dict[str, dict] = {
         "uniques": [["user_id", "provider"]],
         "foreign_keys": [("user_id", "user", "id")],
     },
+    # 练习模式两表（数据库设计 §3.18 / §3.19，v1.28 首建）
+    "drill_topic": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("user_id", "INTEGER", False, False),
+            ("title", "VARCHAR(100)", False, False),
+            ("question", "TEXT", False, False),
+            ("source", "VARCHAR(20)", False, False),
+            ("ref_id", "INTEGER", True, False),
+            ("archived", "INTEGER", False, False),
+            ("created_at", "DATETIME", False, False),
+            ("updated_at", "DATETIME", False, False),
+        ],
+        "indexes": {"idx_topic_user": ["user_id"], "idx_topic_archived": ["archived"]},
+        "uniques": [],
+        "foreign_keys": [("user_id", "user", "id")],
+    },
+    "drill_attempt": {
+        "columns": [
+            ("id", "INTEGER", False, True),
+            ("topic_id", "INTEGER", False, False),
+            ("seq", "INTEGER", False, False),
+            ("answer", "TEXT", True, False),
+            ("is_voice", "INTEGER", False, False),
+            ("voice_metrics", "TEXT", True, False),
+            ("score", "INTEGER", True, False),
+            ("review", "TEXT", True, False),
+            ("duration_ms", "INTEGER", True, False),
+            ("created_at", "DATETIME", False, False),
+        ],
+        "indexes": {"idx_attempt_topic": ["topic_id"]},
+        "uniques": [],
+        "foreign_keys": [("topic_id", "drill_topic", "id")],
+    },
 }
 
 # 《数据库设计文档》§5 枚举口径（全系统唯一口径）
@@ -503,7 +543,8 @@ ENUM_MEMBERS: dict[str, set[str]] = {
     "UserPlan": {"FREE", "PRO"},
     # 步骤 25 新增（voice_metrics.quality：JSON 内部字段、非表列，数据库设计 §5；台账 #11 残余）
     "VoiceQuality": {"OK", "TOO_SHORT", "TEXT_ONLY"},
-    # drill_topic.source（六值）待步骤 26 后端落地、枚举类建出后补（台账 #11 其余部分）
+    # 步骤 26 新增（drill_topic.source 六值；台账 #11 至此全部补齐）
+    "DrillSource": {"INTRO", "RESUME", "WRONG", "EXPERIENCE", "JD", "CUSTOM"},
 }
 
 # 《数据库设计文档》§4 种子题库要求（2026-09-28 题库升级：585 → 672 题，新增 87 道选择题）
