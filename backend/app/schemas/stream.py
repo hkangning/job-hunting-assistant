@@ -3,7 +3,9 @@
 各业务链路的请求体（JD 分析 / 面试作答 / 陪练点评等）自步骤 12 起陆续加入本文件。
 """
 
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 
 class DemoChatRequest(BaseModel):
@@ -30,6 +32,13 @@ class SegmentItem(BaseModel):
     start_ms: int = Field(ge=0, description="该句开始时间（毫秒）")
     end_ms: int = Field(ge=0, description="该句结束时间（毫秒）")
     text: str = Field(description="该句原始转写文本")
+
+    @model_validator(mode="after")
+    def _check_order(self):
+        """起止颠倒 / 零长片段视为非法（IS-65）：参数校验层拦截，先于流式建立返回 400+10001。"""
+        if self.end_ms <= self.start_ms:
+            raise ValueError("end_ms 必须大于 start_ms")
+        return self
 
 
 class InterviewChatRequest(BaseModel):
@@ -59,3 +68,20 @@ class ExperienceExtractRequest(BaseModel):
     """面经结构化提取请求体（POST /stream/experience-extract，接口文档 3.10）。"""
 
     experience_id: int = Field(description="面经 id，须属当前账号，否则 404+10002；原文为空或提取失败时原文保留，可重试")
+
+
+class DrillReviewRequest(BaseModel):
+    """练习模式点评请求体（POST /stream/drill-review，接口文档 3.15）。"""
+
+    topic_id: int = Field(description="题目 id，须属当前账号，否则 404+10002；已归档 → 409+40003")
+    answer: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5000)
+    ] = Field(description="本次作答，必填 1~5000 字（自动去首尾空格），留空提交返回 10001")
+    is_voice: bool = Field(default=False, description="是否语音作答（前端按本次是否录过音判断）")
+    segments: list[SegmentItem] | None = Field(
+        default=None,
+        description="语音作答时传：VAD 分句时间轴 `[{seq, start_ms, end_ms, text}]`（见接口文档 3.13），供计算表达力指标；文字作答不传",
+    )
+    duration_ms: int | None = Field(
+        default=None, ge=0, description="本次作答时长（毫秒，前端计时上报）；不传为 null"
+    )
