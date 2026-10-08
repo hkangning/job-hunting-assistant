@@ -9,6 +9,7 @@
   重依赖（av / numpy / funasr）一律函数内延迟导入，未安装时仅转写报错、不影响应用启动与测试。
 - 注入点 `get_asr_client_factory()`：测试以 `app.dependency_overrides` 替换为替身工厂。
 - 失败一律抛 `BizException`：音频不可用（不可解码 / 无音频流 / 空）→ 10001；
+  解码依赖缺失（换机少装 numpy / av）→ 10000，与解码失败分道（问题记录 IS-64）；
   转写引擎失败（模型不可用 / 讯飞未配凭据 / 云端异常）→ 60001。
 """
 
@@ -87,9 +88,14 @@ def decode_checked(audio: bytes) -> tuple[Any, int]:
     """解码 + 校验上传音频，返回 (16k 单声道 float32 数组, 时长毫秒)。
 
     不可解码 / 无音频流 / 空音频一律 10001（参数类错误，与引擎无关，故置于客户端之外）。
+    解码依赖（numpy / av，均为延迟导入）缺失属服务环境问题、与音频内容无关：按 10000 报出
+    并落 warning 日志，避免排查被误导到音频字节上（问题记录 IS-64）。
     """
     try:
         samples, duration_ms = decode_audio(audio)
+    except ImportError as exc:  # 延迟导入的 numpy / av 缺失
+        logger.warning("音频解码依赖缺失（%s）：%s", type(exc).__name__, exc)
+        raise BizException(ErrorCode.INTERNAL_ERROR, "服务环境未就绪（音频解码依赖缺失）") from exc
     except Exception as exc:  # PyAV 的 InvalidDataError / ValueError 等
         raise BizException(ErrorCode.PARAM_INVALID, "音频格式不支持或文件已损坏") from exc
     if samples.size == 0:

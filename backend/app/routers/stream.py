@@ -29,7 +29,7 @@ from app.clients.llm_client import LLMClient, get_llm_client, resolve_config
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.prompts import JD_ANALYSIS_SECTION_RULES
+from app.prompts import JD_ANALYSIS_SECTION_RULES, JD_TEXT_LIMIT
 from app.schemas.agent import AgentChatRequest
 from app.schemas.practice import PracticeTurnRequest
 from app.schemas.stream import (
@@ -153,7 +153,11 @@ def jd_analysis_stream(
             _save_partial(stream_db, user_id, jd_text, application_id, pieces)
             raise
 
-    return sse_response(_run, start_message="正在分析你的 JD…")
+    start_message = "正在分析你的 JD…"
+    if len(jd_text) > JD_TEXT_LIMIT:
+        # 送模截断只在组 prompt 时发生（落库仍为原文），start 文案即时报出该口径
+        start_message = f"正在分析你的 JD…（原文较长，已按前 {JD_TEXT_LIMIT} 字分析）"
+    return sse_response(_run, start_message=start_message)
 
 
 @router.post("/stream/practice-turn", summary="陪练每轮（流式）")

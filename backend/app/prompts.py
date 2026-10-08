@@ -131,12 +131,23 @@ def build_profile_digest(profile: UserProfile | None) -> str:
     return "\n".join(lines)
 
 
+# JD 送模截断上限（字符）：接口上限 10000 字保持不变，送模压至 6000 字控制 prefill、保首字延迟（NFR-001）
+JD_TEXT_LIMIT = 6000
+
+
 def build_jd_analysis_messages(profile: UserProfile | None, jd_text: str) -> list[dict]:
-    """组装 JD 分析对话：画像摘要（system）+ JD 原文（user），强制五段结构（FR-006）。"""
+    """组装 JD 分析对话：画像摘要（system）+ JD 原文（user），强制五段结构（FR-006）。
+
+    超长 JD 送模前截断至 JD_TEXT_LIMIT（落库仍为原文）；尾部附一行说明，避免模型
+    误以为拿到的是全文、对未见内容下断言。
+    """
     system = JD_ANALYSIS_SYSTEM.format(profile=build_profile_digest(profile))
+    head = jd_text[:JD_TEXT_LIMIT]
+    if len(jd_text) > JD_TEXT_LIMIT:
+        head += f"\n（注：JD 原文共 {len(jd_text)} 字，以上为前 {JD_TEXT_LIMIT} 字，请直接基于本内容分析）"
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"【JD 原文】\n{jd_text}"},
+        {"role": "user", "content": f"【JD 原文】\n{head}"},
     ]
 
 
