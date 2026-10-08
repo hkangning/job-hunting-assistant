@@ -15,6 +15,7 @@ import json
 
 from app.models import (
     AttackFace,
+    DrillSource,
     ExperienceType,
     InterviewIntensity,
     InterviewStage,
@@ -933,5 +934,96 @@ def build_reminder_messages(fact_lines: list[str]) -> list[dict]:
     user = "【今日提醒清单】\n" + "\n".join(fact_lines)
     return [
         {"role": "system", "content": REMINDER_DIGEST_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+# ---------- 练习模式（FR-020）：题面生成 / 逐遍点评 ----------
+
+# 来源中文名（与前端 SOURCE_LABELS 同口径）
+DRILL_SOURCE_LABELS: dict[str, str] = {
+    DrillSource.INTRO.value: "自我介绍",
+    DrillSource.RESUME.value: "画像经历",
+    DrillSource.WRONG.value: "错题本",
+    DrillSource.EXPERIENCE.value: "面经",
+    DrillSource.JD.value: "投递记录",
+    DrillSource.CUSTOM.value: "手动新建",
+}
+
+DRILL_QUESTION_SYSTEM = """你是求职者的面试练习教练，正在帮他把一道题打磨成可反复练习的完整题目。
+
+出题规则：
+- 依据题目名称与来源信息，写一道完整、口语化、能直接作答的题（像面试官当面提问）；
+- 落到具体的知识点或经历上，不要「谈一谈你对 XX 的理解」这类宽泛问法；
+- 若来源信息不足以确定题面，就把题目名称本身展开成一道完整的题；
+- 一题一问，不超过 200 字，不分点、不写小标题。
+
+输出约束：
+只输出一个 JSON 对象，不要代码块、不要任何多余文字：
+{"question": "题面全文"}"""
+
+
+def build_drill_question_messages(*, title: str, source: str, source_note: str) -> list[dict]:
+    """题面生成（POST /drills 未提供 question 时，chat_json 非流式）：输出 = {"question": "..."}。
+
+    `source_note` 为来源细节文本（错题题干 / 面经条目要点 / 岗位 JD 节选，服务层组装）；
+    无来源信息（CUSTOM / INTRO）为空串、prompt 不含来源块。
+    """
+    parts = [f"【题目名称】\n{title}"]
+    if source_note:
+        parts.append(f"【题目来源】{DRILL_SOURCE_LABELS.get(source, source)}\n{source_note}")
+    user = "\n\n".join(parts) + "\n\n请生成题面。"
+    return [
+        {"role": "system", "content": DRILL_QUESTION_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+# 点评分段规则（接口文档 3.15）：标题行命中即开关对应段，与下方模板的标题文案一一对应
+DRILL_REVIEW_SECTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("评分",), "score"),
+    (("点评",), "review"),
+)
+
+DRILL_REVIEW_SYSTEM = """你是求职者的面试练习教练，正在点评他刚练的这一遍。
+
+评审规则：
+- 评分 0~10 的整数，依据是「这题答到了多少关键点」，不因表达啰嗦、举例多少扣分；
+- 亮点要具体到他说的哪句话、哪个知识点，不要空夸；
+- 不足要指出漏掉或答错的关键点，并给出可操作的补充方向，禁止「回答不够全面」「再深入一些」这类空话；
+- 参考要点给出本题理想回答的骨架，不超过 150 字；
+- 若给了【表达力指标】，结合指标与他的作答原话点评表达表现（引用原话，如「讲到缓存雪崩时停了 3 秒」）；描述停顿统一用「停顿」，不要用「卡壳」「结巴」；参考区间是经验值、只用于措辞分档，不作为评分依据。
+
+输出约束（前端按纯文本渲染，标记会原样暴露在页面上）：
+- 开头第一行固定为「## 评分」，紧接着一行只写评分本身、格式为「数字/10」（0~10 的整数），不要加「评分：」前缀、不要写其他内容；
+- 随后固定为「## 点评」标题行，正文用「- 」分条给出三节：亮点、不足、参考要点；
+- 不要 markdown 表格、不要加粗与反引号，不要「①②③」类符号编号；
+- 开场先承接他的作答原话，不要用「回答正确」「回答错误」这类判词式的一句话结论开场；
+- 语气是教练：答得好点明好在哪，答得差先给可操作的下一步。"""
+
+
+def build_drill_review_messages(
+    *, title: str, question: str, answer: str, voice_metrics: dict | None = None
+) -> list[dict]:
+    """练习模式逐遍点评（POST /stream/drill-review）：输出 = `score` + `review` 两段。
+
+    `voice_metrics` 为语音作答的表达力指标快照（quality=OK 时传入，见 `_voice_metrics_block`）；
+    文字作答与作答过短传 None、prompt 不含表达维度。
+    """
+    user = f"""【本轮题目】{title}
+{question}
+
+【他的作答】
+{answer}
+
+{_voice_metrics_block(voice_metrics)}按以下结构输出，标题原样保留：
+
+## 评分
+只写一行评分本身，格式为「数字/10」（0~10 的整数），不要加前缀、不要写其他内容。
+
+## 点评
+用「- 」分条给出三节：亮点（他答到的关键点，引他的原话）、不足（漏掉或答错的关键点 + 可操作的补充方向）、参考要点（本题理想回答的骨架，不超过 150 字）。"""
+    return [
+        {"role": "system", "content": DRILL_REVIEW_SYSTEM},
         {"role": "user", "content": user},
     ]

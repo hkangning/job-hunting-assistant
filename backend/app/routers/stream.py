@@ -10,7 +10,9 @@
 - `/stream/interview-summary`：面试总结报告（步骤 15），整场回顾生成总结并把会话置 FINISHED；
 - `/stream/experience-extract`：面经结构化提取（步骤 17），把面经原文拆成问答条目并落库；
 - `/stream/agent-chat`：全局 Agent 对话（步骤 18），意图路由 + Function Calling——写操作类工具
-  出确认卡片不落库、查询类工具后端直接执行并以文字 + 结构化 JSON 块回显。
+  出确认卡片不落库、查询类工具后端直接执行并以文字 + 结构化 JSON 块回显；
+- `/stream/drill-review`：练习模式逐遍点评（步骤 26），一次作答产出「评分 + 点评」两段，
+  语音作答的表达力指标随 `done.extra` 一次性下发；整遍生成完才落库。
 
 路由层只做协议转换：取登录态、校验入参、组装业务生成器、交给 `sse_response` 包装，不直接访问 ORM。
 """
@@ -32,6 +34,7 @@ from app.schemas.agent import AgentChatRequest
 from app.schemas.practice import PracticeTurnRequest
 from app.schemas.stream import (
     DemoChatRequest,
+    DrillReviewRequest,
     ExperienceExtractRequest,
     InterviewChatRequest,
     InterviewSummaryRequest,
@@ -39,6 +42,7 @@ from app.schemas.stream import (
 )
 from app.services import (
     agent_service,
+    drill_service,
     experience_service,
     interview_service,
     jd_service,
@@ -305,6 +309,42 @@ def agent_chat_stream(
         )
 
     return sse_response(_run, start_message="正在思考…")
+
+
+@router.post("/stream/drill-review", summary="练习模式点评（流式）")
+def drill_review_stream(
+    payload: DrillReviewRequest,
+    current_user: User = Depends(get_current_user),
+    client: LLMClient = Depends(get_llm_client),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """练习模式逐遍点评（接口文档 3.15）。
+
+    事件流 `start → delta×N → done(record_id=新练习记录 id, seq=第几遍)`：delta 的 `section`
+    依次 `score` → `review`（标题行随段下发）。语音作答（`segments` 非空）时先算表达力指标
+    （纯函数、零 token），算出（quality=OK）则注入点评 prompt 并随 `done.extra.voice_metrics`
+    下发；整遍内容生成完才落库，断连或中途失败不落任何记录（重试 = 整遍重发）。
+    """
+    user_id = current_user.id
+    segments = [item.model_dump() for item in payload.segments] if payload.segments is not None else None
+    # 题目校验必须在流式响应建立之前完成（404+10002 / 409+40003 按普通响应体返回）
+    drill_service.ensure_answerable(db, user_id=user_id, topic_id=payload.topic_id)
+
+    def _run(stream_db: Session) -> Iterator[str]:
+        return (
+            yield from drill_service.run_review(
+                stream_db,
+                user_id=user_id,
+                topic_id=payload.topic_id,
+                answer=payload.answer,
+                is_voice=payload.is_voice,
+                segments=segments,
+                duration_ms=payload.duration_ms,
+                client=client,
+            )
+        )
+
+    return sse_response(_run, start_message="正在点评…")
 
 
 def _save_partial(

@@ -36,6 +36,7 @@ class ErrorCode(IntEnum):
     WRONG_QUESTION_INVALID = (30002, 404, "错题不存在或已掌握")
     INTERVIEW_STATE_INVALID = (40001, 409, "面试会话状态非法")
     EXPERIENCE_EXTRACT_FAILED = (40002, 502, "面经结构化提取失败")
+    DRILL_TOPIC_ARCHIVED = (40003, 409, "练习题目已归档")
     AGENT_TOOL_ARGS_MISSING = (50001, 400, "工具参数不完整")
     ASR_FAILED = (60001, 502, "语音转写失败")
     TTS_FAILED = (60002, 502, "语音合成失败")

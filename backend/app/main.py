@@ -20,6 +20,7 @@ from app.routers import (
     auth,
     campus,
     crawl_sources,
+    drills,
     experiences,
     health,
     interview,
@@ -94,6 +95,7 @@ app.include_router(profile.router, prefix=settings.api_prefix)
 app.include_router(applications.router, prefix=settings.api_prefix)
 app.include_router(campus.router, prefix=settings.api_prefix)
 app.include_router(crawl_sources.router, prefix=settings.api_prefix)
+app.include_router(drills.router, prefix=settings.api_prefix)
 app.include_router(experiences.router, prefix=settings.api_prefix)
 app.include_router(jd_analysis.router, prefix=settings.api_prefix)
 app.include_router(interview.router, prefix=settings.api_prefix)

@@ -117,6 +117,17 @@ class WrongSourceType(StrEnum):
     MANUAL = "MANUAL"  # 手动添加
 
 
+class DrillSource(StrEnum):
+    """练习题目来源（drill_topic.source）：建题素材的出处，只记来源不复制内容。"""
+
+    INTRO = "INTRO"  # 自我介绍
+    RESUME = "RESUME"  # 简历中的项目讲解（由画像经历条目提取）
+    WRONG = "WRONG"  # 错题本条目
+    EXPERIENCE = "EXPERIENCE"  # 面经条目
+    JD = "JD"  # 投递记录 JD
+    CUSTOM = "CUSTOM"  # 手动新建（默认）
+
+
 class PracticeMode(StrEnum):
     """训练模式（practice_session.mode）：决定这一场陪练怎么聊。"""
 

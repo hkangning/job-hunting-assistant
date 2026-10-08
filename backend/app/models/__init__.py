@@ -4,6 +4,7 @@ from app.database import Base
 from app.models.agent import AgentConversation, AgentMessage
 from app.models.application import Application, JdAnalysisReport
 from app.models.campus import CrawlSource, JobPosting, Subscription
+from app.models.drill import DrillAttempt, DrillTopic
 from app.models.enums import (
     ApplicationStatus,
     AttackFace,
@@ -11,6 +12,7 @@ from app.models.enums import (
     CrawlStatus,
     CrawlSystemType,
     Direction,
+    DrillSource,
     ExperienceItemSource,
     ExperienceType,
     IngestSource,
@@ -50,6 +52,8 @@ __all__ = [
     "InterviewQa",
     "Experience",
     "ExperienceItem",
+    "DrillTopic",
+    "DrillAttempt",
     "Question",
     "PracticeSession",
     "PracticeRecord",
@@ -68,6 +72,7 @@ __all__ = [
     "ApplicationStatus",
     "CloseReason",
     "Direction",
+    "DrillSource",
     "SessionStatus",
     "InterviewIntensity",
     "InterviewStage",
