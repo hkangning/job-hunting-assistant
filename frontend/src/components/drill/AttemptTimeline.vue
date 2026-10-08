@@ -7,6 +7,7 @@
  */
 import { shortDateTime } from '../../utils/datetime'
 import { durationText } from '../../utils/drillMeta'
+import AppEmpty from '../AppEmpty.vue'
 
 defineProps({
   /** 服务端的 attempts 摘要数组（`{id, seq, is_voice, score, duration_ms, created_at}`）。 */
@@ -24,9 +25,13 @@ const emit = defineEmits(['open'])
       <span class="timeline__count">{{ attempts.length }} 遍</span>
     </div>
 
-    <p v-if="!attempts.length && !liveSeq" class="timeline__empty">
-      还没有练习记录——在上面写下第一遍，这里就会出现。
-    </p>
+    <AppEmpty
+      v-if="!attempts.length && !liveSeq"
+      type="practice"
+      size="sm"
+      description="还没有练习记录——在上面写下第一遍，这里就会出现"
+      style="--empty-color: var(--m-drill)"
+    />
 
     <ol v-else class="timeline__list">
       <li

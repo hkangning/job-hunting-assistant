@@ -12,6 +12,7 @@ import { campusEventStatus, sourceSiteBrief } from '../constants/campus'
 import { shortDateTime, datePart } from '../utils/datetime'
 import { listRemindersApi } from '../api/reminders'
 import ReminderTip from '../components/ReminderTip.vue'
+import AppError from '../components/AppError.vue'
 
 // 轮询间隔（系统设计 §4.2）；**仅本页挂载期间生效**——做成 store 内全局轮询的话，
 // 用户在投递页 / 分析页操作时也会持续请求一个没人看的接口
@@ -100,10 +101,12 @@ onUnmounted(() => clearInterval(timer))
 <template>
   <div v-loading="store.loading && !store.data" class="overview">
     <!-- 加载失败：可重试（概览是首页，失败必须给出明确出口） -->
-    <div v-if="store.error && !store.data" class="overview__error">
-      <span>{{ store.error }}</span>
-      <el-button size="small" @click="store.fetch()">重试</el-button>
-    </div>
+    <AppError
+      v-if="store.error && !store.data"
+      class="overview__error"
+      :message="store.error"
+      @retry="store.fetch()"
+    />
 
     <template v-else-if="store.data">
       <!-- 空态：还没有任何投递 —— 统计卡与列表都无信息量，改为「开始使用」的引导 -->
@@ -309,16 +312,9 @@ onUnmounted(() => clearInterval(timer))
 
 <style scoped>
 /* 页面不渲染标题：标题职责归顶栏（系统设计 §4.4） */
+/* 错误块外观由 AppError 组件承担，这里只留布局（步骤 27 收口） */
 .overview__error {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  background: var(--c-card);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-card);
-  font-size: var(--fs-body);
-  color: var(--c-text);
+  margin-bottom: var(--card-gap);
 }
 
 /* ---------- 空态引导卡（还没有任何投递时替代统计卡与列表） ---------- */

@@ -13,12 +13,14 @@ import { listCalendar } from '../../api/campus'
 import { calendarTypeMeta } from '../../constants/campus'
 import { shortDateTime } from '../../utils/datetime'
 import { buildMonthGrid, groupByDay, monthRange } from '../../utils/campusCalendar'
+import AppError from '../AppError.vue'
 
 const emit = defineEmits(['open-event'])
 
 const cursor = ref(new Date())
 const items = ref([])
-const loading = ref(false)
+// 首屏初值 true：不闪「本月暂无安排」假空态（步骤 27）
+const loading = ref(true)
 const error = ref('')
 const selectedDay = ref('') // 点日期后展开的当日清单
 
@@ -81,10 +83,7 @@ onMounted(load)
       <el-button size="small" @click="goToday">今天</el-button>
     </div>
 
-    <div v-if="error" class="ccal__error">
-      <span>{{ error }}</span>
-      <el-button size="small" @click="load">重试</el-button>
-    </div>
+    <AppError v-if="error" class="ccal__error" size="sm" :message="error" @retry="load" />
 
     <div v-loading="loading" class="ccal__grid">
       <div v-for="week in ['一', '二', '三', '四', '五', '六', '日']" :key="week" class="ccal__weekday">
@@ -171,14 +170,9 @@ onMounted(load)
   text-align: center;
 }
 
+/* 错误块外观由 AppError 组件承担，这里只留布局（步骤 27 收口） */
 .ccal__error {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
   margin-bottom: var(--card-gap);
-  background: var(--c-bg);
-  border-radius: var(--r-control);
 }
 
 .ccal__grid {

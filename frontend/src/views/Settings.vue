@@ -11,6 +11,7 @@ import { getTtsVoices } from '../api/voice'
 import { ttsPlayer, ttsSpeakingKey } from '../utils/ttsPlayer'
 import { useAppStore } from '../stores/app'
 import CrawlSourceCard from '../components/campus/CrawlSourceCard.vue'
+import AppError from '../components/AppError.vue'
 
 // 音色清单来自 GET /tts/voices（步骤 24：14 个中文音色，账号所配音色置顶）；
 // 拉取失败降级为空列表——下方 voiceOptions 会补「当前已存音色」兜底项，回显不丢。
@@ -31,9 +32,11 @@ const DIFF_KEYS = [
 const appStore = useAppStore()
 
 const loading = ref(true)
+const loadError = ref('')
 const saving = ref(false)
 const asrKeySet = ref(false)
 const voiceList = ref([])
+const voiceListError = ref(false)
 
 const form = reactive({
   voice_enabled: false,
@@ -64,8 +67,10 @@ const voiceOptions = computed(() => {
 async function loadVoices() {
   try {
     voiceList.value = await getTtsVoices()
+    voiceListError.value = false
   } catch {
     voiceList.value = []
+    voiceListError.value = true // 音色区退化显示（当前音色项仍在），给一行说明
   }
 }
 
@@ -97,8 +102,12 @@ function applySettings(data) {
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     applySettings(await getSettingsApi())
+  } catch (error) {
+    // 失败 ≠ 显示默认值：此前静默回落到初值，用户可能把默认值当现状再保存出去
+    loadError.value = error?.message || '设置加载失败，请重试'
   } finally {
     loading.value = false
   }
@@ -139,6 +148,8 @@ onUnmounted(() => {
 
 <template>
   <div v-loading="loading" class="settings">
+    <AppError v-if="loadError" :message="loadError" @retry="load" />
+    <template v-else>
     <el-card shadow="never" class="settings__card">
       <h3 class="settings__title dot-title">语音交互</h3>
       <el-form label-width="120px">
@@ -187,6 +198,7 @@ onUnmounted(() => {
               </span>
             </el-radio>
           </el-radio-group>
+          <span v-if="voiceListError" class="settings__hint">音色清单加载失败，仅显示当前音色</span>
         </el-form-item>
       </el-form>
     </el-card>
@@ -216,6 +228,7 @@ onUnmounted(() => {
     <div class="settings__footer">
       <el-button type="primary" :loading="saving" @click="save">保存设置</el-button>
     </div>
+    </template>
   </div>
 </template>
 

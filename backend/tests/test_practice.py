@@ -1041,3 +1041,131 @@ class TestChoiceModeGuards:
             headers=_auth(account),
         )
         assert resp.json()["data"]["items"], "不传 mode 时选择题照常可抽"
+
+
+# ================================================================ 会话服务边界分支（步骤 27 覆盖率补齐）
+#
+# `practice_session_service` 未覆盖分支：开一场的两类校验（404 / 模式非法）、历史模式筛选
+# 与空页、ABORTED 不可结算、断点攻击面分层、挑错命中率 / 费曼漏洞的内部段解析
+# （正常 / 坏 JSON / 缺席三态 fail-closed）、缺口汇总与缺口语义（标题行不算、非作答轮不进）。
+
+
+class TestSessionServiceBranches:
+    def test_open_question_not_found(self, client: TestClient, account):
+        resp = client.post(
+            f"{API}/sessions", json={"question_id": 10**8, "mode": "QUICK"}, headers=_auth(account)
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == 10002
+
+    def test_open_invalid_mode(self, client: TestClient, account, questions):
+        resp = client.post(
+            f"{API}/sessions", json={"question_id": questions[0], "mode": "NOPE"}, headers=_auth(account)
+        )
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 10001
+
+    def test_list_invalid_mode_filter(self, client: TestClient, account):
+        resp = client.get(f"{API}/sessions", params={"mode": "NOPE"}, headers=_auth(account))
+        assert resp.status_code == 400
+
+    def test_list_mode_filter_hit_and_empty_page(self, client: TestClient, account, questions):
+        """带 mode 筛选：命中同模式会话；无该模式会话时返回空页（走 `items=[]` 早返回分支）。"""
+        _open(client, account, questions[0], mode="QUICK")
+        hit = client.get(f"{API}/sessions", params={"mode": "QUICK"}, headers=_auth(account)).json()["data"]
+        assert hit["total"] >= 1
+        miss = client.get(f"{API}/sessions", params={"mode": "FEYNMAN"}, headers=_auth(account)).json()["data"]
+        assert miss["total"] == 0
+        assert miss["items"] == []
+
+    def test_finish_aborted_session_rejected(self, client: TestClient, account, questions):
+        """ABORTED 会话不可结算（10001）——直接改库构造该状态。"""
+        from app.models import PracticeSession
+
+        session = _open(client, account, questions[0], mode="QUICK")
+        with SessionLocal() as db:
+            row = db.get(PracticeSession, session["session_id"])
+            row.status = "ABORTED"
+            db.commit()
+        resp = client.post(f"{API}/sessions/{session['session_id']}/finish", headers=_auth(account))
+        assert resp.status_code == 400
+        assert resp.json()["code"] == 10001
+
+
+class TestSessionPureHelpers:
+    """`practice_session_service` 的纯计算辅助——直接构造（未入库的）记录对象调用。"""
+
+    @staticmethod
+    def _record(kind, answer=None, review=""):
+        from app.models import PracticeRecord
+        from app.models.enums import RoundKind
+
+        return PracticeRecord(round_kind=RoundKind(kind), user_answer=answer, review=review)
+
+    def test_record_is_break_rules(self):
+        from app.services import practice_session_service as sess
+
+        assert sess._record_is_break(self._record("HINT", answer="")) is False  # AI 单方产出
+        assert sess._record_is_break(self._record("OPENING", answer=None)) is False  # 历史空值
+        assert sess._record_is_break(self._record("OPENING", answer="不知道")) is True
+
+    def test_first_break_face_layer_from_follow_up_count(self):
+        """断点攻击面：层号 = 断点**之前**已发生的追问轮数 + 1（与 next_turn 的 `layer = follow_up_count + 1`
+        同源——第 N 个追问轮即第 N 层，开场轮不计层）。"""
+        from app.services import practice_session_service as sess
+
+        records = [
+            self._record("OPENING", answer="完整作答，讲清了原理"),  # 开场轮，不计层
+            self._record("FOLLOW_UP", answer="这一层也答上来了"),  # 第 1 个追问轮（层 1 = 依据）
+            self._record("FOLLOW_UP", answer="不知道"),  # 第 2 个追问轮断掉 → 层 2 = 边界
+        ]
+        assert sess._first_break_face(records) == AttackFace.BOUNDARY
+        # 开场即断 → 层 1（依据）
+        assert sess._first_break_face([self._record("OPENING", answer="不知道")]) == AttackFace.BASIS
+        assert sess._first_break_face([self._record("OPENING", answer="完整作答")]) is None
+
+    def test_debug_hit_rate_parses_and_fails_closed(self):
+        from app.services import practice_session_service as sess
+
+        ok = self._record("REBUTTAL", answer="x", review='## 判定\n{"total": 4, "hit": 3}\n## 点评\n…')
+        assert sess._debug_hit_rate([ok]) == 0.75
+        assert sess._debug_hit_rate([]) is None  # 没有找错轮
+        no_verdict = self._record("REBUTTAL", answer="x", review="## 点评\n…")
+        assert sess._debug_hit_rate([no_verdict]) is None  # 判定段缺席 → fail-closed
+        bad_json = self._record("REBUTTAL", answer="x", review="## 判定\nnot-a-json")
+        assert sess._debug_hit_rate([bad_json]) is None  # 坏 JSON → fail-closed
+        zero = self._record("REBUTTAL", answer="x", review='## 判定\n{"total": 0, "hit": 0}')
+        assert sess._debug_hit_rate([zero]) is None  # 埋雷数为 0 无法算命中率
+
+    def test_feynman_leak_count_parses_and_fails_closed(self):
+        from app.services import practice_session_service as sess
+
+        assert sess._feynman_leak_count([self._record("RETELL", answer="x", review="## 漏洞计数\n3")]) == 3
+        no_digit = self._record("RETELL", answer="x", review="## 漏洞计数\n没有数字")
+        assert sess._feynman_leak_count([no_digit]) is None
+        assert sess._feynman_leak_count([]) is None
+
+    def test_collect_gaps_order_dedupe_and_limit(self):
+        from app.services import practice_session_service as sess
+
+        records = [
+            self._record("HINT", review="## 提示\n- 这是提示不是缺口"),  # 非作答轮不进
+            self._record("OPENING", answer="x", review="## 点评\n- 未提及缓存穿透\n- 没给量级\n## 判定\n{}"),
+        ]
+        gaps = sess._collect_gaps(records)
+        assert gaps == ["未提及缓存穿透", "没给量级"]
+
+        many = [
+            self._record(
+                "OPENING", answer="x", review="## 点评\n" + "\n".join(f"- 缺口{i}" for i in range(8))
+            )
+        ]
+        assert len(sess._collect_gaps(many)) == 5  # GAPS_LIMIT
+
+    def test_gap_lines_branches(self):
+        from app.services import practice_session_service as sess
+
+        assert sess._gap_lines("- 条目一\n- 条目二") == ["条目一", "条目二"]  # 列表项优先
+        assert sess._gap_lines("没有列表只有一段话。后面还有一句。") == ["没有列表只有一段话。"]  # 退化首句
+        assert sess._gap_lines("# 只有标题") == []  # 标题行不算缺口、无正文
+        assert sess._gap_lines("") == []

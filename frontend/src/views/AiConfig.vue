@@ -17,6 +17,7 @@ import {
 } from '../api/llmProviders'
 import ProviderFormDialog from '../components/ProviderFormDialog.vue'
 import AppEmpty from '../components/AppEmpty.vue'
+import AppError from '../components/AppError.vue'
 
 const loading = ref(true)
 const error = ref('')
@@ -61,7 +62,11 @@ async function load() {
 }
 
 async function onActivate(item) {
-  await activateProviderApi(item.provider)
+  try {
+    await activateProviderApi(item.provider)
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success(`已切换到 ${item.name}`)
   await load()
 }
@@ -87,7 +92,11 @@ async function onRemove(item) {
   } catch {
     return // 取消
   }
-  await deleteProviderApi(item.provider)
+  try {
+    await deleteProviderApi(item.provider)
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success('已删除')
   await load()
 }
@@ -107,7 +116,7 @@ onMounted(load)
 
 <template>
   <div class="ai" v-loading="loading">
-    <el-alert v-if="error" :title="error" type="error" :closable="false" class="ai__error" />
+    <AppError v-if="error" class="ai__error" :message="error" @retry="load" />
 
     <!-- 我的配置：当前使用中作为卡片首条，与列表同属一个容器 -->
     <section class="ai__card">
@@ -122,7 +131,7 @@ onMounted(load)
       </div>
 
       <AppEmpty
-        v-if="!configured.length"
+        v-if="!loading && !error && !configured.length"
         type="note"
         size="sm"
         title="还没有自己的配置"

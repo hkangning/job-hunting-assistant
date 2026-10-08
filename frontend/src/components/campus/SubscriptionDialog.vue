@@ -14,6 +14,8 @@ import {
   listSubscriptions,
   updateSubscription
 } from '../../api/campus'
+import AppEmpty from '../AppEmpty.vue'
+import AppError from '../AppError.vue'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false }
@@ -29,7 +31,8 @@ const INFO_TYPE_OPTIONS = [
 ]
 
 const rules = ref([])
-const loading = ref(false)
+// 首屏初值 true：不闪「还没有订阅规则」假空态（步骤 27）
+const loading = ref(true)
 const errorText = ref('')
 
 const editing = ref(null) // null = 未开表单；{} = 新建；{id, ...} = 编辑
@@ -114,8 +117,8 @@ async function onSave() {
     }
     editing.value = null
     load()
-  } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   } finally {
     saving.value = false
   }
@@ -140,7 +143,11 @@ async function onDelete(rule) {
   } catch {
     return
   }
-  await deleteSubscription(rule.id)
+  try {
+    await deleteSubscription(rule.id)
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success('已删除')
   load()
 }
@@ -162,10 +169,7 @@ function summary(list) {
       订阅规则命中后写入站内提醒（概览与提醒列表可见）。匹配语义：<b>维度之间为「与」、同一维度内为「或」</b>，留空 = 该维度不限。
     </p>
 
-    <div v-if="errorText" class="sub__error">
-      <span>{{ errorText }}</span>
-      <el-button size="small" @click="load">重试</el-button>
-    </div>
+    <AppError v-if="errorText" class="sub__error" size="sm" :message="errorText" @retry="load" />
 
     <!-- 表单（新建 / 编辑） -->
     <div v-if="editing" class="sub__form">
@@ -223,9 +227,13 @@ function summary(list) {
 
     <!-- 规则列表 -->
     <template v-else>
-      <p v-if="!loading && !rules.length && !errorText" class="sub__empty">
-        还没有订阅规则——建一条，命中「当日新入库 / 变更」的校招信息就会写进站内提醒。
-      </p>
+      <AppEmpty
+        v-if="!loading && !rules.length && !errorText"
+        type="campus"
+        size="sm"
+        description="还没有订阅规则——建一条，命中「当日新入库 / 变更」的校招信息就会写进站内提醒。"
+        style="--empty-color: var(--m-campus)"
+      />
       <ul v-else v-loading="loading" class="sub__list">
         <li v-for="rule in rules" :key="rule.id" class="sub__item" :class="{ 'sub__item--off': !rule.enabled }">
           <div class="sub__main">
@@ -263,14 +271,9 @@ function summary(list) {
   color: var(--c-text-3);
   line-height: 1.7;
 }
+/* 错误块外观由 AppError 组件承担，这里只留布局（步骤 27 收口） */
 .sub__error {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
   margin-bottom: 10px;
-  background: var(--c-bg);
-  border-radius: var(--r-control);
 }
 .sub__empty {
   margin: 0 0 12px;

@@ -16,6 +16,7 @@ import { deleteExperience, getExperience } from '../api/experiences'
 import { textLength } from '../utils/text'
 import { shortDateTime } from '../utils/datetime'
 import ExperienceExtract from '../components/experience/ExperienceExtract.vue'
+import AppError from '../components/AppError.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -110,7 +111,11 @@ async function onDelete() {
   } catch {
     return
   }
-  await deleteExperience(experienceId)
+  try {
+    await deleteExperience(experienceId)
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success('已删除')
   router.push('/experiences')
 }
@@ -140,11 +145,9 @@ onMounted(load)
       >
     </header>
 
-    <div v-if="errorMsg" class="detail__error">
-      <span>{{ errorMsg }}</span>
-      <el-button size="small" @click="load">重试</el-button>
+    <AppError v-if="errorMsg" class="detail__error" :message="errorMsg" @retry="load">
       <el-button size="small" @click="backToList">返回列表</el-button>
-    </div>
+    </AppError>
 
     <div v-else v-loading="loading" class="detail__body">
       <template v-if="detail">
@@ -245,13 +248,9 @@ onMounted(load)
   margin-left: auto;
 }
 
+/* 错误块外观由 AppError 组件承担，这里只留布局（步骤 27 收口） */
 .detail__error {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  font-size: var(--fs-sm);
-  color: var(--el-color-danger);
+  margin-bottom: var(--card-gap);
 }
 
 .detail__body {

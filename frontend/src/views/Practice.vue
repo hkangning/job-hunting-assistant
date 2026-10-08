@@ -18,6 +18,7 @@ import PracticeResult from '../components/practice/PracticeResult.vue'
 import PracticeHistory from '../components/practice/PracticeHistory.vue'
 import MasteryPanel from '../components/practice/MasteryPanel.vue'
 import PracticeTurn from '../components/practice/PracticeTurn.vue'
+import AppError from '../components/AppError.vue'
 
 const router = useRouter()
 
@@ -35,6 +36,12 @@ const result = ref(null)
 const history = reactive({ items: [], total: 0, page: 1, pageSize: 10, mode: '' })
 const mastery = ref([])
 
+// 三路首屏数据的加载态（步骤 27）：此前全静默，meta 未到时准备台一片空白、侧栏闪假空态
+const metaLoading = ref(true)
+const metaError = ref('')
+const historyLoading = ref(true)
+const masteryLoading = ref(true)
+
 // 回看
 const detail = ref(null)
 
@@ -46,21 +53,44 @@ onMounted(async () => {
 })
 
 async function loadMeta() {
-  meta.value = await getPracticeMeta()
+  metaLoading.value = true
+  metaError.value = ''
+  try {
+    meta.value = await getPracticeMeta()
+  } catch (error) {
+    // 元数据是准备台的前提（拉不到就选不了练什么）——错误态 + 重试由主区渲染
+    metaError.value = error?.message || '题库信息加载失败'
+  } finally {
+    metaLoading.value = false
+  }
 }
 
 async function loadHistory() {
-  const data = await listSessions({
-    mode: history.mode || undefined,
-    page: history.page,
-    page_size: history.pageSize
-  })
-  history.items = data.items
-  history.total = data.total
+  historyLoading.value = true
+  try {
+    const data = await listSessions({
+      mode: history.mode || undefined,
+      page: history.page,
+      page_size: history.pageSize
+    })
+    history.items = data.items
+    history.total = data.total
+  } catch {
+    // 侧栏辅助信息：失败静默降级（拦截器已提示），不阻塞准备台
+  } finally {
+    historyLoading.value = false
+  }
 }
 
 async function loadMastery() {
-  mastery.value = (await getMastery({})).groups
+  masteryLoading.value = true
+  try {
+    mastery.value = (await getMastery({})).groups
+  } catch {
+    // 同上：侧栏辅助信息
+  } finally {
+    masteryLoading.value = false
+  }
 }
 
 async function handleStart(payload) {
@@ -328,18 +358,22 @@ const detailModeLabel = computed(() =>
       />
 
       <!-- 准备台：占宽主区（筛选与模式都需要横向空间） -->
-      <PracticeSetup v-else :meta="meta" :busy="starting" @start="handleStart" />
+      <AppError v-else-if="metaError" :message="metaError" @retry="loadMeta" />
+      <div v-else v-loading="metaLoading" class="practice__setup">
+        <PracticeSetup :meta="meta" :busy="starting" @start="handleStart" />
+      </div>
     </main>
 
     <!-- 右栏：开练前的参考信息（掌握度决定练什么、记录决定还要不要练） -->
     <aside v-if="phase === 'setup' && !detail" class="practice__side">
-      <MasteryPanel :groups="mastery" />
+      <MasteryPanel :groups="mastery" :loading="masteryLoading" />
       <PracticeHistory
         :items="history.items"
         :total="history.total"
         :page="history.page"
         :page-size="history.pageSize"
         :mode-filter="history.mode"
+        :loading="historyLoading"
         :meta="meta"
         @open="openDetail"
         @resume="resumeSession"

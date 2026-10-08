@@ -67,8 +67,8 @@ async function submit(withExtract) {
     const experience = await createExperience(payload)
     emit('created', { experience, withExtract })
     close()
-  } catch (error) {
-    ElMessage.error(error?.message || '保存失败，请稍后重试')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   } finally {
     submitting.value = false
   }

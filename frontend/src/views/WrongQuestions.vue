@@ -13,6 +13,7 @@ import { deleteWrongQuestion, listWrongQuestions, reviewWrongQuestion } from '..
 import WrongList from '../components/wrong/WrongList.vue'
 import WrongReview from '../components/wrong/WrongReview.vue'
 import WrongAddDialog from '../components/wrong/WrongAddDialog.vue'
+import AppError from '../components/AppError.vue'
 
 const meta = ref(null)
 
@@ -24,7 +25,10 @@ const pageSize = ref(10)
 const status = ref('')
 const keyword = ref('')
 const direction = ref('')
-const loading = ref(false)
+// 首屏初值 true：不闪「错题本还是空的」假空态（步骤 27）
+const loading = ref(true)
+const loadError = ref('')
+const countsLoading = ref(true)
 const counts = reactive({ pending: 0, mastered: 0 })
 let keywordTimer = null
 
@@ -56,6 +60,7 @@ async function load({ append = false } = {}) {
   // append 模式只给连续复习用：翻页拉取并追加；列表自身的翻页与筛选仍为替换
   const targetPage = append ? page.value + 1 : page.value
   loading.value = true
+  loadError.value = ''
   try {
     const data = await listWrongQuestions({
       status: status.value || undefined,
@@ -67,6 +72,9 @@ async function load({ append = false } = {}) {
     items.value = append ? [...items.value, ...data.items] : data.items
     total.value = data.total
     if (append) page.value = targetPage
+  } catch (error) {
+    // 失败 ≠ 空态：错误块由页面渲染（拦截器另有 toast，此处不再重复弹）
+    loadError.value = error?.message || '加载失败，请重试'
   } finally {
     loading.value = false
   }
@@ -74,12 +82,19 @@ async function load({ append = false } = {}) {
 
 /** 侧栏计数：后端无聚合端点，用两个 `page_size=1` 的轻请求取 `total`。 */
 async function loadCounts() {
-  const [pending, mastered] = await Promise.all([
-    listWrongQuestions({ status: 'PENDING', page: 1, page_size: 1 }),
-    listWrongQuestions({ status: 'MASTERED', page: 1, page_size: 1 })
-  ])
-  counts.pending = pending.total
-  counts.mastered = mastered.total
+  try {
+    const [pending, mastered] = await Promise.all([
+      listWrongQuestions({ status: 'PENDING', page: 1, page_size: 1 }),
+      listWrongQuestions({ status: 'MASTERED', page: 1, page_size: 1 })
+    ])
+    counts.pending = pending.total
+    counts.mastered = mastered.total
+  } catch {
+    // 计数失败不打扰（侧栏辅助信息；拦截器另有 toast），也不冒泡到调用方
+  } finally {
+    // 计数区加载遮罩：不先显 0 再跳真值（步骤 27）
+    countsLoading.value = false
+  }
 }
 
 async function refresh() {
@@ -205,8 +220,8 @@ async function submitReview(value) {
       refreshNextCandidate()
     }
     await loadCounts()
-  } catch (error) {
-    ElMessage.error(error?.message || '判定失败，请稍后重试')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   } finally {
     reviewing.value = false
   }
@@ -227,8 +242,8 @@ async function removeItem(item) {
     ElMessage.success('已移除')
     if (phase.value === 'review') backToList()
     else await refresh()
-  } catch (error) {
-    ElMessage.error(error?.message || '移除失败，请稍后重试')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   }
 }
 </script>
@@ -248,6 +263,7 @@ async function removeItem(item) {
         @remove="removeItem"
         @next="goNextReview"
       />
+      <AppError v-else-if="loadError" :message="loadError" @retry="load" />
       <WrongList
         v-else
         :items="items"
@@ -270,7 +286,7 @@ async function removeItem(item) {
     </main>
 
     <aside class="wrong-page__side">
-      <section class="wrong-page__card">
+      <section v-loading="countsLoading" class="wrong-page__card">
         <h3 class="wrong-page__card-title dot-title">复习进度</h3>
         <div class="wrong-page__stat">
           <span class="wrong-page__stat-value wrong-page__stat-value--due">{{ counts.pending }}</span>

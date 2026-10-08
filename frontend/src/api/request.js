@@ -2,6 +2,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '../router'
 import { useUserStore } from '../stores/user'
+import { normalizeError, fallbackText } from '../utils/errorText'
 
 // 统一响应体：{ code, message, data }
 const service = axios.create({
@@ -25,7 +26,7 @@ service.interceptors.response.use(
     const body = response.data
     // 防御分支：后端当前不会返回「HTTP 200 + code≠0」，此处兜底
     if (body && typeof body === 'object' && 'code' in body && body.code !== 0) {
-      const err = new Error(body.message || '请求失败')
+      const err = new Error(normalizeError(body.message, body.code))
       err.code = body.code
       err.httpStatus = response.status
       if (!response.config.silent) {
@@ -37,16 +38,18 @@ service.interceptors.response.use(
     return body.data
   },
   (error) => {
+    const code = error.response && error.response.data ? error.response.data.code : undefined
     let message
     if (error.code === 'ECONNABORTED') {
       message = '请求超时，请稍后重试'
     } else if (error.response && error.response.data && error.response.data.message) {
-      message = error.response.data.message
+      message = normalizeError(error.response.data.message, code)
     } else {
-      message = '网络异常，请检查后端服务是否已启动'
+      // 技术细节留 console 供排查，上屏文案面向用户（不出现「后端服务」等开发概念）
+      console.warn('[request] 请求不可达：', error && error.message)
+      message = fallbackText('network')
     }
 
-    const code = error.response && error.response.data ? error.response.data.code : undefined
     // 登录态失效：80001 未登录/Token 无效、80002 已过期（接口文档 1.3）
     const isTokenError = code === 80001 || code === 80002
 

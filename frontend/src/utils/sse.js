@@ -15,6 +15,7 @@
 import { ElMessage } from 'element-plus'
 import router from '../router'
 import { useUserStore } from '../stores/user'
+import { normalizeError, fallbackText } from './errorText'
 
 const BASE = '/api/v1'
 
@@ -79,19 +80,24 @@ export function streamSSE(url, body, handlers = {}, options = {}) {
         signal: controller.signal
       })
     } catch (err) {
-      reportError(err, '网络异常，请检查后端服务是否已启动')
+      console.warn('[sse] 请求不可达：', err && err.message)
+      reportError(err, fallbackText('network'))
       return
     }
 
     if (!response.ok) {
       let code
-      let message = `请求失败（HTTP ${response.status}）`
+      let message = ''
       try {
         const errBody = await response.json()
         code = errBody.code
-        message = errBody.message || message
+        if (errBody.message) message = normalizeError(errBody.message, code)
       } catch {
-        // 响应体非 JSON：保留默认文案
+        // 响应体非 JSON：走下面的兜底
+      }
+      if (!message) {
+        console.warn('[sse] 非 2xx 响应且无业务文案：HTTP', response.status)
+        message = '请求失败，请重试'
       }
       if (aborted) return
       if (code === 80001 || code === 80002) return handleAuthExpired()
@@ -99,12 +105,13 @@ export function streamSSE(url, body, handlers = {}, options = {}) {
       return
     }
 
-    // 收到非 SSE 响应：多半是 mock 层或反向代理接管了请求
+    // 收到非 SSE 响应：多半是 mock 层或反向代理接管了请求（技术细节进 console 供排查）
     const contentType = response.headers.get('content-type') || ''
     if (!contentType.includes('text/event-stream')) {
+      console.warn('[sse] 响应非流式，content-type =', contentType)
       onError?.({
         code: undefined,
-        message: '响应不是流式格式：请关闭 mock（VITE_USE_MOCK=false）并确认后端已启动'
+        message: '响应格式异常，请确认服务配置正确'
       })
       return
     }
@@ -128,7 +135,7 @@ export function streamSSE(url, body, handlers = {}, options = {}) {
         }
       }
     } catch (err) {
-      reportError(err, '流式连接中断，请重试')
+      reportError(err, '连接中断，回复未完成，请重试')
       return
     }
 

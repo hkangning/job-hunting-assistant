@@ -17,6 +17,7 @@ import { reminderMeta, remindDayLabel } from '../constants/reminder'
 const router = useRouter()
 const open = ref(false)
 const loading = ref(false)
+const errorText = ref('')
 const items = ref([])
 const total = ref(0)
 const unread = ref(0)
@@ -35,6 +36,7 @@ async function fetchUnreadCount() {
 
 async function load(reset = false) {
   loading.value = true
+  errorText.value = ''
   try {
     const page = reset ? 1 : Math.floor(items.value.length / PAGE_SIZE) + 1
     const data = await listRemindersApi({ checked: false, page, page_size: PAGE_SIZE }, { silent: true })
@@ -43,7 +45,11 @@ async function load(reset = false) {
     total.value = data.total ?? items.value.length
     unread.value = total.value
   } catch {
-    if (reset) items.value = [] // 打开面板失败：给空态，不弹错（顶栏是常驻组件，不打扰）
+    // 打开面板失败：给错误态 + 重试（步骤 27：此前与「暂无提醒」不可区分）
+    if (reset) {
+      items.value = []
+      errorText.value = '提醒加载失败'
+    }
   } finally {
     loading.value = false
   }
@@ -100,6 +106,10 @@ onMounted(fetchUnreadCount)
       </div>
 
       <div v-if="loading && !items.length" class="rp__hint">正在加载…</div>
+      <div v-else-if="errorText && !items.length" class="rp__hint">
+        {{ errorText }}
+        <el-button size="small" text type="primary" @click="load(true)">重试</el-button>
+      </div>
       <div v-else-if="!items.length" class="rp__hint">暂无提醒</div>
       <template v-else>
         <div class="rp__items">

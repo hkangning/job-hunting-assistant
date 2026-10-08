@@ -148,8 +148,8 @@ async function submit() {
     ElMessage.success('面试已创建')
     emit('created', session)
     close()
-  } catch (error) {
-    ElMessage.error(error?.message || '创建失败，请稍后重试')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   } finally {
     submitting.value = false
   }

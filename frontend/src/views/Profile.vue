@@ -25,6 +25,8 @@ const savingAccount = ref(false)
 
 const stats = ref(null)
 const appStats = ref(null) // 投递五状态计数（概览接口的 application_stats）
+// 画像表单加载态（步骤 27）：此前静默，进页面表单整片空白后跳变
+const profileLoading = ref(true)
 const profile = reactive({
   name: '', school: '', major: '', degree: '', gpa: '', english_level: '', experiences: [],
   target_position: '', target_city: '', skills: '', weaknesses: '', note: ''
@@ -47,8 +49,15 @@ onMounted(async () => {
   if (!userStore.user) await userStore.fetchMe({ silent: true }).catch(() => {})
   syncAccountForm()
 
-  Object.assign(profile, await getProfileApi().catch(() => ({})))
-  if (!Array.isArray(profile.experiences)) profile.experiences = []
+  try {
+    Object.assign(profile, await getProfileApi())
+    if (!Array.isArray(profile.experiences)) profile.experiences = []
+  } catch {
+    // 画像拉取失败：表单保持空白供直接填写（拦截器已提示），不阻塞页面
+  } finally {
+    profileLoading.value = false
+  }
+
   const overview = await getOverviewApi().catch(() => null)
   stats.value = overview?.stats || null
   appStats.value = overview?.application_stats || null
@@ -83,12 +92,16 @@ async function onPickAvatar(uploadFile) {
   if (!raw) return
   avatarUploading.value = true
   try {
-    // 前端先压成 256×256 再上传（后端仍会校验类型与体积）
-    const blob = await compressTo256(raw)
-    await userStore.uploadAvatar(blob)
+    // 前端先压成 256×256 再上传（后端仍会校验类型与体积）——本地压缩失败需页内提示（拦截器不经过）
+    let blob
+    try {
+      blob = await compressTo256(raw)
+    } catch (err) {
+      ElMessage.error(err?.message || '图片处理失败')
+      return
+    }
+    await userStore.uploadAvatar(blob) // 失败由拦截器提示
     ElMessage.success('头像已更新')
-  } catch (err) {
-    ElMessage.error(err.message || '头像上传失败')
   } finally {
     avatarUploading.value = false
   }
@@ -108,7 +121,11 @@ async function onResetAvatar() {
   } catch {
     return
   }
-  await userStore.resetAvatar()
+  try {
+    await userStore.resetAvatar()
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success('已恢复默认头像')
 }
 
@@ -388,7 +405,7 @@ async function saveProfile() {
     </div>
 
     <!-- 求职画像 -->
-    <el-card shadow="never" class="profile__card">
+    <el-card v-loading="profileLoading" shadow="never" class="profile__card">
       <h3 class="profile__title dot-title">求职画像</h3>
 
       <!-- 上传简历：解析结果只填入表单，核对修改后由用户自行保存 -->

@@ -501,6 +501,9 @@ ENUM_MEMBERS: dict[str, set[str]] = {
     # 步骤 5 新增两个枚举（数据库设计 §5 user.role / user.plan）
     "UserRole": {"USER", "ADMIN"},
     "UserPlan": {"FREE", "PRO"},
+    # 步骤 25 新增（voice_metrics.quality：JSON 内部字段、非表列，数据库设计 §5；台账 #11 残余）
+    "VoiceQuality": {"OK", "TOO_SHORT", "TEXT_ONLY"},
+    # drill_topic.source（六值）待步骤 26 后端落地、枚举类建出后补（台账 #11 其余部分）
 }
 
 # 《数据库设计文档》§4 种子题库要求（2026-09-28 题库升级：585 → 672 题，新增 87 道选择题）

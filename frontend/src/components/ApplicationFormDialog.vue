@@ -144,6 +144,9 @@ async function loadDetail(id) {
       remark: detail.remark || ''
     })
     cityPath.value = pathOfCity(form.city)
+  } catch {
+    // 拉取失败：关闭弹窗（拦截器已提示）——留在空表单上继续编辑会把详情覆盖成空值
+    emit('update:modelValue', false)
   } finally {
     loading.value = false
   }
@@ -204,6 +207,8 @@ async function submit() {
     ElMessage.success(isEdit.value ? '已保存' : '已新增')
     emit('saved')
     close()
+  } catch {
+    // 保存失败：拦截器已提示，弹窗保持打开供修改重试（步骤 27：补 catch 消除未捕获 rejection）
   } finally {
     saving.value = false
   }

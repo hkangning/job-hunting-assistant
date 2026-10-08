@@ -49,6 +49,7 @@ function go(path) {
         </div>
         <p class="result__sub">{{ [item.city, item.applied_at ? datePart(item.applied_at) : ''].filter(Boolean).join(' · ') }}</p>
       </div>
+      <p v-if="!(data.items || []).length" class="result__sub">没有符合条件的投递记录</p>
       <el-button type="primary" plain @click="go('/applications')">去投递管理查看</el-button>
     </template>
 
@@ -62,6 +63,7 @@ function go(path) {
         </div>
         <p class="result__text">{{ q.content }}</p>
       </div>
+      <p v-if="!(data.questions || []).length" class="result__sub">没有出到题目——换个方向或换个说法再问一次</p>
       <el-button type="primary" plain @click="go('/practice')">去陪练作答</el-button>
     </template>
 
@@ -75,6 +77,7 @@ function go(path) {
         </div>
         <p class="result__text">{{ q.content }}</p>
       </div>
+      <p v-if="!(data.items || []).length" class="result__sub">没有符合条件的错题——错题本可能还是空的</p>
       <el-button type="primary" plain @click="go('/wrong-questions')">去错题本</el-button>
     </template>
 
@@ -89,6 +92,7 @@ function go(path) {
         <p v-if="item.answer_points" class="result__sub result__sub--clamp">{{ item.answer_points }}</p>
         <el-button size="small" type="primary" plain @click="go(`/experiences/${item.experience_id}?item=${item.id}`)">查看条目</el-button>
       </div>
+      <p v-if="!(data.items || []).length" class="result__sub">没有找到相关面经条目——换个关键词试试</p>
     </template>
 
     <!-- 今日概览 -->

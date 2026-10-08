@@ -9,7 +9,9 @@ import { shortDateTime } from '../../utils/datetime'
 import AppEmpty from '../AppEmpty.vue'
 
 defineProps({
-  groups: { type: Array, default: () => [] }
+  groups: { type: Array, default: () => [] },
+  /** 首屏加载中不显示「还没有掌握度数据」假空态（步骤 27） */
+  loading: { type: Boolean, default: false }
 })
 </script>
 
@@ -17,7 +19,7 @@ defineProps({
   <section class="mastery__card">
     <h3 class="mastery__title dot-title">各领域掌握度</h3>
     <AppEmpty
-      v-if="!groups.length"
+      v-if="!loading && !groups.length"
       type="chart"
       size="sm"
       title="还没有掌握度数据"

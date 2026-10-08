@@ -7,6 +7,8 @@
 
 import json
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
@@ -554,3 +556,128 @@ class TestSummary:
         detail = client.get(f"{API}/{session['id']}", headers=_auth(account)).json()["data"]
         assert detail["status"] == "FINISHED"
         assert detail["summary"] == "本场未作答任何题目，无内容可总结。"
+
+
+# ================================================================ TC-72 表达力指标接线
+
+
+# 合法样例：3 句 / 总时长 16s / 有效语音 10s / 20 字 / 填充词「然后」「就是」各 1 / 停顿 2 处
+# （手算逐项见 test_speech_metrics.py 的同名样例——断言判据与 LLM 输出无关）
+VALID_SEGMENTS = [
+    {"seq": 1, "start_ms": 0, "end_ms": 3000, "text": "第一句话测试"},
+    {"seq": 2, "start_ms": 5000, "end_ms": 9000, "text": "然后第二句话就是测试"},
+    {"seq": 3, "start_ms": 13000, "end_ms": 16000, "text": "第三句话"},
+]
+
+
+class TestVoiceMetrics:
+    """TC-72：`segments` 随传 → 指标下发 + 落库；不传 / 空数组 / 坏结构 / 出题轮防御。"""
+
+    @staticmethod
+    def _ready_session(client: TestClient, account, fake) -> int:
+        """建会话并出首题（作答轮的前置步骤）。"""
+        session = _create(client, account, company="测试公司", position="后端开发")
+        _ask_turn(fake, client, account, session["id"], answer="")
+        return session["id"]
+
+    def test_segments_produce_metrics_and_persist(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """随传 segments：done.extra 下发五项指标且落库；详情 qa_list 可回看。"""
+        session_id = self._ready_session(client, account, fake_llm_client)
+        events = _answer_turn(
+            fake_llm_client, client, account, session_id, answer="作答内容", segments=VALID_SEGMENTS
+        )
+        metrics = _done(events)["extra"]["voice_metrics"]
+        assert metrics["quality"] == "OK"
+        assert metrics["version"] == 1
+        assert metrics["speech_rate"] == 120  # 20 字 ÷ 10s 有效语音
+        assert metrics["filler_count"] == 2
+        assert metrics["speech_ratio"] == 0.62
+        assert metrics["longest_pause_ms"] == 4000
+
+        row = [r for r in _qa_rows(session_id) if r.answer][-1]  # 作答轮会追加「下一题」行，取有作答的那行
+        assert row.voice_metrics, "语音作答的指标应落库"
+        assert json.loads(row.voice_metrics)["speech_rate"] == 120
+
+        detail = client.get(f"{API}/{session_id}", headers=_auth(account)).json()["data"]
+        qa = [item for item in detail["qa_list"] if item["answer"]][-1]
+        assert qa["is_voice"] == 1
+        assert qa["voice_metrics"]["speech_rate"] == 120  # 回看复现
+
+    def test_text_answer_produces_no_metrics(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """不传 segments = 文字作答：无该键下发、is_voice=0、列空。"""
+        session_id = self._ready_session(client, account, fake_llm_client)
+        events = _answer_turn(fake_llm_client, client, account, session_id, answer="纯文字作答")
+        done = _done(events)
+        assert "voice_metrics" not in (done.get("extra") or {})
+
+        detail = client.get(f"{API}/{session_id}", headers=_auth(account)).json()["data"]
+        qa = [item for item in detail["qa_list"] if item["answer"]][-1]
+        assert qa["is_voice"] == 0
+        assert qa["voice_metrics"] is None
+
+    def test_empty_segments_is_voice_but_too_short(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """传空数组：按「是否传字段」记为语音（is_voice=1），但 TOO_SHORT 不下发不落库。"""
+        session_id = self._ready_session(client, account, fake_llm_client)
+        events = _answer_turn(fake_llm_client, client, account, session_id, answer="作答", segments=[])
+        done = _done(events)
+        assert "voice_metrics" not in (done.get("extra") or {})
+
+        detail = client.get(f"{API}/{session_id}", headers=_auth(account)).json()["data"]
+        qa = [item for item in detail["qa_list"] if item["answer"]][-1]
+        assert qa["is_voice"] == 1
+        assert qa["voice_metrics"] is None
+
+    def test_bad_segments_rejected_before_stream(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """坏结构（缺字段 / seq 非正）：400 + 10001 普通响应体，校验先于流式建立。"""
+        session_id = self._ready_session(client, account, fake_llm_client)
+        bad_cases = [
+            [{"start_ms": 0, "end_ms": 1000, "text": "x"}],  # 缺 seq
+            [{"seq": 0, "start_ms": 0, "end_ms": 1000, "text": "x"}],  # seq 非正整数
+            [{"seq": 1, "start_ms": -1, "end_ms": 1000, "text": "x"}],  # 起点为负
+        ]
+        for bad in bad_cases:
+            resp = client.post(
+                STREAM,
+                json={"session_id": session_id, "answer": "x", "segments": bad},
+                headers=_auth(account),
+            )
+            assert resp.status_code == 400, resp.text
+            assert resp.json()["code"] == 10001
+            assert "text/event-stream" not in resp.headers.get("content-type", "")
+
+    @pytest.mark.xfail(strict=True, reason="IS-65：起止颠倒未校验（后端修复后转正摘标）")
+    def test_reversed_segments_rejected(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """IS-65 钉子：起止颠倒应 400 + 10001——当前未拦截（修复后本用例转正）。"""
+        session_id = self._ready_session(client, account, fake_llm_client)
+        resp = client.post(
+            STREAM,
+            json={
+                "session_id": session_id,
+                "answer": "x",
+                "segments": [{"seq": 1, "start_ms": 9000, "end_ms": 1000, "text": "x"}],
+            },
+            headers=_auth(account),
+        )
+        assert resp.status_code == 400
+
+    def test_question_turn_discards_review_section(
+        self, client: TestClient, account, fake_llm_client, llm_configured
+    ):
+        """出题轮（开场）：模型越轮多输出的点评段整段丢弃（实现口径 6 的对称防御）。"""
+        fake_llm_client.chunks = list(ANSWER_CHUNKS)  # 开场轮却输出「点评 + 下一题」
+        session = _create(client, account, company="A", position="B")
+        events = _chat(client, account, session["id"], answer="")
+        assert _sections(events) == ["next_question"]  # 点评段未下发
+
+        row = _qa_rows(session["id"])[-1]
+        assert "评分" not in (row.review or "")  # 落库文本也不含点评

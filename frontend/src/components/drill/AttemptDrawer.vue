@@ -24,20 +24,27 @@ const attempt = ref(null)
 const loading = ref(false)
 const errorMsg = ref('')
 
+/** 拉取单次记录（打开抽屉与失败重试共用）。 */
+async function reload() {
+  const id = props.attemptId
+  if (id == null) return
+  loading.value = true
+  errorMsg.value = ''
+  attempt.value = null
+  try {
+    attempt.value = await getDrillAttempt(props.topicId, id)
+  } catch (error) {
+    errorMsg.value = error?.message || '记录加载失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
+}
+
 watch(
   [() => props.modelValue, () => props.attemptId],
-  async ([open, id]) => {
+  ([open, id]) => {
     if (!open || id == null) return
-    loading.value = true
-    errorMsg.value = ''
-    attempt.value = null
-    try {
-      attempt.value = await getDrillAttempt(props.topicId, id)
-    } catch (error) {
-      errorMsg.value = error?.message || '记录加载失败，请稍后重试'
-    } finally {
-      loading.value = false
-    }
+    reload()
   }
 )
 </script>
@@ -50,7 +57,10 @@ watch(
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div v-loading="loading" class="attempt">
-      <p v-if="errorMsg" class="attempt__error">{{ errorMsg }}</p>
+      <p v-if="errorMsg" class="attempt__error">
+        <span>{{ errorMsg }}</span>
+        <el-button size="small" @click="reload">重试</el-button>
+      </p>
 
       <template v-if="attempt">
         <div class="attempt__meta">
@@ -86,6 +96,9 @@ watch(
   min-height: 120px;
 }
 .attempt__error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0 0 12px;
   font-size: var(--fs-sm);
   color: var(--el-color-danger);

@@ -17,6 +17,8 @@ import {
 } from '../../api/campus'
 import { crawlStatusMeta } from '../../constants/campus'
 import { shortDateTime } from '../../utils/datetime'
+import AppEmpty from '../AppEmpty.vue'
+import AppError from '../AppError.vue'
 
 const SYSTEM_TYPES = [
   { value: '91JOB', label: '91job' },
@@ -34,7 +36,8 @@ const PARAM_FIELDS = {
 }
 
 const sources = ref([])
-const loading = ref(false)
+// 首屏初值 true：不闪「还没有信息源」假空态（步骤 27）
+const loading = ref(true)
 const errorText = ref('')
 
 const dialogVisible = ref(false)
@@ -121,8 +124,8 @@ async function onSave() {
     }
     dialogVisible.value = false
     load()
-  } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   } finally {
     saving.value = false
   }
@@ -138,7 +141,11 @@ async function onDelete(row) {
   } catch {
     return
   }
-  await deleteCrawlSource(row.id)
+  try {
+    await deleteCrawlSource(row.id)
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success('已删除')
   load()
 }
@@ -192,10 +199,7 @@ onMounted(load)
       <span class="src__hint">手动抓取为强制刷新，不受上方「每日抓取」开关限制</span>
     </div>
 
-    <div v-if="errorText" class="src__error">
-      <span>{{ errorText }}</span>
-      <el-button size="small" @click="load">重试</el-button>
-    </div>
+    <AppError v-if="errorText" class="src__error" :message="errorText" @retry="load" />
 
     <div v-if="runResult" class="src__result">
       <div class="src__summary">
@@ -208,7 +212,16 @@ onMounted(load)
       </ul>
     </div>
 
-    <el-table v-loading="loading" :data="sources" size="small" class="src__table" empty-text="还没有信息源">
+    <el-table v-loading="loading" :data="sources" size="small" class="src__table">
+      <template #empty>
+        <AppEmpty
+          v-if="!loading && !errorText"
+          type="campus"
+          size="sm"
+          description="还没有信息源——新增一个学校就业网，采集会自动跑"
+          style="--empty-color: var(--m-campus)"
+        />
+      </template>
       <el-table-column prop="school_name" label="学校" min-width="120" />
       <el-table-column label="系统" width="90">
         <template #default="{ row }">
@@ -296,14 +309,9 @@ onMounted(load)
   font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
+/* 错误块外观由 AppError 组件承担，这里只留布局（步骤 27 收口） */
 .src__error {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
   margin-bottom: 10px;
-  background: var(--c-bg);
-  border-radius: var(--r-control);
 }
 .src__result {
   padding: 10px 12px;

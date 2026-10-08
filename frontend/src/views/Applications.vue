@@ -15,6 +15,7 @@ import ApplicationImportDialog from '../components/ApplicationImportDialog.vue'
 import CloseReasonDialog from '../components/CloseReasonDialog.vue'
 import TrendChart from '../components/TrendChart.vue'
 import AppEmpty from '../components/AppEmpty.vue'
+import AppError from '../components/AppError.vue'
 
 const PAGE_SIZE = 50 // 接口上限（接口文档 §1.1）
 const MAX_PAGES = 10 // 一次拉全的封顶：50 × 10 = 500 条
@@ -24,7 +25,9 @@ const router = useRouter()
 // 侧栏「今日待办」与底部状态条读的就是这份数据（系统设计 §4.4），投递变更后需同步
 const overviewStore = useOverviewStore()
 
-const loading = ref(false)
+// 首屏初值 true：onMounted 前即渲染遮罩，不闪「还没有投递记录」假空态（步骤 27）
+const loading = ref(true)
+const loadError = ref('')
 const items = ref([])
 const totalCount = ref(0)
 const filters = reactive({ company: '', city: '' })
@@ -48,7 +51,7 @@ const trendLoading = ref(false)
 const trendDays = ref(30)
 const trendItems = ref([])
 
-const isEmpty = computed(() => !loading.value && items.value.length === 0)
+const isEmpty = computed(() => !loading.value && !loadError.value && items.value.length === 0)
 const isFiltered = computed(() => Boolean(filters.company || filters.city))
 const truncated = computed(() => totalCount.value > items.value.length)
 
@@ -57,6 +60,7 @@ let filterTimer = null
 /** 循环翻页拉全（接口 page_size 上限 50），封顶 500 条并由统计条提示，不静默截断 */
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const base = { page_size: PAGE_SIZE }
     if (filters.company) base.company = filters.company
@@ -72,6 +76,9 @@ async function load() {
     }
     items.value = all
     totalCount.value = total
+  } catch (error) {
+    // 失败 ≠ 空态：置错误态由页面渲染「加载失败 + 重试」，不再落到「还没有投递记录」
+    loadError.value = error?.message || '加载失败，请重试'
   } finally {
     loading.value = false
   }
@@ -141,7 +148,11 @@ async function onDelete(item) {
   } catch {
     return false // 用户取消
   }
-  await deleteApplication(item.id)
+  try {
+    await deleteApplication(item.id)
+  } catch {
+    return false // 拦截器已提示失败原因；保持对话框打开供用户重试
+  }
   ElMessage.success('已删除')
   load()
   syncOverview()
@@ -297,19 +308,22 @@ onMounted(load)
     </div>
 
     <div v-loading="loading" class="apps__board">
-      <StatusKanban
-        v-show="!isEmpty"
-        :items="items"
-        @edit="openEdit"
-        @transit="onTransit"
-      />
-      <div v-if="isEmpty" class="apps__empty">
-        <AppEmpty
-          type="applications"
-          :description="isFiltered ? '没有符合条件的记录' : '还没有投递记录，点击右上角「＋ 新增投递」或「批量导入」开始'"
-          style="--empty-color: var(--m-application)"
+      <AppError v-if="loadError" :message="loadError" @retry="load" />
+      <template v-else>
+        <StatusKanban
+          v-show="!isEmpty"
+          :items="items"
+          @edit="openEdit"
+          @transit="onTransit"
         />
-      </div>
+        <div v-if="isEmpty" class="apps__empty">
+          <AppEmpty
+            type="applications"
+            :description="isFiltered ? '没有符合条件的记录' : '还没有投递记录，点击右上角「＋ 新增投递」或「批量导入」开始'"
+            style="--empty-color: var(--m-application)"
+          />
+        </div>
+      </template>
     </div>
 
     <TrendChart

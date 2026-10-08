@@ -14,6 +14,7 @@ import { listReports, getReport } from '../api/jdReports'
 import { listApplications } from '../api/applications'
 import { shortDateTime } from '../utils/datetime'
 import AppEmpty from '../components/AppEmpty.vue'
+import AppError from '../components/AppError.vue'
 
 // section 标识 → 中文名（五段固定，接口文档 §3.6）
 const SECTION_LABELS = {
@@ -57,6 +58,11 @@ const timeoutPanel = ref(false)
 const runMeta = ref(null) // 本次生成的耗时指标（done.extra：字数 / 首字 / 总耗时）
 
 const reports = ref([])
+// 加载态（步骤 27）：历史 / 下拉 / 详情——此前三处均无，进页面必闪「还没有分析记录」
+const reportsLoading = ref(true)
+const reportsError = ref('')
+const applicationsLoading = ref(true)
+const detailLoading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const detail = ref(null) // 历史详情；非空时右区展示详情而非流式报告
@@ -115,24 +121,48 @@ const runMetaText = computed(() => {
 
 async function loadApplications() {
   // 关联投递下拉：取前 50 条即可（自用场景投递量不大，不做远程搜索）
-  const data = await listApplications({ page: 1, page_size: 50 })
-  applications.value = data.items || []
+  try {
+    const data = await listApplications({ page: 1, page_size: 50 })
+    applications.value = data.items || []
+  } catch {
+    // 下拉为辅助信息（不选也能手填 JD），失败静默降级
+  } finally {
+    applicationsLoading.value = false
+  }
 }
 
 async function loadReports() {
-  const data = await listReports({ page: page.value, page_size: PAGE_SIZE })
-  reports.value = data.items || []
-  total.value = data.total || 0
+  reportsLoading.value = true
+  reportsError.value = ''
+  try {
+    const data = await listReports({ page: page.value, page_size: PAGE_SIZE })
+    reports.value = data.items || []
+    total.value = data.total || 0
+  } catch (error) {
+    // 失败 ≠ 空态：错误块由页面渲染（拦截器另有 toast，此处不再重复弹）
+    reportsError.value = error?.message || '加载失败，请重试'
+  } finally {
+    reportsLoading.value = false
+  }
 }
 
 async function openDetail(item) {
-  detailCompany.value = item.company || ''
-  detail.value = await getReport(item.id)
-  // 详情与流式互斥，避免两块文本叠在一起
-  reportText.value = ''
-  startMessage.value = ''
-  currentSection.value = ''
-  errorMsg.value = ''
+  detailLoading.value = true
+  try {
+    const data = await getReport(item.id)
+    // 公司名与正文在同一成功点赋值——先设公司名再取正文，失败时会「新标题 + 旧正文」错位
+    detailCompany.value = item.company || ''
+    detail.value = data
+    // 详情与流式互斥，避免两块文本叠在一起
+    reportText.value = ''
+    startMessage.value = ''
+    currentSection.value = ''
+    errorMsg.value = ''
+  } catch {
+    // 拦截器已提示失败；右区保持原状（不进入半更新状态）
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 function backToInput() {
@@ -270,6 +300,7 @@ onUnmounted(() => {
           class="jd__select"
           clearable
           filterable
+          :loading="applicationsLoading"
           :disabled="streaming"
           placeholder="关联投递（可选；选了可不填 JD）"
         >
@@ -286,44 +317,52 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="jd__card">
+      <section v-loading="reportsLoading" class="jd__card">
         <h3 class="jd__card-title dot-title">历史报告</h3>
+        <AppError
+          v-if="reportsError"
+          size="sm"
+          :message="reportsError"
+          @retry="loadReports"
+        />
         <AppEmpty
-          v-if="!reports.length"
+          v-else-if="!reports.length"
           type="jd"
           size="sm"
           title="还没有分析记录"
           description="粘贴 JD 生成第一份报告"
           style="--empty-color: var(--m-jd)"
         />
-        <ul v-else class="jd__list">
-          <li
-            v-for="item in reports"
-            :key="item.id"
-            class="jd__list-item"
-            :class="{ 'jd__list-item--active': detail && detail.id === item.id }"
-            @click="openDetail(item)"
-          >
-            <div class="jd__list-main">
-              <span class="jd__list-company">{{ item.company || '未关联投递' }}</span>
-              <span v-if="item.is_finished === false" class="jd__tag">未完成</span>
-              <span v-else class="jd__list-score">{{ item.score }} 分</span>
-            </div>
-            <span class="jd__list-time">{{ shortDateTime(item.created_at) }}</span>
-          </li>
-        </ul>
-        <div v-if="total > PAGE_SIZE" class="jd__pager">
-          <el-button size="small" :disabled="page === 1" @click="changePage(-1)">上一页</el-button>
-          <span class="jd__pager-text">{{ page }} / {{ Math.ceil(total / PAGE_SIZE) }}</span>
-          <el-button size="small" :disabled="page * PAGE_SIZE >= total" @click="changePage(1)">
-            下一页
-          </el-button>
-        </div>
+        <template v-else>
+          <ul class="jd__list">
+            <li
+              v-for="item in reports"
+              :key="item.id"
+              class="jd__list-item"
+              :class="{ 'jd__list-item--active': detail && detail.id === item.id }"
+              @click="openDetail(item)"
+            >
+              <div class="jd__list-main">
+                <span class="jd__list-company">{{ item.company || '未关联投递' }}</span>
+                <span v-if="item.is_finished === false" class="jd__tag">未完成</span>
+                <span v-else class="jd__list-score">{{ item.score }} 分</span>
+              </div>
+              <span class="jd__list-time">{{ shortDateTime(item.created_at) }}</span>
+            </li>
+          </ul>
+          <div v-if="total > PAGE_SIZE" class="jd__pager">
+            <el-button size="small" :disabled="page === 1" @click="changePage(-1)">上一页</el-button>
+            <span class="jd__pager-text">{{ page }} / {{ Math.ceil(total / PAGE_SIZE) }}</span>
+            <el-button size="small" :disabled="page * PAGE_SIZE >= total" @click="changePage(1)">
+              下一页
+            </el-button>
+          </div>
+        </template>
       </section>
     </aside>
 
     <!-- 右区：流式报告 / 历史详情 -->
-    <main class="jd__main">
+    <main v-loading="detailLoading" class="jd__main">
       <div v-if="detail" class="jd__report">
         <header class="jd__report-head">
           <span class="jd__report-title">
@@ -348,7 +387,7 @@ onUnmounted(() => {
           <span v-if="waitHint" class="jd__progress-hint">{{ waitHint }}</span>
           <span v-if="sectionLabel" class="jd__progress-section">正在生成：{{ sectionLabel }}</span>
         </div>
-        <el-alert v-if="errorMsg" :title="errorMsg" type="error" :closable="false" />
+        <AppError v-if="errorMsg" :message="errorMsg" @retry="retry" />
         <!-- 等待超 60 秒的兜底出口（台账 #65）：流仍在继续，故不撤内容、不主动断流——
              内容仍在增长时可无视面板继续等，也可重试或去换更快的模型 -->
         <div v-if="timeoutPanel && streaming" class="jd__timeout">

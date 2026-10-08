@@ -20,6 +20,7 @@ import JobPostingList from '../components/campus/JobPostingList.vue'
 import CampusCalendar from '../components/campus/CampusCalendar.vue'
 import IngestDialog from '../components/campus/IngestDialog.vue'
 import SubscriptionDialog from '../components/campus/SubscriptionDialog.vue'
+import AppError from '../components/AppError.vue'
 
 const router = useRouter()
 
@@ -48,7 +49,8 @@ const SORTS = [
 const tab = ref('talk')
 const view = ref('list') // list | calendar
 
-const loading = ref(false)
+// 首屏初值 true：不闪「还没有聚合到信息」假空态（步骤 27）
+const loading = ref(true)
 const error = ref('')
 const items = ref([])
 const total = ref(0)
@@ -190,7 +192,11 @@ async function onRemove(item) {
   } catch {
     return
   }
-  await deleteJobPosting(item.id)
+  try {
+    await deleteJobPosting(item.id)
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success('已删除')
   load()
 }
@@ -353,12 +359,10 @@ onMounted(() => {
       </el-select>
     </div>
 
-    <div v-if="error" class="campus__error">
-      <span>{{ error }}</span>
-      <el-button size="small" @click="load">重试</el-button>
-    </div>
+    <!-- 失败 ≠ 空态：错误块与列表互斥，不再出现「错误提示 + 空列表」同屏（步骤 27） -->
+    <AppError v-if="error" class="campus__error" :message="error" @retry="load" />
 
-    <template v-if="view === 'list'">
+    <template v-else-if="view === 'list'">
       <CampusEventList
         v-if="!isJob"
         :items="items"
@@ -484,16 +488,9 @@ onMounted(() => {
   cursor: pointer;
 }
 
+/* 错误块外观由 AppError 组件承担，这里只留布局（步骤 27 收口） */
 .campus__error {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
   margin-bottom: var(--card-gap);
-  font-size: var(--fs-body);
-  color: var(--c-text);
-  background: var(--c-bg);
-  border-radius: var(--r-control);
 }
 
 .campus__pager {

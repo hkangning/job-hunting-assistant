@@ -9,12 +9,13 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { listDrills } from '../api/drill'
 import { sourceLabel } from '../utils/drillMeta'
 import { shortDateTime } from '../utils/datetime'
 import DrillAddDialog from '../components/drill/DrillAddDialog.vue'
+import AppEmpty from '../components/AppEmpty.vue'
+import AppError from '../components/AppError.vue'
 
 const router = useRouter()
 
@@ -25,6 +26,7 @@ const pageSize = 10
 const archived = ref(false)
 const source = ref('')
 const loading = ref(true)
+const loadError = ref('')
 const addVisible = ref(false)
 
 /** 来源筛选项：六值全给（历史数据里可能存在已不可导入的 RESUME / INTRO）。 */
@@ -45,6 +47,7 @@ const emptyText = computed(() =>
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const data = await listDrills({
       archived: archived.value,
@@ -55,7 +58,8 @@ async function load() {
     items.value = data?.items || []
     total.value = data?.total || 0
   } catch (error) {
-    ElMessage.error(error?.message || '题目列表加载失败')
+    // 失败 ≠ 空态：错误块由页面渲染（拦截器另有 toast，此处不再重复弹）
+    loadError.value = error?.message || '题目列表加载失败'
   } finally {
     loading.value = false
   }
@@ -122,35 +126,46 @@ onMounted(load)
     </div>
 
     <div v-loading="loading" class="drill__body">
-      <p v-if="!loading && !items.length" class="drill__empty">{{ emptyText }}</p>
+      <AppError v-if="loadError" :message="loadError" @retry="load" />
 
-      <ul v-else class="drill__cards">
-        <li v-for="item in items" :key="item.id" class="card" @click="openDetail(item)">
-          <div class="card__head">
-            <span class="card__title">{{ item.title }}</span>
-            <span class="card__source">{{ sourceLabel(item.source) }}</span>
-            <span v-if="item.archived" class="card__archived">已归档</span>
-          </div>
-          <p class="card__stats">
-            <span>练了 <b>{{ item.attempt_count }}</b> 遍</span>
-            <span v-if="item.last_score != null">最近 <b>{{ item.last_score }}</b> 分</span>
-            <span v-if="item.best_score != null">最好 <b>{{ item.best_score }}</b> 分</span>
-            <span v-if="!item.attempt_count" class="card__untouched">还没练过</span>
-          </p>
-          <p class="card__time">更新于 {{ shortDateTime(item.updated_at) }}</p>
-          <span class="card__arrow">›</span>
-        </li>
-      </ul>
+      <AppEmpty
+        v-else-if="!loading && !items.length"
+        type="practice"
+        :description="emptyText"
+        style="--empty-color: var(--m-drill)"
+      >
+        <el-button type="primary" :icon="Plus" @click="addVisible = true">新建题目</el-button>
+      </AppEmpty>
 
-      <el-pagination
-        v-if="total > pageSize"
-        class="drill__pager"
-        layout="prev, pager, next"
-        :current-page="page"
-        :page-size="pageSize"
-        :total="total"
-        @current-change="changePage"
-      />
+      <template v-else>
+        <ul class="drill__cards">
+          <li v-for="item in items" :key="item.id" class="card" @click="openDetail(item)">
+            <div class="card__head">
+              <span class="card__title">{{ item.title }}</span>
+              <span class="card__source">{{ sourceLabel(item.source) }}</span>
+              <span v-if="item.archived" class="card__archived">已归档</span>
+            </div>
+            <p class="card__stats">
+              <span>练了 <b>{{ item.attempt_count }}</b> 遍</span>
+              <span v-if="item.last_score != null">最近 <b>{{ item.last_score }}</b> 分</span>
+              <span v-if="item.best_score != null">最好 <b>{{ item.best_score }}</b> 分</span>
+              <span v-if="!item.attempt_count" class="card__untouched">还没练过</span>
+            </p>
+            <p class="card__time">更新于 {{ shortDateTime(item.updated_at) }}</p>
+            <span class="card__arrow">›</span>
+          </li>
+        </ul>
+
+        <el-pagination
+          v-if="total > pageSize"
+          class="drill__pager"
+          layout="prev, pager, next"
+          :current-page="page"
+          :page-size="pageSize"
+          :total="total"
+          @current-change="changePage"
+        />
+      </template>
     </div>
 
     <DrillAddDialog v-model="addVisible" @created="onCreated" />

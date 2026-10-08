@@ -13,7 +13,9 @@ const props = defineProps({
   page: { type: Number, default: 1 },
   pageSize: { type: Number, default: 10 },
   modeFilter: { type: String, default: '' },
-  meta: { type: Object, default: null }
+  meta: { type: Object, default: null },
+  /** 首屏加载中不显示「还没有训练记录」假空态（步骤 27） */
+  loading: { type: Boolean, default: false }
 })
 const emit = defineEmits(['open', 'resume', 'page-change', 'mode-change'])
 
@@ -50,7 +52,7 @@ const pageCount = computed(() => Math.max(1, Math.ceil(props.total / props.pageS
     </header>
 
     <AppEmpty
-      v-if="!items.length"
+      v-if="!loading && !items.length"
       type="note"
       size="sm"
       title="还没有训练记录"

@@ -12,6 +12,7 @@ import { deleteExperience, listExperiences, searchExperienceItems } from '../api
 import { shortDateTime } from '../utils/datetime'
 import ExperienceCreateDialog from '../components/experience/ExperienceCreateDialog.vue'
 import AppEmpty from '../components/AppEmpty.vue'
+import AppError from '../components/AppError.vue'
 
 const router = useRouter()
 
@@ -22,7 +23,9 @@ const page = ref(1)
 const pageSize = ref(10)
 const items = ref([])
 const total = ref(0)
-const loading = ref(false)
+// 首屏初值 true：不闪「粘贴一篇面经」假空态（步骤 27）
+const loading = ref(true)
+const libraryError = ref('')
 
 // ---------- 条目检索 ----------
 const keyword = ref('')
@@ -30,6 +33,7 @@ const searchPage = ref(1)
 const searchItems = ref([])
 const searchTotal = ref(0)
 const searching = ref(false)
+const searchError = ref('')
 let searchTimer = null
 
 const createVisible = ref(false)
@@ -40,12 +44,14 @@ function title(item) {
 
 async function loadLibrary() {
   loading.value = true
+  libraryError.value = ''
   try {
     const data = await listExperiences({ page: page.value, page_size: pageSize.value })
     items.value = data.items || []
     total.value = data.total || 0
   } catch (error) {
-    ElMessage.error(error?.message || '面经列表加载失败')
+    // 失败 ≠ 空态：错误块由页面渲染（拦截器另有 toast，此处不再重复弹）
+    libraryError.value = error?.message || '面经列表加载失败'
   } finally {
     loading.value = false
   }
@@ -70,9 +76,11 @@ async function loadSearch() {
   if (!kw) {
     searchItems.value = []
     searchTotal.value = 0
+    searchError.value = ''
     return
   }
   searching.value = true
+  searchError.value = ''
   try {
     const data = await searchExperienceItems({
       keyword: kw,
@@ -82,7 +90,7 @@ async function loadSearch() {
     searchItems.value = data.items || []
     searchTotal.value = data.total || 0
   } catch (error) {
-    ElMessage.error(error?.message || '条目检索失败')
+    searchError.value = error?.message || '条目检索失败'
   } finally {
     searching.value = false
   }
@@ -114,7 +122,11 @@ async function onDelete(item) {
   } catch {
     return
   }
-  await deleteExperience(item.id)
+  try {
+    await deleteExperience(item.id)
+  } catch {
+    return // 拦截器已提示失败原因
+  }
   ElMessage.success('已删除')
   loadLibrary()
 }
@@ -156,8 +168,9 @@ onMounted(loadLibrary)
 
     <!-- 面经库 -->
     <template v-if="tab === 'library'">
+      <AppError v-if="libraryError" :message="libraryError" @retry="loadLibrary" />
       <AppEmpty
-        v-if="!loading && !items.length"
+        v-else-if="!loading && !items.length"
         type="experience"
         description="粘贴一篇面经，AI 自动拆成结构化条目，关键词一搜就命中"
         style="--empty-color: var(--m-experience)"
@@ -208,6 +221,8 @@ onMounted(loadLibrary)
       <p v-if="!keyword.trim()" class="exp__search-hint">
         输入关键词后自动搜索；命中结果可跳转到所属面经并定位到该条目。
       </p>
+
+      <AppError v-else-if="searchError" :message="searchError" @retry="loadSearch" />
 
       <AppEmpty
         v-else-if="!searching && !searchItems.length"

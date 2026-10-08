@@ -30,6 +30,7 @@ import {
   stageProgress
 } from '../utils/interviewStream'
 import InterviewMessages from '../components/interview/InterviewMessages.vue'
+import AppError from '../components/AppError.vue'
 import ResizableTextarea from '../components/ResizableTextarea.vue'
 import VoiceInput from '../components/VoiceInput.vue'
 
@@ -122,6 +123,7 @@ async function loadSettings() {
 
 async function load() {
   loading.value = true
+  errorMsg.value = ''
   try {
     const data = await getInterviewSession(sessionId)
     session.value = data
@@ -299,6 +301,12 @@ function retry() {
   if (lastPayload) requestNext(lastPayload)
 }
 
+/** 错误块的重试：流失败重发上一轮；首屏加载失败重新拉会话（此前只有返回列表一个出口）。 */
+function onErrorRetry() {
+  if (lastPayload) retry()
+  else load()
+}
+
 function backToList() {
   router.push('/interview')
 }
@@ -392,8 +400,7 @@ onUnmounted(() => {
       <p v-if="thinking" class="chat__thinking">{{ thinking }}</p>
     </div>
 
-    <div v-if="errorMsg" class="chat__error">
-      <span>{{ errorMsg }}</span>
+    <AppError v-if="errorMsg" :message="errorMsg" @retry="onErrorRetry">
       <el-button
         v-if="errorCode === 10012"
         size="small"
@@ -403,8 +410,7 @@ onUnmounted(() => {
       >
         前往配置
       </el-button>
-      <el-button v-if="lastPayload" size="small" @click="retry">重试</el-button>
-    </div>
+    </AppError>
 
     <footer v-if="!isFinished" class="chat__composer">
       <p v-if="tail === 'empty'" class="chat__preparing">面试官正在准备第一个问题…</p>
@@ -589,15 +595,6 @@ onUnmounted(() => {
   color: var(--c-text-3);
 }
 
-.chat__error {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px var(--card-padding);
-  font-size: var(--fs-sm);
-  color: var(--el-color-danger);
-  background: var(--el-color-danger-light-9);
-}
 
 .chat__composer {
   padding: 12px var(--card-padding);

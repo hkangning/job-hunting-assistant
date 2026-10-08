@@ -51,6 +51,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .coverage
+coverage.json
 htmlcov/
 *.db
 *.db-shm

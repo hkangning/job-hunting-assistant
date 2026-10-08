@@ -17,6 +17,7 @@ import { INTENSITY_LABELS } from '../utils/interviewStream'
 import { shortDateTime } from '../utils/datetime'
 import InterviewCreateDialog from '../components/interview/InterviewCreateDialog.vue'
 import AppEmpty from '../components/AppEmpty.vue'
+import AppError from '../components/AppError.vue'
 
 const router = useRouter()
 
@@ -25,7 +26,9 @@ const page = ref(1)
 const pageSize = ref(10)
 const items = ref([])
 const total = ref(0)
-const loading = ref(false)
+// 首屏初值 true：不闪「还没有面试记录」假空态（步骤 27）
+const loading = ref(true)
+const loadError = ref('')
 const meta = ref(null)
 const createVisible = ref(false)
 const stats = ref({ active: 0, finished: 0 })
@@ -73,6 +76,7 @@ const emptyText = computed(() =>
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const data = await listInterviewSessions({
       status: status.value || undefined,
@@ -81,6 +85,9 @@ async function load() {
     })
     items.value = data.items || []
     total.value = data.total || 0
+  } catch (error) {
+    // 失败 ≠ 空态：错误块由页面渲染（拦截器另有 toast，此处不再重复弹）
+    loadError.value = error?.message || '加载失败，请重试'
   } finally {
     loading.value = false
   }
@@ -155,8 +162,10 @@ onMounted(() => {
       </div>
     </div>
 
+    <AppError v-if="loadError" :message="loadError" @retry="load" />
+
     <AppEmpty
-      v-if="!loading && !items.length"
+      v-else-if="!loading && !items.length"
       type="interview"
       :description="emptyText"
       style="--empty-color: var(--m-interview)"

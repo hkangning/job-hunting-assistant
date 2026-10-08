@@ -69,6 +69,8 @@ async function downloadTpl() {
     a.click()
     a.remove()
     URL.revokeObjectURL(url)
+  } catch {
+    // 下载失败由拦截器提示（步骤 27：此前无 catch，失败会产生未捕获 rejection）
   } finally {
     downloading.value = false
   }

@@ -318,3 +318,141 @@ def test_requires_token(anon_client: TestClient) -> None:
 def test_run_requires_token(anon_client: TestClient) -> None:
     """手动触发端点同受鉴权保护（接口文档 §1.1：除三个白名单外全部接口需 Token）。"""
     assert anon_client.post(f"{API}/reminders/run").status_code == 401
+
+
+# ================================================================ 文案改写与服务层容错（步骤 27 覆盖率补齐）
+#
+# 上述用例走 HTTP 全覆盖「判定 / 幂等 / 互斥 / 列表」；本段补服务层未覆盖的分支：
+# `_build_contents` 的 LLM 改写成功 / 部分 / 全回退三态、`_as_index` 归一化、
+# `run_daily` 的两处异常隔离（订阅匹配失败跳过、单账号失败不中断其余账号）。
+
+
+def _register_account(db, username: str) -> int:
+    """服务层注册一个临时账号（照 conftest.account_id 的做法）。"""
+    from app.schemas.auth import RegisterRequest
+    from app.services import auth_service
+
+    return auth_service.register(db, RegisterRequest(username=username, password="Pass@12345")).user.id
+
+
+def _configure_llm(db, user_id: int) -> None:
+    """给账号配一个供应商——`_build_contents` 先过 `resolve_config`，未配置会走模板回退。"""
+    from app.models import LlmProviderConfig
+    from app.utils.security import encrypt_text
+
+    db.add(
+        LlmProviderConfig(
+            user_id=user_id, provider="deepseek", api_key=encrypt_text("sk-test"),
+            model="test-model", is_active=1,
+        )
+    )
+    db.commit()
+
+
+def _plans() -> list:
+    return [
+        reminder_engine.ReminderPlan(ReminderType.FOLLOW_UP, 1, "A 公司 · 后端 已投递 3 天仍无进展，建议主动跟进"),
+        reminder_engine.ReminderPlan(ReminderType.INTERVIEW, 2, "B 公司 · 前端 将于 10-10 10:00 进行笔试/面试，注意提前准备"),
+    ]
+
+
+class TestBuildContents:
+    """`_build_contents`：LLM 批量改写与逐条回退（TC-22 的服务层补测）。"""
+
+    def test_llm_rewrite_replaces_by_index(self, db_session, fake_llm_client):
+        user_id = _register_account(db_session, "remind1")
+        _configure_llm(db_session, user_id)
+        fake_llm_client.json_result = {
+            "items": [{"index": 1, "content": "改写一"}, {"index": "2", "content": "改写二"}]
+        }
+        contents = reminder_engine._build_contents(db_session, user_id, _plans(), lambda: fake_llm_client)
+        assert contents == ["改写一", "改写二"]  # index 用数字字符串同样生效（_as_index 容忍）
+
+    def test_missing_or_invalid_items_keep_templates(self, db_session, fake_llm_client):
+        """缺条 / index 越界 / 文案空白 / index 非法——各自保留该条模板，不影响其余。"""
+        user_id = _register_account(db_session, "remind2")
+        _configure_llm(db_session, user_id)
+        fake_llm_client.json_result = {
+            "items": [
+                {"index": 1, "content": "改写一"},
+                {"index": 9, "content": "越界丢弃"},
+                {"index": "x", "content": "非法丢弃"},
+                {"index": 2, "content": "   "},  # 空白保留模板
+            ]
+        }
+        contents = reminder_engine._build_contents(db_session, user_id, _plans(), lambda: fake_llm_client)
+        assert contents[0] == "改写一"
+        assert contents[1] == _plans()[1].text  # 该条回退模板
+
+    def test_content_truncated_to_limit(self, db_session, fake_llm_client):
+        user_id = _register_account(db_session, "remind3")
+        _configure_llm(db_session, user_id)
+        fake_llm_client.json_result = {"items": [{"index": 1, "content": "长" * 500}]}
+        contents = reminder_engine._build_contents(db_session, user_id, _plans(), lambda: fake_llm_client)
+        assert len(contents[0]) == reminder_engine._MAX_CONTENT_LEN
+
+    def test_items_not_list_falls_back_all(self, db_session, fake_llm_client):
+        user_id = _register_account(db_session, "remind4")
+        _configure_llm(db_session, user_id)
+        fake_llm_client.json_result = {"items": "not-a-list"}
+        contents = reminder_engine._build_contents(db_session, user_id, _plans(), lambda: fake_llm_client)
+        assert contents == [p.text for p in _plans()]
+
+    def test_llm_error_falls_back_all(self, db_session, fake_llm_client):
+        user_id = _register_account(db_session, "remind5")
+        _configure_llm(db_session, user_id)
+        fake_llm_client.error = RuntimeError("chat_json 失败")
+        contents = reminder_engine._build_contents(db_session, user_id, _plans(), lambda: fake_llm_client)
+        assert contents == [p.text for p in _plans()]
+
+
+class TestAsIndex:
+    def test_numeric_and_string_accepted(self):
+        assert reminder_engine._as_index(2, 3) == 2
+        assert reminder_engine._as_index("3", 3) == 3
+
+    def test_out_of_range_or_invalid_rejected(self):
+        assert reminder_engine._as_index(0, 3) is None
+        assert reminder_engine._as_index(4, 3) is None
+        assert reminder_engine._as_index(None, 3) is None
+        assert reminder_engine._as_index("x", 3) is None
+
+
+class TestRunDailyIsolation:
+    """`run_daily` 的两处异常隔离（系统设计 5.5：单点失败不中断整体）。"""
+
+    def test_single_account_failure_does_not_break_others(self, db_session, monkeypatch):
+        u1 = _register_account(db_session, "iso1")
+        u2 = _register_account(db_session, "iso2")
+        calls: list[int] = []
+
+        def fake_generate(db, user_id, *, client_getter=None, now=None):
+            calls.append(user_id)
+            if user_id == u1:
+                raise RuntimeError("该账号生成失败")
+            return 1
+
+        monkeypatch.setattr(reminder_engine, "generate_for_user", fake_generate)
+        monkeypatch.setattr(reminder_engine.campus_service, "run_scheduled", lambda **kw: None)
+        monkeypatch.setattr(reminder_engine.campus_service, "match_new_items", lambda db: 2)
+
+        total = reminder_engine.run_daily(db_factory=SessionLocal)
+        assert total == 1 + 2  # u2 的 1 条 + 订阅命中 2 条；u1 抛错被隔离
+        assert {u1, u2} <= set(calls)
+
+    def test_match_failure_is_skipped(self, db_session, monkeypatch):
+        _register_account(db_session, "iso3")
+
+        def boom(db):
+            raise RuntimeError("订阅匹配失败")
+
+        monkeypatch.setattr(reminder_engine.campus_service, "run_scheduled", lambda **kw: None)
+        monkeypatch.setattr(reminder_engine.campus_service, "match_new_items", boom)
+        monkeypatch.setattr(reminder_engine, "generate_for_user", lambda db, uid, **kw: 0)
+
+        total = reminder_engine.run_daily(db_factory=SessionLocal)
+        assert total == 0  # 匹配失败被跳过，不中断、不抛错
+
+    def test_generate_for_user_empty_plans_returns_zero(self, db_session):
+        user_id = _register_account(db_session, "iso4")
+        assert reminder_engine.generate_for_user(db_session, user_id) == 0

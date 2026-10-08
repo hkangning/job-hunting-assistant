@@ -24,6 +24,7 @@ import { buildMessages, INTENSITY_LABELS, parseCandidates } from '../utils/inter
 import { ttsPlayer, ttsSpeakingKey, toggleSpeakMessage } from '../utils/ttsPlayer'
 import { shortDateTime } from '../utils/datetime'
 import InterviewMessages from '../components/interview/InterviewMessages.vue'
+import AppError from '../components/AppError.vue'
 import ReviewBody from '../components/interview/ReviewBody.vue'
 import StreamText from '../components/StreamText.vue'
 
@@ -104,12 +105,12 @@ function startSummary() {
       onError: (e) => {
         summaryStreaming.value = false
         candidateBuf = ''
-        // 只透出可操作的两种：未配 Key 与通用失败——后端 message 在此场景可能误导
-        // （端点未就绪时统一异常处理器会把它包成「会话不存在」）
+        // 10012 改写为可操作文案（指向配置页）；其余**保留后端原因**——
+        // 限流 / 超时 / 连接失败各有针对性提示，一律压成「总结生成失败」会把可行动信息吞掉（步骤 27）
         summaryError.value =
           e?.code === 10012
             ? '未配置 AI 密钥，请前往 AI 配置页配置后重试'
-            : '总结生成失败，请稍后重试'
+            : e?.message || '总结生成失败，请稍后重试'
       }
     }
   )
@@ -142,9 +143,8 @@ async function joinWrong(item) {
     if (e?.code === 10003) {
       item.joined = true
       ElMessage.info('该知识点已在错题本')
-    } else {
-      ElMessage.error(e?.message || '加入失败，请重试')
     }
+    // 其余失败：拦截器已提示原因，不重复弹（步骤 27：双提示消除）
   } finally {
     item.joining = false
   }
@@ -210,10 +210,7 @@ onUnmounted(() => {
       </span>
     </header>
 
-    <div v-if="errorMsg" class="review-page__error">
-      <span>{{ errorMsg }}</span>
-      <el-button size="small" @click="load">重试</el-button>
-    </div>
+    <AppError v-if="errorMsg" class="review-page__error" :message="errorMsg" @retry="load" />
 
     <div v-else v-loading="loading" class="review-page__body">
       <!-- 总结报告 -->
@@ -345,13 +342,9 @@ onUnmounted(() => {
   color: var(--c-text-3);
 }
 
+/* 错误块外观由 AppError 组件承担，这里只留布局（步骤 27 收口） */
 .review-page__error {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  font-size: var(--fs-sm);
-  color: var(--el-color-danger);
+  margin-bottom: var(--card-gap);
 }
 
 .review-page__body {

@@ -29,6 +29,7 @@ import VoiceInput from '../components/VoiceInput.vue'
 import ProgressPanel from '../components/drill/ProgressPanel.vue'
 import AttemptTimeline from '../components/drill/AttemptTimeline.vue'
 import AttemptDrawer from '../components/drill/AttemptDrawer.vue'
+import AppError from '../components/AppError.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -171,6 +172,12 @@ function retry() {
   if (lastPayload) requestReview(lastPayload, lastPayload.answer, !!lastPayload.is_voice)
 }
 
+/** 错误块的重试：流失败重发上一轮；首屏加载失败重新拉题目（此前只有返回列表一个出口）。 */
+function onErrorRetry() {
+  if (lastPayload && !streaming.value) retry()
+  else load()
+}
+
 /** 归档 / 恢复：二次确认后部分更新，并刷新列表数据。 */
 async function toggleArchive() {
   const going = !archived.value
@@ -189,8 +196,8 @@ async function toggleArchive() {
     await updateDrill(topicId, { archived: going })
     ElMessage.success(going ? '已归档' : '已恢复')
     load()
-  } catch (error) {
-    ElMessage.error(error?.message || '操作失败，请稍后重试')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   }
 }
 
@@ -215,8 +222,8 @@ async function saveEdit() {
     ElMessage.success('已保存')
     editVisible.value = false
     load()
-  } catch (error) {
-    ElMessage.error(error?.message || '保存失败，请稍后重试')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   } finally {
     savingEdit.value = false
   }
@@ -250,10 +257,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <p v-if="errorMsg" class="detail__error">
-      <span>{{ errorMsg }}</span>
-      <el-button v-if="lastPayload && !streaming" size="small" @click="retry">重试</el-button>
-    </p>
+    <AppError v-if="errorMsg" :message="errorMsg" @retry="onErrorRetry" />
 
     <div v-if="topic" class="detail__question">
       <span class="detail__question-label">题面</span>
@@ -367,17 +371,6 @@ onUnmounted(() => {
   gap: 4px;
 }
 
-.detail__error {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  font-size: var(--fs-sm);
-  color: var(--el-color-danger);
-  background: var(--el-color-danger-light-9);
-  border-radius: var(--r-card);
-}
 
 .detail__question {
   padding: 14px var(--card-padding);

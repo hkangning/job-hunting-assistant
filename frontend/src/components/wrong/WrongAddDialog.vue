@@ -54,9 +54,8 @@ async function submit() {
     ElMessage.success('已加入错题本')
     emit('added')
     close()
-  } catch (error) {
-    // 409 + 10003：题干撞车（后端按题干在题库中查重并复用），提示后留在对话框里改
-    ElMessage.error(error?.message || '添加失败，请稍后重试')
+  } catch {
+    // 409 + 10003（题干撞车）等失败留在对话框里改；提示由拦截器弹出，不重复弹（步骤 27）
   } finally {
     submitting.value = false
   }

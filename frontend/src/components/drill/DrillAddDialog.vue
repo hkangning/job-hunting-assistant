@@ -68,8 +68,8 @@ async function loadCandidates() {
           ? await listExperiences(params)
           : await listApplications(params)
     candidates.value = data?.items || []
-  } catch (error) {
-    ElMessage.error(error?.message || '来源列表加载失败')
+  } catch {
+    // 拦截器已提示失败原因，不重复弹（步骤 27：双提示消除）
   } finally {
     loadingSource.value = false
   }
@@ -124,9 +124,8 @@ async function submit() {
     ElMessage.success('题目已创建')
     emit('created', topic)
     close()
-  } catch (error) {
-    // 归属不符（10002）/ 参数非法（10001）都在弹窗内提示，不关窗（用户可改）
-    ElMessage.error(error?.message || '创建失败，请稍后重试')
+  } catch {
+    // 失败不关窗（用户可改后重试）；提示由拦截器弹出，不重复弹（步骤 27：双提示消除）
   } finally {
     submitting.value = false
   }
