@@ -11,8 +11,11 @@ import { APPLICATION_STATUSES, STATUS_LABELS, STATUS_COLORS } from '../constants
 import { campusEventStatus, sourceSiteBrief } from '../constants/campus'
 import { shortDateTime, datePart } from '../utils/datetime'
 import { listRemindersApi } from '../api/reminders'
+import { getSettingsApi } from '../api/settings'
+import { shouldStartTour } from '../utils/guide'
 import ReminderTip from '../components/ReminderTip.vue'
 import AppError from '../components/AppError.vue'
+import GuideTour from '../components/GuideTour.vue'
 
 // 轮询间隔（系统设计 §4.2）；**仅本页挂载期间生效**——做成 store 内全局轮询的话，
 // 用户在投递页 / 分析页操作时也会持续请求一个没人看的接口
@@ -86,10 +89,25 @@ function goApplications() {
   router.push('/applications')
 }
 
+// —— 新手指引（步骤 28，FR-019）——
+const guideRef = ref(null)
+
+/** 未确认过引导的账号进首页自动启动；设置拉取失败静默不启动（引导非必需路径）。 */
+async function maybeStartGuide() {
+  try {
+    const settings = await getSettingsApi({ silent: true })
+    if (!shouldStartTour(settings)) return
+    setTimeout(() => guideRef.value?.start(), 300) // 等首页元素渲染完（系统设计 §4.7）
+  } catch {
+    // 静默：不打扰
+  }
+}
+
 let timer = null
 onMounted(async () => {
   await store.fetch()
   loadReminders()
+  maybeStartGuide()
   timer = setInterval(() => {
     store.fetch(true) // silent：轮询不闪 loading
     loadReminders() // 提醒随同一节奏刷新（已读后文案行随之消失）
@@ -307,6 +325,8 @@ onUnmounted(() => clearInterval(timer))
       </template>
       <!-- 常规布局结束（空态与常规布局互斥） -->
     </template>
+    <!-- 新手指引（步骤 28）：命令式驱动、无渲染输出 -->
+    <GuideTour ref="guideRef" />
   </div>
 </template>
 

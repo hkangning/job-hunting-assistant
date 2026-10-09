@@ -29,7 +29,8 @@ async function onCommand(command) {
 
 <template>
   <el-dropdown trigger="click" @command="onCommand">
-    <div class="user-menu">
+    <!-- data-tour：新手指引（步骤 28）第 5 步锚点 -->
+    <div class="user-menu" data-tour="UserMenu">
       <img v-if="userStore.avatarImg" class="user-menu__avatar" :src="userStore.avatarImg" alt="" />
       <span
         v-else

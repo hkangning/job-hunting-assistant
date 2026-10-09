@@ -13,6 +13,7 @@ import { getProfileApi, parseResumeApi, updateProfileApi } from '../api/profile'
 import { getOverviewApi } from '../api/overview'
 import { APPLICATION_STATUSES } from '../constants/application'
 import { compressTo256 } from '../utils/avatar'
+import GuideTour from '../components/GuideTour.vue'
 
 const ROLE_LABEL = { ADMIN: '管理员', USER: '普通用户' }
 
@@ -22,6 +23,8 @@ const userStore = useUserStore()
 const account = reactive({ nickname: '', email: '' })
 const avatarUploading = ref(false)
 const savingAccount = ref(false)
+// 新手指引（步骤 28）：重看入口在账号卡片操作行；重播不写 guide_done
+const guideRef = ref(null)
 
 const stats = ref(null)
 const appStats = ref(null) // 投递五状态计数（概览接口的 application_stats）
@@ -329,6 +332,8 @@ async function saveProfile() {
           </div>
           <div>
             <el-button type="primary" :loading="savingAccount" @click="saveAccount">保存修改</el-button>
+            <!-- 重看新手指引（步骤 28）：重播不写 guide_done（write-back=false） -->
+            <el-button text @click="guideRef?.start()">重看新手指引</el-button>
           </div>
         </div>
       </div>
@@ -495,6 +500,8 @@ async function saveProfile() {
         <el-button type="primary" :loading="savingProfile" @click="saveProfile">保存画像</el-button>
       </el-form>
     </el-card>
+    <!-- 新手指引（步骤 28）：命令式驱动、无渲染输出；重看模式不写标记 -->
+    <GuideTour ref="guideRef" :write-back="false" />
   </div>
 </template>
 

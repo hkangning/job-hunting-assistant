@@ -58,7 +58,13 @@ onMounted(() => {
       class="side-nav__menu"
     >
       <el-menu-item-group v-for="group in groups" :key="group.name" :title="group.name">
-        <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
+        <!-- data-tour：新手指引（步骤 28）的锚点，值 = 路由 name，见 utils/guide.js 的 TOUR_STEPS -->
+        <el-menu-item
+          v-for="item in group.items"
+          :key="item.path"
+          :index="item.path"
+          :data-tour="item.name"
+        >
           <span class="side-nav__dot" :style="{ background: item.meta.color }"></span>
           <template #title>{{ item.meta.title }}</template>
         </el-menu-item>
